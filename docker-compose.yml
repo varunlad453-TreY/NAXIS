@@ -1,0 +1,181 @@
+version: '3.8'
+
+services:
+  # Infrastructure Services
+  redis:
+    image: redis:7-alpine
+    container_name: naxis-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+    networks:
+      - naxis-net
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:23.8-alpine
+    container_name: naxis-clickhouse
+    ports:
+      - "8123:8123"  # HTTP
+      - "9000:9000"  # Native
+    environment:
+      CLICKHOUSE_DB: naxis
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+      - ./schemas/clickhouse:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD", "clickhouse-client", "--query", "SELECT 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+    networks:
+      - naxis-net
+
+  neo4j:
+    image: neo4j:5.15-community
+    container_name: naxis-neo4j
+    ports:
+      - "7474:7474"  # HTTP
+      - "7687:7687"  # Bolt
+    environment:
+      NEO4J_AUTH: neo4j/naxis_password
+      NEO4J_PLUGINS: '["apoc"]'
+      NEO4J_dbms_memory_heap_initial__size: 512m
+      NEO4J_dbms_memory_heap_max__size: 2g
+      NEO4J_dbms_memory_pagecache_size: 1g
+    volumes:
+      - neo4j_data:/data
+      - neo4j_logs:/logs
+    healthcheck:
+      test: ["CMD", "cypher-shell", "-u", "neo4j", "-p", "naxis_password", "RETURN 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+    networks:
+      - naxis-net
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: naxis-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_models:/root/.ollama
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped
+    networks:
+      - naxis-net
+    deploy:
+      resources:
+        limits:
+          memory: 8G
+
+  # Application Services
+  worker:
+    build:
+      context: .
+      dockerfile: backend/worker/Dockerfile
+    container_name: naxis-worker
+    env_file: .env
+    environment:
+      SERVICE_NAME: naxis-worker
+      LOG_LEVEL: INFO
+    depends_on:
+      redis:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - naxis-net
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+
+  api:
+    build:
+      context: .
+      dockerfile: backend/api/Dockerfile
+    container_name: naxis-api
+    ports:
+      - "8000:8000"
+    env_file: .env
+    environment:
+      SERVICE_NAME: naxis-api
+      LOG_LEVEL: INFO
+    depends_on:
+      redis:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+    networks:
+      - naxis-net
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+
+  web:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: naxis-web
+    ports:
+      - "3000:3000"
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8000
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - naxis-net
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+volumes:
+  redis_data:
+    name: naxis_redis_data
+  clickhouse_data:
+    name: naxis_clickhouse_data
+  neo4j_data:
+    name: naxis_neo4j_data
+  neo4j_logs:
+    name: naxis_neo4j_logs
+  ollama_models:
+    name: naxis_ollama_models
+
+networks:
+  naxis-net:
+    name: naxis-net
+    driver: bridge

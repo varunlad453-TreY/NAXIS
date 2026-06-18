@@ -1,0 +1,20 @@
+# Naxis Platform Requirements
+
+# Core dependencies
+pydantic>=2.0.0,<3.0.0
+python-dateutil>=2.8.0
+
+# API framework
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+
+# Testing
+pytest>=7.4.0
+httpx>=0.25.0  # Required for FastAPI TestClient
+
+# Database (for future use)
+# clickhouse-driver>=0.2.6
+# redis>=5.0.0
+
+# Async support
+anyio>=4.0.0
