@@ -1,26 +1,18 @@
 #!/usr/bin/env python3
 """
 Naxis FastAPI Application
-
-Main FastAPI application for the Naxis operational intelligence platform.
-
-Run with:
-    uvicorn backend.api.main:app --reload --host 0.0.0.0 --port 8000
-
-Or:
-    python3 backend/api/main.py
 """
 
 import logging
+from contextlib import asynccontextmanager
 from datetime import datetime
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
 
+from shared.database.client import db
 from .routes.incidents import health_router, router as incidents_router
 
-# Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s | %(name)-30s | %(levelname)-8s | %(message)s",
@@ -28,29 +20,39 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Create FastAPI app
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    logger.info("=" * 60)
+    logger.info("Naxis API starting...")
+    await db.connect()
+    logger.info("API Documentation: http://localhost:8000/docs")
+    logger.info("=" * 60)
+    yield
+    await db.disconnect()
+    logger.info("Naxis API shut down")
+
+
 app = FastAPI(
     title="Naxis API",
     description="Operational intelligence API for multi-vendor network monitoring",
     version="1.0.0",
     docs_url="/docs",
     redoc_url="/redoc",
+    lifespan=lifespan,
 )
 
-# Add CORS middleware (for frontend integration)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # TODO: Restrict in production
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 
-# Custom JSON response for datetime serialization
 @app.middleware("http")
 async def add_process_time_header(request, call_next):
-    """Add X-Process-Time header to responses."""
     start_time = datetime.utcnow()
     response = await call_next(request)
     process_time = (datetime.utcnow() - start_time).total_seconds()
@@ -58,14 +60,12 @@ async def add_process_time_header(request, call_next):
     return response
 
 
-# Register routers
 app.include_router(health_router)
 app.include_router(incidents_router)
 
 
 @app.get("/", include_in_schema=False)
 async def root():
-    """Root endpoint - redirect to docs."""
     return {
         "message": "Naxis API",
         "version": "1.0.0",
@@ -74,32 +74,6 @@ async def root():
     }
 
 
-@app.on_event("startup")
-async def startup_event():
-    """Run on application startup."""
-    logger.info("=" * 80)
-    logger.info("Naxis API starting...")
-    logger.info("=" * 80)
-    logger.info("API Documentation: http://localhost:8000/docs")
-    logger.info("Health check:      http://localhost:8000/health")
-    logger.info("Incidents:         http://localhost:8000/incidents")
-    logger.info("=" * 80)
-
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    """Run on application shutdown."""
-    logger.info("Naxis API shutting down...")
-
-
-# Run with uvicorn if executed directly
 if __name__ == "__main__":
     import uvicorn
-
-    uvicorn.run(
-        "backend.api.main:app",
-        host="0.0.0.0",
-        port=8000,
-        reload=True,
-        log_level="info",
-    )
+    uvicorn.run("api.main:app", host="0.0.0.0", port=8000, reload=True)
