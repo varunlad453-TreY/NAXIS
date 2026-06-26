@@ -16,6 +16,8 @@ import Link from "next/link";
 import { api } from "@/lib/api";
 import { SeverityBadge } from "@/components/incidents/severity-badge";
 import { StatusBadge } from "@/components/incidents/status-badge";
+import { EventRow } from "@/components/events/event-row";
+import { EventListSkeleton } from "@/components/events/event-list-skeleton";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   formatTimestamp,
@@ -32,6 +34,13 @@ export default function IncidentDetailPage() {
     queryKey: ["incident", incidentId],
     queryFn: () => api.getIncident(incidentId),
     retry: 1,
+  });
+
+  // Fetch events related to this incident
+  const { data: eventsData, isLoading: eventsLoading } = useQuery({
+    queryKey: ["events", incidentId],
+    queryFn: () => api.listEvents({ incident_id: incidentId, limit: 100 }),
+    enabled: !!incidentId,
   });
 
   if (isLoading) {
@@ -168,25 +177,26 @@ export default function IncidentDetailPage() {
             <div className="rounded-lg border border-border bg-background-elevated p-6">
               <h2 className="text-sm font-medium text-foreground-muted mb-4 flex items-center gap-2">
                 <Activity className="h-4 w-4" />
-                Related Events ({incident.related_event_ids.length})
+                Related Events ({eventsData?.total ?? 0})
               </h2>
-              <div className="space-y-2">
-                {incident.related_event_ids.slice(0, 10).map((eventId) => (
-                  <div
-                    key={eventId}
-                    className="flex items-center justify-between py-2 px-3 rounded border border-border/50 bg-background/50"
-                  >
-                    <span className="text-sm font-mono text-foreground-muted">
-                      {eventId}
-                    </span>
-                  </div>
-                ))}
-                {incident.related_event_ids.length > 10 && (
-                  <div className="text-xs text-foreground-subtle text-center pt-2">
-                    +{incident.related_event_ids.length - 10} more events
-                  </div>
-                )}
-              </div>
+              {eventsLoading ? (
+                <EventListSkeleton />
+              ) : eventsData?.events && eventsData.events.length > 0 ? (
+                <div className="border border-border rounded-lg divide-y">
+                  {eventsData.events.slice(0, 10).map((event) => (
+                    <EventRow key={event.event_id} event={event} />
+                  ))}
+                  {eventsData.events.length > 10 && (
+                    <div className="text-xs text-foreground-subtle text-center py-3">
+                      +{eventsData.events.length - 10} more events. <Link href={`/events?incident_id=${incidentId}`} className="text-primary hover:text-primary-hover">View all</Link>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="text-sm text-foreground-muted py-4 text-center">
+                  No events found for this incident
+                </div>
+              )}
             </div>
           </div>
 
@@ -228,14 +238,14 @@ export default function IncidentDetailPage() {
                   </div>
                 </div>
 
-                {incident.affected_clients_count > 0 && (
+                {incident.affected_clients.length > 0 && (
                   <div>
                     <div className="flex items-center gap-2 text-foreground-muted mb-2">
                       <Users className="h-4 w-4" />
                       <span className="text-sm">Clients</span>
                     </div>
                     <div className="text-2xl font-semibold text-foreground">
-                      {incident.affected_clients_count}
+                      {incident.affected_clients.length}
                     </div>
                   </div>
                 )}

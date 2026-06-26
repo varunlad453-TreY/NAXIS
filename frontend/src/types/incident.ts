@@ -15,7 +15,6 @@ export interface IncidentSummary {
   event_count: number;
   affected_sites_count: number;
   affected_devices_count: number;
-  affected_clients_count: number;
   confidence_score: number;
   created_at: string;
   updated_at: string;

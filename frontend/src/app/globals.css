@@ -3,6 +3,11 @@
 @tailwind utilities;
 
 @layer base {
+  html {
+    color-scheme: dark;
+    scroll-behavior: smooth;
+  }
+
   * {
     @apply border-border;
   }
@@ -10,6 +15,15 @@
   body {
     @apply bg-background text-foreground;
     font-feature-settings: "rlig" 1, "calt" 1;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+    background-color: hsl(222 47% 11%);
+    min-height: 100vh;
+  }
+
+  ::selection {
+    background: hsl(199 89% 48% / 0.28);
+    color: hsl(210 40% 98%);
   }
 }
 

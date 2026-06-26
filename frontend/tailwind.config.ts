@@ -59,8 +59,8 @@ const config: Config = {
       },
       fontFamily: {
         sans: [
-          "var(--font-inter)",
-          "Inter",
+          "var(--font-manrope)",
+          "Manrope",
           "-apple-system",
           "BlinkMacSystemFont",
           "Segoe UI",
