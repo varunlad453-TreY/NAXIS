@@ -1,0 +1,126 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: naxis-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: naxis
+      POSTGRES_USER: naxis
+      POSTGRES_PASSWORD: naxis_password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./schemas/postgres:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U naxis -d naxis"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+    networks:
+      - naxis-net
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: naxis-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_models:/root/.ollama
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped
+    networks:
+      - naxis-net
+    deploy:
+      resources:
+        limits:
+          memory: 8G
+
+  worker:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+      target: production
+    image: naxis-backend
+    container_name: naxis-worker
+    command: python -u -m worker.main
+    env_file: .env
+    environment:
+      SERVICE_NAME: naxis-worker
+      LOG_LEVEL: INFO
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - naxis-net
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+
+  api:
+    image: naxis-backend
+    container_name: naxis-api
+    command: uvicorn api.main:app --host 0.0.0.0 --port 8000 --workers 2
+    ports:
+      - "8000:8000"
+    env_file: .env
+    environment:
+      SERVICE_NAME: naxis-api
+      LOG_LEVEL: INFO
+    depends_on:
+      postgres:
+        condition: service_healthy
+      worker:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+    networks:
+      - naxis-net
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+  web:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: naxis-web
+    ports:
+      - "3000:3000"
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8000
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - naxis-net
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+volumes:
+  postgres_data:
+    name: naxis_postgres_data
+  ollama_models:
+    name: naxis_ollama_models
+
+networks:
+  naxis-net:
+    name: naxis-net
+    driver: bridge

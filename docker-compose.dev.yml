@@ -1,0 +1,57 @@
+version: '3.8'
+
+# Development overrides for hot-reload and debugging
+services:
+  worker:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+      target: development
+    volumes:
+      - ./backend/shared:/app/shared:ro
+      - ./backend/worker:/app/worker:ro
+      - ./backend/api:/app/api:ro
+    environment:
+      LOG_LEVEL: DEBUG
+      PYTHONUNBUFFERED: "1"
+    command: python -u -m worker.main
+
+  api:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+      target: development
+    image: naxis-backend
+    volumes:
+      - ./backend/shared:/app/shared:ro
+      - ./backend/api:/app/api:ro
+      - ./backend/worker:/app/worker:ro
+    environment:
+      LOG_LEVEL: DEBUG
+      PYTHONUNBUFFERED: "1"
+    command: uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/api
+
+  web:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      target: development
+    volumes:
+      - ./frontend/src:/app/src:ro
+      - ./frontend/public:/app/public:ro
+    environment:
+      NODE_ENV: development
+    command: npm run dev
+
+  # Adminer for browsing Postgres
+  adminer:
+    image: adminer:latest
+    container_name: naxis-adminer
+    ports:
+      - "8080:8080"
+    environment:
+      ADMINER_DEFAULT_SERVER: postgres
+    depends_on:
+      - postgres
+    networks:
+      - naxis-net

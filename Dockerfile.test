@@ -1,0 +1,14 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Copy shared package
+COPY backend/shared /app/backend/shared
+
+# Install shared package
+RUN pip install --no-cache-dir -e /app/backend/shared
+
+# Copy test script
+COPY test_event_schema.py /app/
+
+CMD ["python", "test_event_schema.py"]
