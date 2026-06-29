@@ -60,7 +60,7 @@ class MockTelemetryPipeline:
         mist_count: int = 2,
         sdwan_count: int = 2,
         base_time: datetime = None,
-    ) -> List[Incident]:
+    ) -> tuple[List[UnifiedEvent], List[Incident]]:
         """
         Run the complete pipeline.
 
@@ -71,7 +71,7 @@ class MockTelemetryPipeline:
             base_time: Base timestamp (defaults to now)
 
         Returns:
-            List of generated Incident objects
+            Tuple of (normalized events, generated incidents)
         """
         if base_time is None:
             base_time = datetime.utcnow()
@@ -116,7 +116,7 @@ class MockTelemetryPipeline:
         # Step 4: Output results
         self._print_results(all_events, incidents)
 
-        return incidents
+        return all_events, incidents
 
     def _print_results(self, events: List[UnifiedEvent], incidents: List[Incident]) -> None:
         """Print detailed pipeline results."""

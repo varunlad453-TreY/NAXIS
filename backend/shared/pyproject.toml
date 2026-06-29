@@ -11,8 +11,6 @@ dependencies = [
     "pydantic>=2.5.0",
     "pydantic-settings>=2.1.0",
     "redis[hiredis]>=5.0.0",
-    "clickhouse-driver>=0.2.6",
-    "neo4j>=5.15.0",
 ]
 
 [project.optional-dependencies]
@@ -25,7 +23,7 @@ dev = [
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["models*", "database*", "config*", "utils*"]
+include = ["models*", "correlation*", "database*", "utils*"]
 
 [tool.black]
 line-length = 100
