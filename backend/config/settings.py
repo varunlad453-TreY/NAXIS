@@ -56,6 +56,12 @@ class Settings(BaseSettings):
     ollama_base_url: str = Field(default="http://localhost:11434", description="Ollama API URL")
     ollama_model: str = Field(default="llama3.1:8b", description="Ollama model name")
 
+    # Juniper Mist
+    mist_api_key: str = Field(default="", description="Mist API token")
+    mist_org_id: str = Field(default="", description="Mist organization UUID")
+    mist_base_url: str = Field(default="https://api.mist.com", description="Mist API base URL")
+    mist_enabled: bool = Field(default=False, description="Enable Mist collector")
+
     # Collectors
     collector_interval: int = Field(default=60, description="Worker collection interval in seconds")
 

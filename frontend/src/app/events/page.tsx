@@ -185,7 +185,7 @@ export default function EventsPage() {
 
   const { data, isLoading, error } = useQuery({
     queryKey: ["events"],
-    queryFn: () => api.listEvents({ limit: 500 }),
+    queryFn: () => api.listEvents({ limit: 5000 }),
     refetchInterval: 10000,
   });
 

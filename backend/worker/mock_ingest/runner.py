@@ -10,18 +10,13 @@ This simulates the live platform behavior with realistic vendor payloads.
 
 import json
 import logging
-import sys
 from datetime import datetime
-from pathlib import Path
 from typing import List
 
-# Add backend to path
-sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
-
-from backend.shared.correlation import CorrelationEngine  # noqa: E402
-from backend.shared.models.event import UnifiedEvent  # noqa: E402
-from backend.shared.models.incident import Incident  # noqa: E402
-from backend.worker.mock_ingest import (  # noqa: E402
+from shared.correlation import CorrelationEngine
+from shared.models.event import UnifiedEvent
+from shared.models.incident import Incident
+from worker.mock_ingest import (
     DNACMockGenerator,
     MistMockGenerator,
     SDWANMockGenerator,

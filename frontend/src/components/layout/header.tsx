@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
-import { Activity, Search, Circle } from "lucide-react";
+import { Activity, Circle, Database } from "lucide-react";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
@@ -17,9 +17,8 @@ export function Header() {
   });
 
   const navItems = [
-    { href: "/", label: "Incidents" },
+    { href: "/", label: "Home" },
     { href: "/events", label: "Events" },
-    { href: "/devices", label: "Devices" },
   ];
 
   const isOnline = health?.status === "healthy";
@@ -41,19 +40,10 @@ export function Header() {
           </div>
         </Link>
 
-        <div className="hidden xl:flex flex-1 justify-center px-4">
-          <div className="flex w-full max-w-md items-center gap-3 border-b border-border bg-transparent px-3 py-2 text-sm text-foreground-subtle transition-colors focus-within:border-primary/60">
-            <Search className="h-4 w-4" />
-            <span className="truncate">Search incidents, sites, devices...</span>
-            <kbd className="ml-auto rounded bg-surface px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-foreground-subtle">
-              ⌘K
-            </kbd>
-          </div>
-        </div>
 
         <nav className="hidden lg:flex items-center gap-1">
           {navItems.map((item) => {
-            const active = pathname === item.href;
+            const active = pathname === item.href || (item.href !== "/" && pathname.startsWith(item.href));
             return (
               <Link
                 key={item.href}
@@ -70,12 +60,21 @@ export function Header() {
               </Link>
             );
           })}
-          <span className="px-3 py-1.5 text-sm text-foreground-subtle/60">
-            Topology
-          </span>
         </nav>
 
-        <div className="ml-auto flex items-center gap-2 shrink-0">
+        <div className="ml-auto flex items-center gap-3 shrink-0">
+          <Link
+            href="/devices"
+            className={cn(
+              "hidden sm:inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors",
+              pathname === "/devices"
+                ? "border-primary/40 bg-primary/8 text-primary"
+                : "border-border/50 text-foreground-muted hover:border-primary/30 hover:text-foreground"
+            )}
+          >
+            <Database className="h-3.5 w-3.5" />
+            Inventory
+          </Link>
           <div
             className={cn(
               "hidden sm:flex items-center gap-2 text-xs font-medium",

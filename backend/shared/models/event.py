@@ -5,6 +5,7 @@ Normalized event schema that consolidates events from all vendors
 (Cisco DNAC, Juniper Mist, Arista SD-WAN, Arista WLC) into a single format.
 """
 
+import json
 from datetime import datetime
 from enum import Enum
 from typing import Dict, List, Optional, Any, Tuple
@@ -228,8 +229,8 @@ class UnifiedEvent(BaseModel):
             "tags": self.tags,
             "incident_id": self.incident_id or "",
             "correlation_key": self.correlation_key or "",
-            "metadata": self.metadata,
-            "raw_event": self.raw_event or {},
+            "metadata": json.dumps(self.metadata),
+            "raw_event": json.dumps(self.raw_event or {}),
         }
 
     def add_tag(self, tag: str) -> None:

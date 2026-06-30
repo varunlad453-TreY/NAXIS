@@ -15,11 +15,11 @@ from datetime import datetime
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from backend.api.routes.devices import router as devices_router
-from backend.api.routes.events import router as events_router
-from backend.api.routes.incidents import health_router, router as incidents_router
-from backend.config.settings import get_settings
-from backend.shared.database.client import db
+from api.routes.devices import router as devices_router
+from api.routes.events import router as events_router
+from api.routes.incidents import health_router, router as incidents_router
+from config.settings import get_settings
+from shared.database.client import db
 
 _settings = get_settings()
 

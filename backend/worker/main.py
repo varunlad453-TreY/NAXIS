@@ -15,6 +15,13 @@ import logging
 import os
 import signal
 import sys
+from datetime import datetime, timedelta
+
+from config.settings import get_settings
+from shared.database.client import db
+from shared.database.events import insert_events
+from worker.collectors.mist import MistCollector
+from worker.collectors.mist_inventory import MistInventoryCollector
 
 logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO").upper(),
@@ -23,8 +30,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# How often the worker polls / runs its pipeline loop (seconds)
-COLLECTOR_INTERVAL = int(os.getenv("COLLECTOR_INTERVAL", "60"))
+_settings = get_settings()
+COLLECTOR_INTERVAL = _settings.collector_interval
 
 
 class WorkerDaemon:
@@ -39,6 +46,9 @@ class WorkerDaemon:
 
     def __init__(self):
         self._running = False
+        self._mist = MistCollector()
+        self._mist_inventory = MistInventoryCollector()
+        self._last_collected: datetime = datetime.utcnow() - timedelta(hours=24)
 
     async def run_once(self) -> None:
         """Execute one full pipeline pass."""
@@ -56,9 +66,18 @@ class WorkerDaemon:
         logger.debug("Worker pass complete")
 
     async def _collect_and_normalize(self) -> None:
-        """Collect telemetry from vendors and write normalized events to DB."""
-        # TODO Phase 3: implement DNAC / Mist / Arista collectors
-        pass
+        """Collect telemetry from all enabled vendors and write normalized events to DB."""
+        since = self._last_collected
+        now = datetime.utcnow()
+
+        events = await self._mist.collect(since=since)
+        if events:
+            await insert_events(events)
+            logger.info("Persisted %d new events to Postgres", len(events))
+
+        await self._mist_inventory.collect()
+
+        self._last_collected = now
 
     async def _correlate(self) -> None:
         """Read recent unprocessed events, run correlation, write incidents."""
@@ -74,16 +93,22 @@ class WorkerDaemon:
         self._running = True
         logger.info("=" * 60)
         logger.info("Naxis Worker starting")
-        logger.info(f"  Collector interval: {COLLECTOR_INTERVAL}s")
+        logger.info("  Collector interval: %ds", COLLECTOR_INTERVAL)
+        logger.info("  Mist enabled:       %s", _settings.mist_enabled)
         logger.info("=" * 60)
 
-        while self._running:
-            try:
-                await self.run_once()
-            except Exception:
-                logger.exception("Worker pass failed — will retry next interval")
+        await db.connect()
+        try:
+            while self._running:
+                try:
+                    await self.run_once()
+                except Exception:
+                    logger.exception("Worker pass failed — will retry next interval")
 
-            await asyncio.sleep(COLLECTOR_INTERVAL)
+                await asyncio.sleep(COLLECTOR_INTERVAL)
+        finally:
+            await db.disconnect()
+            logger.info("Worker DB pool closed")
 
     def stop(self) -> None:
         logger.info("Worker shutting down...")

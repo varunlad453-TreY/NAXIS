@@ -4,45 +4,51 @@
 
 @layer base {
   :root {
-    --background: 210 40% 98%;
-    --background-elevated: 210 40% 96%;
-    --background-hover: 210 40% 94%;
+    /* Light blue base — sky-tinted, not white */
+    --background: 204 60% 92%;
+    --background-elevated: 204 55% 88%;
+    --background-hover: 204 55% 85%;
 
-    --foreground: 222 47% 11%;
-    --foreground-muted: 215 16% 47%;
-    --foreground-subtle: 215 16% 60%;
+    /* Deep navy text — strong contrast on blue bg */
+    --foreground: 218 60% 12%;
+    --foreground-muted: 214 35% 32%;
+    --foreground-subtle: 210 25% 48%;
 
-    --surface: 210 40% 96%;
-    --surface-elevated: 0 0% 100%;
-    --surface-subtle: 214 32% 91%;
-    --surface-hover: 210 40% 94%;
+    /* Surfaces: slightly darker than background for layering */
+    --surface: 204 50% 86%;
+    --surface-elevated: 204 45% 94%;
+    --surface-subtle: 204 55% 80%;
+    --surface-hover: 204 50% 82%;
 
-    --primary: 199 89% 40%;
-    --primary-hover: 199 89% 33%;
-    --primary-subtle: 199 70% 90%;
+    /* Vivid cyan-blue primary */
+    --primary: 199 95% 34%;
+    --primary-hover: 199 95% 28%;
+    --primary-subtle: 199 80% 82%;
 
-    --border: 214 32% 86%;
-    --border-hover: 214 32% 78%;
+    /* Visible borders — darker than surface */
+    --border: 204 40% 68%;
+    --border-hover: 204 40% 55%;
 
-    --critical: 0 72% 51%;
-    --critical-bg: 0 75% 96%;
-    --critical-border: 0 70% 88%;
+    /* Severity — vivid on blue bg */
+    --critical: 0 78% 45%;
+    --critical-bg: 0 70% 88%;
+    --critical-border: 0 65% 72%;
 
-    --major: 38 92% 45%;
-    --major-bg: 45 90% 96%;
-    --major-border: 40 80% 88%;
+    --major: 28 95% 40%;
+    --major-bg: 35 85% 88%;
+    --major-border: 30 75% 70%;
 
-    --minor: 45 93% 47%;
-    --minor-bg: 48 90% 96%;
-    --minor-border: 45 80% 88%;
+    --minor: 44 95% 38%;
+    --minor-bg: 46 88% 88%;
+    --minor-border: 44 78% 68%;
 
-    --info: 199 89% 40%;
-    --info-bg: 199 80% 96%;
-    --info-border: 199 70% 90%;
+    --info: 199 95% 34%;
+    --info-bg: 199 75% 86%;
+    --info-border: 199 65% 70%;
 
-    --success: 142 71% 39%;
-    --success-bg: 142 70% 96%;
-    --success-border: 142 60% 90%;
+    --success: 142 75% 30%;
+    --success-bg: 142 65% 86%;
+    --success-border: 142 55% 65%;
   }
 
   [data-theme="dark"] {
@@ -124,4 +130,78 @@
   .text-balance {
     text-wrap: balance;
   }
+}
+
+/* ── Naxis sci-fi animations ──────────────────────────────────────────────── */
+
+@keyframes naxis-orbit-cw {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+@keyframes naxis-orbit-ccw {
+  from { transform: rotate(360deg); }
+  to   { transform: rotate(0deg); }
+}
+@keyframes naxis-orb-pulse {
+  0%, 100% { filter: drop-shadow(0 0 10px rgba(6,182,212,0.5)) drop-shadow(0 0 30px rgba(6,182,212,0.2)); }
+  50%       { filter: drop-shadow(0 0 22px rgba(6,182,212,0.9)) drop-shadow(0 0 60px rgba(6,182,212,0.4)) drop-shadow(0 0 100px rgba(6,182,212,0.15)); }
+}
+@keyframes naxis-twinkle-a {
+  0%, 100% { opacity: 0.9; }
+  50%       { opacity: 0.15; }
+}
+@keyframes naxis-twinkle-b {
+  0%, 100% { opacity: 0.6; }
+  40%       { opacity: 0.05; }
+}
+@keyframes naxis-twinkle-c {
+  0%, 30%, 100% { opacity: 0.8; }
+  60%            { opacity: 0.2; }
+}
+@keyframes naxis-scan {
+  0%   { transform: translateY(0); opacity: 0; }
+  5%   { opacity: 0.5; }
+  95%  { opacity: 0.5; }
+  100% { transform: translateY(100vh); opacity: 0; }
+}
+@keyframes naxis-blink {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0; }
+}
+@keyframes naxis-float {
+  0%, 100% { transform: translateY(0px); }
+  50%       { transform: translateY(-10px); }
+}
+@keyframes naxis-shimmer {
+  0%   { background-position: -400% center; }
+  100% { background-position: 400% center; }
+}
+@keyframes naxis-card-glow {
+  0%, 100% { box-shadow: 0 0 0 1px rgba(6,182,212,0.15), 0 0 20px rgba(6,182,212,0.05); }
+  50%       { box-shadow: 0 0 0 1px rgba(6,182,212,0.4),  0 0 40px rgba(6,182,212,0.15); }
+}
+@keyframes naxis-enter {
+  from { opacity: 0; transform: translateY(20px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes naxis-radar {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+@keyframes naxis-hud-pulse {
+  0%, 100% { border-color: rgba(6,182,212,0.2); }
+  50%       { border-color: rgba(6,182,212,0.5); }
+}
+
+/* Shimmer gradient text — dark uses pastels, light uses deep saturated */
+.naxis-shimmer-text {
+  background-image: linear-gradient(90deg, #0369a1 0%, #6d28d9 35%, #0369a1 65%, #047857 100%);
+  background-size: 300% auto;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  animation: naxis-shimmer 6s linear infinite;
+}
+[data-theme="dark"] .naxis-shimmer-text {
+  background-image: linear-gradient(90deg, #22d3ee 0%, #a78bfa 35%, #22d3ee 65%, #34d399 100%);
 }
