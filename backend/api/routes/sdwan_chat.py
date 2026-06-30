@@ -44,6 +44,7 @@ class ChatResponse(BaseModel):
 # ── Intent detection ───────────────────────────────────────────────────────────
 
 _INTENTS = [
+    ("capacity",           r"capacit|utilisa|utiliz|saturat|provision|mbps|mbit|upload.*speed|download.*speed|bandwidth.*plan|plan.*bandwidth|link.*size|circuit.*size"),
     ("worst_sites",        r"worst|bottom|lowest score|poorest|bad.*site|site.*bad|degraded.*site"),
     ("site_health",        r"site|location|branch|office"),
     ("edge_detail",        r"why|what.*wrong|problem|issue|fault|check.*edge|edge.*check|detail|diagnose"),
@@ -88,6 +89,7 @@ async def _all_edges() -> List[Dict]:
     for r in rows:
         raw = r["props"]
         props = json.loads(raw) if isinstance(raw, str) else (raw or {})
+        # Pass through all link fields (includes capacity: upstream_mbps, downstream_mbps, isp, public_ip)
         result.append({
             "device_id": r["device_id"],
             "hostname": r["hostname"],
@@ -386,6 +388,90 @@ async def _handle_site_health(edges: List[Dict], query: str) -> ChatResponse:
     return ChatResponse(answer="\n".join(lines), data=matches, intent="site_health")
 
 
+_CAPACITY_GENERIC = re.compile(
+    r"^(link|wan|all|circuit|bandwidth|capacit|utilisa|utiliz|overall|show|network|mbps|mbit)[\s\w]*$"
+)
+
+async def _handle_capacity(edges: List[Dict], query: str) -> ChatResponse:
+    """Show provisioned vs actual throughput per WAN link."""
+    name = _extract_name(query)
+    # Treat as a general/all-edges query when the extracted term is just capacity jargon
+    if not name or _CAPACITY_GENERIC.match(name.strip().lower()):
+        name = None
+    if name:
+        targets = [e for e in edges if name in e["hostname"].lower() or name in e["site_name"].lower()]
+    else:
+        targets = [e for e in edges if e["links"]]
+
+    # Collect all links with provisioned capacity
+    rows = []
+    for e in targets:
+        for lk in e["links"]:
+            up_mbps = lk.get("upstream_mbps")
+            dn_mbps = lk.get("downstream_mbps")
+            if not up_mbps and not dn_mbps:
+                continue
+            bps_rx = lk.get("bps_rx", 0)
+            bps_tx = lk.get("bps_tx", 0)
+            rx_mbps = bps_rx / 1_000_000
+            tx_mbps = bps_tx / 1_000_000
+            dn_pct = round((rx_mbps / dn_mbps) * 100, 1) if dn_mbps else None
+            up_pct = round((tx_mbps / up_mbps) * 100, 1) if up_mbps else None
+            rows.append({
+                "edge": e["hostname"],
+                "site": e["site_name"],
+                "link": lk.get("name", ""),
+                "isp": lk.get("isp", ""),
+                "upstream_mbps": up_mbps,
+                "downstream_mbps": dn_mbps,
+                "rx_mbps": round(rx_mbps, 1),
+                "tx_mbps": round(tx_mbps, 1),
+                "dn_pct": dn_pct,
+                "up_pct": up_pct,
+            })
+
+    if not rows:
+        if name:
+            return ChatResponse(
+                answer=f"No provisioned capacity data found for '{name}'. "
+                       "Capacity figures come from the VCO WAN configuration — links without a configured bandwidth will show '—'.",
+                intent="capacity",
+            )
+        return ChatResponse(
+            answer="No provisioned capacity data available yet. "
+                   "Capacity is collected from `edge/getEdgeConfigurationStack` in VCO — "
+                   "run the worker to populate it, or check that upstreamMbps/downstreamMbps are configured for your WAN links.",
+            intent="capacity",
+        )
+
+    # Sort by highest utilisation first (downstream, falling back to upstream)
+    rows.sort(key=lambda r: -(r["dn_pct"] or r["up_pct"] or 0))
+
+    lines = [f"**Link capacity utilisation** ({len(rows)} links with provisioned bandwidth)", ""]
+    saturated = [r for r in rows if (r["dn_pct"] or 0) > 90 or (r["up_pct"] or 0) > 90]
+    if saturated:
+        lines.append(f"⚠ **{len(saturated)} link(s) near saturation (>90%):**")
+        for r in saturated:
+            lines.append(
+                f"  · **{r['edge']}** / {r['link']} — "
+                f"↓{r['rx_mbps']}/{r['downstream_mbps']} Mbps ({r['dn_pct']}%) "
+                f"↑{r['tx_mbps']}/{r['upstream_mbps']} Mbps ({r['up_pct']}%)"
+            )
+        lines.append("")
+
+    lines.append("**All links:**")
+    for r in rows[:20]:
+        dn = f"↓{r['rx_mbps']}/{r['downstream_mbps']} Mbps ({r['dn_pct']}%)" if r["dn_pct"] is not None else f"↓{r['rx_mbps']} Mbps"
+        up = f"↑{r['tx_mbps']}/{r['upstream_mbps']} Mbps ({r['up_pct']}%)" if r["up_pct"] is not None else f"↑{r['tx_mbps']} Mbps"
+        isp = f" [{r['isp']}]" if r["isp"] else ""
+        lines.append(f"- **{r['edge']}** / {r['link']}{isp} — {dn} · {up}")
+
+    if len(rows) > 20:
+        lines.append(f"\n_Showing 20 of {len(rows)} links. Filter by edge or site name for detail._")
+
+    return ChatResponse(answer="\n".join(lines), data=rows, intent="capacity")
+
+
 async def _handle_count(edges: List[Dict]) -> ChatResponse:
     total = len(edges)
     connected = sum(1 for e in edges if e["reachability"] == "reachable")
@@ -407,7 +493,9 @@ async def sdwan_chat(req: ChatRequest) -> ChatResponse:
         intent = _detect_intent(req.message)
         edges = await _all_edges()
 
-        if intent == "summary":
+        if intent == "capacity":
+            return await _handle_capacity(edges, req.message)
+        elif intent == "summary":
             return await _handle_summary(edges)
         elif intent == "worst_sites":
             return await _handle_worst_sites(edges)

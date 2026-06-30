@@ -13,6 +13,10 @@ export interface VeloBrainLink {
   loss_pct_tx: number;
   bps_rx: number;
   bps_tx: number;
+  upstream_mbps?: number | null;
+  downstream_mbps?: number | null;
+  isp?: string;
+  public_ip?: string;
 }
 
 export interface DeviceProps {

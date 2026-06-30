@@ -79,6 +79,25 @@ function ScoreBar({ score, size = "md" }: { score: number; size?: "sm" | "md" })
   );
 }
 
+function UtilBar({ bps, provisionedMbps, dir }: { bps: number; provisionedMbps: number | null; dir: string }) {
+  const actual = bps / 1_000_000;
+  const pct = provisionedMbps && provisionedMbps > 0 ? Math.min(100, (actual / provisionedMbps) * 100) : null;
+  const barColor = pct == null ? "bg-foreground-subtle" : pct > 90 ? "bg-critical" : pct > 70 ? "bg-major" : "bg-success";
+  return (
+    <div className="flex items-center gap-1.5 mt-0.5">
+      <span className="text-foreground-subtle text-[10px] w-3">{dir}</span>
+      <div className="h-1 w-16 rounded-full bg-surface-subtle overflow-hidden">
+        {pct != null && <div className={`h-full rounded-full ${barColor}`} style={{ width: `${pct}%` }} />}
+      </div>
+      <span className="font-mono text-[11px] text-foreground">
+        {actual >= 1 ? `${actual.toFixed(0)}` : bps ? `${(bps / 1000).toFixed(0)}k` : "—"}
+        {provisionedMbps ? `/${provisionedMbps}` : ""} Mbps
+        {pct != null && <span className="text-foreground-subtle ml-0.5">({pct.toFixed(0)}%)</span>}
+      </span>
+    </div>
+  );
+}
+
 function StateChip({ reachability }: { reachability: DeviceReachability }) {
   if (reachability === "reachable")
     return <span className="inline-flex items-center gap-1 rounded-full border border-success/25 bg-success/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-success">Connected</span>;
@@ -369,9 +388,14 @@ function LinkHealthRow({ device }: { device: DeviceSummary }) {
                 <div className="font-mono text-foreground-muted text-[11px]">↑ {link.loss_pct_tx.toFixed(2)}%</div>
               </div>
               <div>
-                <div className="text-[10px] font-bold uppercase tracking-wider text-foreground-subtle mb-1">Bandwidth</div>
-                <div className="font-mono text-foreground text-xs">↓ {fmtMbps(link.bps_rx)}</div>
-                <div className="font-mono text-foreground-muted text-[11px]">↑ {fmtMbps(link.bps_tx)}</div>
+                <div className="text-[10px] font-bold uppercase tracking-wider text-foreground-subtle mb-1">
+                  Throughput{link.downstream_mbps ? " / Capacity" : ""}
+                </div>
+                <UtilBar bps={link.bps_rx} provisionedMbps={link.downstream_mbps ?? null} dir="↓" />
+                <UtilBar bps={link.bps_tx} provisionedMbps={link.upstream_mbps ?? null} dir="↑" />
+                {link.isp && (
+                  <div className="text-[10px] text-foreground-subtle mt-1 truncate">{link.isp}</div>
+                )}
               </div>
             </div>
           ))}
