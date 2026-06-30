@@ -1,11 +1,12 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useRef, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   Activity,
   AlertTriangle,
   ArrowRight,
+  Bot,
   CheckCircle2,
   ChevronDown,
   ChevronRight,
@@ -13,12 +14,12 @@ import {
   Filter,
   Globe,
   HelpCircle,
-  Info,
   Layers,
   MapPin,
   Network,
   Radio,
   Search,
+  Send,
   Server,
   Shield,
   TrendingDown,
@@ -41,7 +42,7 @@ function fmtMbps(bps: number) {
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-type NavTab = "overview" | "edges" | "linkhealth" | "troubleshoot";
+type NavTab = "overview" | "edges" | "linkhealth" | "troubleshoot" | "chat";
 
 // ── Score helpers ─────────────────────────────────────────────────────────────
 
@@ -634,6 +635,157 @@ function TroubleshootTab() {
   );
 }
 
+// ── Chat tab ──────────────────────────────────────────────────────────────────
+
+interface Message { role: "user" | "assistant"; content: string; }
+
+const SUGGESTIONS = [
+  "Show me a network health summary",
+  "Which edges have the worst WAN quality?",
+  "Are there any offline edges?",
+  "Show all unstable WAN links",
+  "Which sites are performing best?",
+];
+
+function MarkdownLine({ text }: { text: string }) {
+  // Bold: **text**
+  const parts = text.split(/(\*\*[^*]+\*\*)/g);
+  return (
+    <span>
+      {parts.map((p, i) =>
+        p.startsWith("**") && p.endsWith("**")
+          ? <strong key={i} className="font-semibold text-foreground">{p.slice(2, -2)}</strong>
+          : <span key={i}>{p}</span>
+      )}
+    </span>
+  );
+}
+
+function AssistantBubble({ content }: { content: string }) {
+  const lines = content.split("\n");
+  return (
+    <div className="space-y-1 text-sm text-foreground leading-relaxed">
+      {lines.map((line, i) => {
+        if (!line.trim()) return <div key={i} className="h-1" />;
+        if (line.startsWith("- ") || line.startsWith("· "))
+          return <div key={i} className="flex gap-2"><span className="text-foreground-subtle mt-0.5 shrink-0">·</span><MarkdownLine text={line.slice(2)} /></div>;
+        if (/^\d+\./.test(line))
+          return <div key={i} className="flex gap-2"><span className="text-foreground-subtle shrink-0">{line.match(/^\d+/)?.[0]}.</span><MarkdownLine text={line.replace(/^\d+\.\s*/, "")} /></div>;
+        return <div key={i}><MarkdownLine text={line} /></div>;
+      })}
+    </div>
+  );
+}
+
+function ChatTab() {
+  const [messages, setMessages] = useState<Message[]>([
+    { role: "assistant", content: "**VeloBrain Intelligence** — ask me anything about your SD-WAN.\n\nI have live access to VeloBrain scores, link quality metrics (latency, jitter, loss), and edge status across all Tata Motors sites." }
+  ]);
+  const [input, setInput] = useState("");
+  const [loading, setLoading] = useState(false);
+  const bottomRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, loading]);
+
+  const send = async (text: string) => {
+    if (!text.trim() || loading) return;
+    const userMsg: Message = { role: "user", content: text };
+    setMessages(prev => [...prev, userMsg]);
+    setInput("");
+    setLoading(true);
+    try {
+      const history = messages.map(m => ({ role: m.role, content: m.content }));
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"}/sdwan/chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: text, history }),
+      });
+      const data = await res.json();
+      setMessages(prev => [...prev, { role: "assistant", content: data.answer }]);
+    } catch {
+      setMessages(prev => [...prev, { role: "assistant", content: "Failed to reach the intelligence engine. Please try again." }]);
+    } finally {
+      setLoading(false);
+      inputRef.current?.focus();
+    }
+  };
+
+  return (
+    <div className="flex flex-col h-[640px] rounded-xl border border-border/50 overflow-hidden bg-background">
+      {/* Messages */}
+      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+        {messages.map((m, i) => (
+          <div key={i} className={`flex gap-3 ${m.role === "user" ? "justify-end" : "justify-start"}`}>
+            {m.role === "assistant" && (
+              <div className="h-7 w-7 shrink-0 rounded-full bg-emerald-400/15 border border-emerald-400/25 flex items-center justify-center mt-0.5">
+                <Bot className="h-3.5 w-3.5 text-emerald-400" />
+              </div>
+            )}
+            <div className={`max-w-[85%] rounded-xl px-4 py-3 ${
+              m.role === "user"
+                ? "bg-primary/10 border border-primary/20 text-foreground text-sm"
+                : "bg-surface border border-border/50"
+            }`}>
+              {m.role === "assistant"
+                ? <AssistantBubble content={m.content} />
+                : <span className="text-sm">{m.content}</span>}
+            </div>
+          </div>
+        ))}
+        {loading && (
+          <div className="flex gap-3 justify-start">
+            <div className="h-7 w-7 shrink-0 rounded-full bg-emerald-400/15 border border-emerald-400/25 flex items-center justify-center">
+              <Bot className="h-3.5 w-3.5 text-emerald-400" />
+            </div>
+            <div className="rounded-xl px-4 py-3 bg-surface border border-border/50">
+              <div className="flex gap-1 items-center h-5">
+                {[0, 1, 2].map(i => (
+                  <span key={i} className="h-1.5 w-1.5 rounded-full bg-emerald-400/60"
+                    style={{ animation: `naxis-blink 1.2s ${i * 0.2}s ease-in-out infinite` }} />
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+        <div ref={bottomRef} />
+      </div>
+
+      {/* Suggestions */}
+      {messages.length <= 1 && (
+        <div className="px-4 pb-2 flex flex-wrap gap-2">
+          {SUGGESTIONS.map(s => (
+            <button key={s} onClick={() => send(s)}
+              className="text-xs rounded-full border border-emerald-400/25 bg-emerald-400/8 px-3 py-1.5 text-emerald-400 hover:bg-emerald-400/15 transition-colors">
+              {s}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* Input */}
+      <div className="border-t border-border/50 px-4 py-3 flex items-center gap-3">
+        <input
+          ref={inputRef}
+          type="text"
+          value={input}
+          onChange={e => setInput(e.target.value)}
+          onKeyDown={e => e.key === "Enter" && send(input)}
+          placeholder="Ask about link quality, offline edges, worst sites..."
+          className="flex-1 bg-transparent text-sm text-foreground outline-none placeholder:text-foreground-subtle"
+          disabled={loading}
+        />
+        <button onClick={() => send(input)} disabled={!input.trim() || loading}
+          className="h-8 w-8 rounded-lg flex items-center justify-center bg-emerald-400/15 border border-emerald-400/25 text-emerald-400 hover:bg-emerald-400/25 disabled:opacity-30 transition-colors">
+          <Send className="h-3.5 w-3.5" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 const TABS: Array<{ id: NavTab; label: string; icon: React.ElementType }> = [
@@ -641,6 +793,7 @@ const TABS: Array<{ id: NavTab; label: string; icon: React.ElementType }> = [
   { id: "edges",        label: "Edges",        icon: Radio },
   { id: "linkhealth",   label: "Link Health",  icon: Wifi },
   { id: "troubleshoot", label: "Troubleshoot", icon: HelpCircle },
+  { id: "chat",         label: "VeloBrain AI", icon: Bot },
 ];
 
 export default function SdwanObserverPage() {
@@ -711,6 +864,7 @@ export default function SdwanObserverPage() {
             {activeTab === "edges"        && <EdgesTab devices={devices} />}
             {activeTab === "linkhealth"   && <LinkHealthTab devices={devices} />}
             {activeTab === "troubleshoot" && <TroubleshootTab />}
+            {activeTab === "chat"         && <ChatTab />}
           </>
         )}
 

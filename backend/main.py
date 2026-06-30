@@ -18,6 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from api.routes.devices import router as devices_router
 from api.routes.events import router as events_router
 from api.routes.incidents import health_router, router as incidents_router
+from api.routes.sdwan_chat import router as sdwan_chat_router
 from config.settings import get_settings
 from shared.database.client import db
 
@@ -75,6 +76,7 @@ app.include_router(health_router)
 app.include_router(incidents_router)
 app.include_router(events_router)
 app.include_router(devices_router)
+app.include_router(sdwan_chat_router)
 
 
 @app.get("/", include_in_schema=False)
