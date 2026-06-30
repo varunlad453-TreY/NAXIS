@@ -23,6 +23,7 @@ from shared.database.events import insert_events
 from worker.collectors.mist import MistCollector
 from worker.collectors.mist_inventory import MistInventoryCollector
 from worker.collectors.velocloud_inventory import VelocloudInventoryCollector
+from worker.collectors.velocloud_metrics import VelocloudMetricsCollector
 
 logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO").upper(),
@@ -50,6 +51,7 @@ class WorkerDaemon:
         self._mist = MistCollector()
         self._mist_inventory = MistInventoryCollector()
         self._velocloud_inventory = VelocloudInventoryCollector()
+        self._velocloud_metrics = VelocloudMetricsCollector()
         self._last_collected: datetime = datetime.utcnow() - timedelta(hours=24)
 
     async def run_once(self) -> None:
@@ -79,6 +81,7 @@ class WorkerDaemon:
 
         await self._mist_inventory.collect()
         await self._velocloud_inventory.collect()
+        await self._velocloud_metrics.collect()
 
         self._last_collected = now
 

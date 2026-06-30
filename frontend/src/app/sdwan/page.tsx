@@ -3,34 +3,82 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
-  AlertCircle,
+  Activity,
+  AlertTriangle,
+  ArrowRight,
+  CheckCircle2,
   ChevronDown,
   ChevronRight,
+  Circle,
   Filter,
+  Globe,
+  HelpCircle,
+  Info,
+  Layers,
   MapPin,
   Network,
   Radio,
   Search,
   Server,
+  Shield,
+  TrendingDown,
+  Wifi,
+  WifiOff,
   X,
   Zap,
 } from "lucide-react";
 import { api } from "@/lib/api";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
-import type { DeviceReachability, DeviceSummary } from "@/types/device";
+import type { DeviceReachability, DeviceSummary, VeloBrainLink } from "@/types/device";
 
-function ReachabilityDot({ status }: { status: DeviceReachability }) {
-  const colors: Record<DeviceReachability, string> = {
-    reachable: "bg-success",
-    unreachable: "bg-critical",
-    degraded: "bg-major",
-    unknown: "bg-foreground-subtle",
-  };
-  return <span className={`inline-block h-2 w-2 rounded-full ${colors[status] ?? "bg-foreground-subtle"}`} title={status} />;
+function fmt(n: number) { return new Intl.NumberFormat("en-US").format(n); }
+function fmtMbps(bps: number) {
+  if (!bps) return "—";
+  const mbps = bps / 1_000_000;
+  return mbps >= 1 ? `${mbps.toFixed(0)} Mbps` : `${(bps / 1000).toFixed(0)} Kbps`;
 }
 
-function StateChip({ reachability }: { reachability: string }) {
+// ── Types ─────────────────────────────────────────────────────────────────────
+
+type NavTab = "overview" | "edges" | "linkhealth" | "troubleshoot";
+
+// ── Score helpers ─────────────────────────────────────────────────────────────
+
+function scoreColor(score: number) {
+  if (score >= 4) return "text-success";
+  if (score >= 3) return "text-major";
+  return "text-critical";
+}
+function scoreBg(score: number) {
+  if (score >= 4) return "bg-success";
+  if (score >= 3) return "bg-major";
+  return "bg-critical";
+}
+function scoreLabel(score: number) {
+  if (score >= 4.5) return "Excellent";
+  if (score >= 4) return "Good";
+  if (score >= 3) return "Fair";
+  if (score >= 2) return "Poor";
+  return "Critical";
+}
+
+function ScoreBar({ score, size = "md" }: { score: number; size?: "sm" | "md" }) {
+  const pct = Math.min(100, (score / 5) * 100);
+  const h = size === "sm" ? "h-1" : "h-1.5";
+  const w = size === "sm" ? "w-16" : "w-24";
+  return (
+    <div className="flex items-center gap-2">
+      <div className={`${h} ${w} rounded-full bg-surface-subtle overflow-hidden`}>
+        <div className={`h-full rounded-full ${scoreBg(score)}`} style={{ width: `${pct}%` }} />
+      </div>
+      <span className={`text-xs font-mono font-bold ${scoreColor(score)}`}>{score.toFixed(1)}</span>
+      <span className={`text-[10px] ${scoreColor(score)}`}>{scoreLabel(score)}</span>
+    </div>
+  );
+}
+
+function StateChip({ reachability }: { reachability: DeviceReachability }) {
   if (reachability === "reachable")
     return <span className="inline-flex items-center gap-1 rounded-full border border-success/25 bg-success/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-success">Connected</span>;
   if (reachability === "degraded")
@@ -38,108 +86,565 @@ function StateChip({ reachability }: { reachability: string }) {
   return <span className="inline-flex items-center gap-1 rounded-full border border-critical/25 bg-critical/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-critical">Offline</span>;
 }
 
-function EdgeRow({ device }: { device: DeviceSummary }) {
-  return (
-    <div className="group grid grid-cols-12 items-center gap-3 px-3 py-3 transition-colors hover:bg-surface text-sm">
-      <div className="col-span-12 flex items-center gap-3 lg:col-span-4">
-        <div className="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-surface-subtle/40 text-foreground-subtle">
-          <Radio className="h-4 w-4" />
-          <span className="absolute -right-0.5 -top-0.5">
-            <ReachabilityDot status={device.reachability} />
-          </span>
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="truncate font-medium text-foreground group-hover:text-primary">
-            {device.hostname || device.device_id}
-          </div>
-          <div className="flex items-center gap-2 mt-0.5">
-            {device.serial && (
-              <span className="font-mono text-[11px] text-foreground-subtle">{device.serial}</span>
-            )}
-            {device.model && (
-              <span className="inline-flex items-center rounded border border-emerald-400/20 bg-emerald-400/10 px-1.5 py-0 text-[10px] font-semibold uppercase tracking-wider text-emerald-400">
-                {device.model}
-              </span>
-            )}
-          </div>
-        </div>
-      </div>
+// ── Overview tab ──────────────────────────────────────────────────────────────
 
-      <div className="col-span-6 lg:col-span-3">
-        <div className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-foreground-subtle mb-0.5">
-          <MapPin className="h-3 w-3" /> Site
-        </div>
-        <div className="truncate text-foreground">{device.site_name || "—"}</div>
-      </div>
+function OverviewTab({ devices }: { devices: DeviceSummary[] }) {
+  const stats = useMemo(() => {
+    const connected = devices.filter(d => d.reachability === "reachable").length;
+    const degraded = devices.filter(d => d.reachability === "degraded").length;
+    const offline = devices.filter(d => d.reachability === "unreachable").length;
+    const withScore = devices.filter(d => d.props?.velobrain_score !== undefined);
+    const avgScore = withScore.length
+      ? withScore.reduce((s, d) => s + (d.props.velobrain_score ?? 0), 0) / withScore.length
+      : 0;
+    const criticalLinks = devices.filter(d => (d.props?.velobrain_score ?? 5) < 2);
+    const sites = new Set(devices.map(d => d.site_name)).size;
+    return { connected, degraded, offline, avgScore, criticalLinks, sites };
+  }, [devices]);
 
-      <div className="col-span-6 lg:col-span-2">
-        <div className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-foreground-subtle mb-0.5">
-          <Network className="h-3 w-3" /> WAN IP
-        </div>
-        <div className="font-mono text-foreground">{device.ip_address || "—"}</div>
-      </div>
-
-      <div className="col-span-6 lg:col-span-2">
-        <div className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-foreground-subtle mb-0.5">
-          <Zap className="h-3 w-3" /> Firmware
-        </div>
-        <div className="text-foreground text-[11px]">{device.firmware_version || "—"}</div>
-      </div>
-
-      <div className="col-span-6 lg:col-span-1 text-right">
-        <StateChip reachability={device.reachability} />
-      </div>
-    </div>
+  const recentIssues = useMemo(() =>
+    devices
+      .filter(d => d.reachability !== "reachable")
+      .slice(0, 8),
+    [devices]
   );
-}
-
-function SiteGroup({ siteName, devices }: { siteName: string; devices: DeviceSummary[] }) {
-  const [open, setOpen] = useState(true);
-  const reachable = devices.filter((d) => d.reachability === "reachable").length;
-  const degraded = devices.filter((d) => d.reachability === "degraded").length;
-  const offline = devices.filter((d) => d.reachability === "unreachable").length;
 
   return (
-    <div className="border border-border/50 rounded-lg overflow-hidden">
-      <button
-        onClick={() => setOpen((o) => !o)}
-        className="w-full flex items-center justify-between px-4 py-3 bg-surface hover:bg-surface/80 transition-colors"
-      >
-        <div className="flex items-center gap-3">
-          {open ? <ChevronDown className="h-4 w-4 text-foreground-subtle" /> : <ChevronRight className="h-4 w-4 text-foreground-subtle" />}
-          <MapPin className="h-4 w-4 text-emerald-400" />
-          <span className="font-medium text-foreground">{siteName}</span>
-          <Badge variant="outline" className="text-[10px]">{devices.length} edges</Badge>
+    <div className="space-y-8">
+      {/* KPI row */}
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
+        {[
+          { label: "Total Edges", value: devices.length, color: "text-foreground" },
+          { label: "Connected", value: stats.connected, color: "text-success" },
+          { label: "Degraded", value: stats.degraded, color: "text-major" },
+          { label: "Offline", value: stats.offline, color: "text-critical" },
+          { label: "Sites", value: stats.sites, color: "text-foreground" },
+        ].map(k => (
+          <div key={k.label} className="rounded-lg border border-border/50 bg-surface/40 px-4 py-3">
+            <div className={`text-xl font-bold font-mono ${k.color}`}>{k.value}</div>
+            <div className="text-[10px] font-bold uppercase tracking-wider text-foreground-subtle mt-0.5">{k.label}</div>
+          </div>
+        ))}
+        <div className="rounded-lg border border-border/50 bg-surface/40 px-4 py-3">
+          <div className={`text-xl font-bold font-mono ${scoreColor(stats.avgScore)}`}>{stats.avgScore.toFixed(1)}</div>
+          <div className="text-[10px] font-bold uppercase tracking-wider text-foreground-subtle mt-0.5">Avg VeloBrain</div>
         </div>
-        <div className="flex items-center gap-4 text-sm">
-          <span className="flex items-center gap-1.5 text-success">
-            <span className="h-1.5 w-1.5 rounded-full bg-success" />{reachable} up
-          </span>
-          {degraded > 0 && (
-            <span className="flex items-center gap-1.5 text-major">
-              <span className="h-1.5 w-1.5 rounded-full bg-major" />{degraded} degraded
-            </span>
-          )}
-          {offline > 0 && (
-            <span className="flex items-center gap-1.5 text-critical">
-              <span className="h-1.5 w-1.5 rounded-full bg-critical" />{offline} down
-            </span>
-          )}
+      </div>
+
+      {/* Issue list */}
+      {recentIssues.length > 0 && (
+        <div>
+          <h3 className="text-xs font-bold uppercase tracking-[0.2em] text-foreground-subtle mb-3 flex items-center gap-2">
+            <AlertTriangle className="h-3.5 w-3.5 text-major" /> Edges with issues
+          </h3>
+          <div className="space-y-2">
+            {recentIssues.map(d => (
+              <div key={d.device_id} className="flex items-center justify-between rounded-lg border border-border/40 bg-surface/30 px-4 py-3">
+                <div className="flex items-center gap-3">
+                  <Radio className="h-4 w-4 text-foreground-subtle" />
+                  <div>
+                    <div className="text-sm font-medium text-foreground">{d.hostname}</div>
+                    <div className="text-[11px] text-foreground-muted">{d.site_name}</div>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3">
+                  {d.props?.velobrain_score !== undefined && (
+                    <ScoreBar score={d.props.velobrain_score} size="sm" />
+                  )}
+                  <StateChip reachability={d.reachability} />
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
-      </button>
-      {open && (
-        <div className="divide-y divide-border/40">
-          {devices.map((d) => <EdgeRow key={d.device_id} device={d} />)}
+      )}
+
+      {recentIssues.length === 0 && devices.length > 0 && (
+        <div className="flex items-center gap-3 rounded-lg border border-success/20 bg-success/5 px-5 py-4">
+          <CheckCircle2 className="h-5 w-5 text-success" />
+          <div>
+            <p className="font-medium text-foreground">All edges connected</p>
+            <p className="text-sm text-foreground-muted">No faults detected across {devices.length} edges and {stats.sites} sites.</p>
+          </div>
         </div>
       )}
     </div>
   );
 }
 
-export default function SdwanObserverPage() {
+// ── Edges tab ─────────────────────────────────────────────────────────────────
+
+function EdgeRow({ device }: { device: DeviceSummary }) {
+  const score = device.props?.velobrain_score;
+  return (
+    <div className="group grid grid-cols-12 items-center gap-3 px-3 py-3 hover:bg-surface transition-colors text-sm">
+      <div className="col-span-12 flex items-center gap-3 lg:col-span-4">
+        <div className="relative flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-surface-subtle/40">
+          <Radio className="h-4 w-4 text-emerald-400" />
+          <span className={`absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full ${device.reachability === "reachable" ? "bg-success" : device.reachability === "degraded" ? "bg-major" : "bg-critical"}`} />
+        </div>
+        <div className="min-w-0">
+          <div className="truncate font-medium text-foreground group-hover:text-primary text-xs">{device.hostname}</div>
+          <div className="flex items-center gap-1.5 mt-0.5">
+            {device.serial && <span className="font-mono text-[10px] text-foreground-subtle">{device.serial}</span>}
+            {device.model && <span className="rounded border border-emerald-400/20 bg-emerald-400/8 px-1 text-[9px] font-bold uppercase tracking-wider text-emerald-400">{device.model}</span>}
+          </div>
+        </div>
+      </div>
+      <div className="col-span-6 lg:col-span-2 text-xs">
+        <div className="text-[10px] font-semibold uppercase tracking-wider text-foreground-subtle mb-0.5 flex items-center gap-1"><MapPin className="h-3 w-3" />Site</div>
+        <div className="truncate text-foreground">{device.site_name || "—"}</div>
+      </div>
+      <div className="col-span-6 lg:col-span-2 text-xs">
+        <div className="text-[10px] font-semibold uppercase tracking-wider text-foreground-subtle mb-0.5">WAN IP</div>
+        <div className="font-mono text-foreground">{device.ip_address || "—"}</div>
+      </div>
+      <div className="col-span-6 lg:col-span-2 text-xs">
+        <div className="text-[10px] font-semibold uppercase tracking-wider text-foreground-subtle mb-0.5">VeloBrain Score</div>
+        {score !== undefined ? <ScoreBar score={score} size="sm" /> : <span className="text-foreground-subtle">—</span>}
+      </div>
+      <div className="col-span-6 lg:col-span-2 text-right">
+        <StateChip reachability={device.reachability} />
+        {device.firmware_version && (
+          <div className="flex items-center justify-end gap-1 mt-1 text-[10px] text-foreground-subtle">
+            <Zap className="h-3 w-3" />{device.firmware_version}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function EdgesTab({ devices }: { devices: DeviceSummary[] }) {
   const [search, setSearch] = useState("");
-  const [reachabilityFilter, setReachabilityFilter] = useState<DeviceReachability | "all">("all");
+  const [rf, setRf] = useState<DeviceReachability | "all">("all");
   const [groupBySite, setGroupBySite] = useState(true);
+
+  const filtered = useMemo(() => {
+    const term = search.toLowerCase();
+    return devices.filter(d => {
+      if (rf !== "all" && d.reachability !== rf) return false;
+      if (!term) return true;
+      return d.hostname.toLowerCase().includes(term) || d.serial.toLowerCase().includes(term) ||
+        d.model.toLowerCase().includes(term) || d.site_name.toLowerCase().includes(term) ||
+        d.ip_address.toLowerCase().includes(term);
+    });
+  }, [devices, rf, search]);
+
+  const siteGroups = useMemo(() => {
+    const map = new Map<string, DeviceSummary[]>();
+    for (const d of filtered) {
+      const k = d.site_name || "Unknown";
+      if (!map.has(k)) map.set(k, []);
+      map.get(k)!.push(d);
+    }
+    return Array.from(map.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+  }, [filtered]);
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+        <div className="relative flex-1">
+          <Search className="absolute left-0 top-1/2 h-4 w-4 -translate-y-1/2 text-foreground-subtle" />
+          <input type="text" placeholder="Search edge, serial, model, site, WAN IP..."
+            value={search} onChange={e => setSearch(e.target.value)}
+            className="w-full border-b border-border/70 bg-transparent pl-7 pr-4 py-2 text-sm text-foreground outline-none placeholder:text-foreground-subtle focus:border-primary/30" />
+        </div>
+        <div className="flex items-center gap-3">
+          <Filter className="h-4 w-4 text-foreground-subtle" />
+          <select value={rf} onChange={e => setRf(e.target.value as DeviceReachability | "all")}
+            className="border-b border-border/70 bg-transparent px-1 py-2 text-sm text-foreground outline-none">
+            <option value="all">All Status</option>
+            <option value="reachable">Connected</option>
+            <option value="degraded">Degraded</option>
+            <option value="unreachable">Offline</option>
+          </select>
+          <button onClick={() => setGroupBySite(g => !g)}
+            className={`text-xs px-2 py-1 rounded border transition-colors ${groupBySite ? "border-primary/40 text-primary bg-primary/5" : "border-border/60 text-foreground-muted"}`}>
+            Group by site
+          </button>
+          {(search || rf !== "all") && (
+            <button onClick={() => { setSearch(""); setRf("all"); }} className="inline-flex items-center gap-1 text-xs text-foreground-muted hover:text-foreground">
+              <X className="h-3.5 w-3.5" /> Clear
+            </button>
+          )}
+        </div>
+      </div>
+
+      {groupBySite ? (
+        <div className="space-y-2">
+          {siteGroups.map(([site, devs]) => {
+            const [open, setOpen] = useState(true);
+            const up = devs.filter(d => d.reachability === "reachable").length;
+            const down = devs.filter(d => d.reachability !== "reachable").length;
+            return (
+              <div key={site} className="border border-border/50 rounded-lg overflow-hidden">
+                <button onClick={() => setOpen(o => !o)}
+                  className="w-full flex items-center justify-between px-4 py-3 bg-surface hover:bg-surface/80 transition-colors">
+                  <div className="flex items-center gap-3">
+                    {open ? <ChevronDown className="h-4 w-4 text-foreground-subtle" /> : <ChevronRight className="h-4 w-4 text-foreground-subtle" />}
+                    <MapPin className="h-4 w-4 text-emerald-400" />
+                    <span className="font-medium text-foreground text-sm">{site}</span>
+                    <Badge variant="outline" className="text-[10px]">{devs.length} edges</Badge>
+                  </div>
+                  <div className="flex gap-4 text-xs">
+                    <span className="text-success">{up} up</span>
+                    {down > 0 && <span className="text-critical">{down} down</span>}
+                  </div>
+                </button>
+                {open && <div className="divide-y divide-border/40">{devs.map(d => <EdgeRow key={d.device_id} device={d} />)}</div>}
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <div className="border border-border/50 rounded-lg overflow-hidden">
+          <div className="hidden grid-cols-12 gap-3 border-b border-border/60 bg-surface px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-foreground-subtle lg:grid">
+            <div className="col-span-4">Edge</div><div className="col-span-2">Site</div>
+            <div className="col-span-2">WAN IP</div><div className="col-span-2">VeloBrain</div>
+            <div className="col-span-2 text-right">Status</div>
+          </div>
+          <div className="divide-y divide-border/40">
+            {filtered.map(d => <EdgeRow key={d.device_id} device={d} />)}
+          </div>
+        </div>
+      )}
+      <div className="text-center text-xs text-foreground-subtle">{filtered.length} of {devices.length} edges</div>
+    </div>
+  );
+}
+
+// ── Link Health tab ───────────────────────────────────────────────────────────
+
+function LinkHealthRow({ device }: { device: DeviceSummary }) {
+  const [open, setOpen] = useState(false);
+  const links: VeloBrainLink[] = device.props?.links ?? [];
+  const score = device.props?.velobrain_score;
+
+  return (
+    <div className="border border-border/40 rounded-lg overflow-hidden">
+      <button onClick={() => setOpen(o => !o)}
+        className="w-full flex items-center justify-between px-4 py-3 bg-surface/40 hover:bg-surface/70 transition-colors">
+        <div className="flex items-center gap-3">
+          {open ? <ChevronDown className="h-3.5 w-3.5 text-foreground-subtle" /> : <ChevronRight className="h-3.5 w-3.5 text-foreground-subtle" />}
+          <Radio className="h-4 w-4 text-emerald-400" />
+          <span className="font-medium text-foreground text-sm">{device.hostname}</span>
+          <span className="text-xs text-foreground-muted">{device.site_name}</span>
+          <Badge variant="outline" className="text-[10px]">{links.length} WAN links</Badge>
+        </div>
+        <div className="flex items-center gap-4">
+          {score !== undefined ? <ScoreBar score={score} size="sm" /> : <span className="text-xs text-foreground-subtle">No data</span>}
+          <StateChip reachability={device.reachability} />
+        </div>
+      </button>
+      {open && (
+        <div className="divide-y divide-border/30 bg-background/50">
+          {links.length === 0 ? (
+            <div className="px-6 py-4 text-sm text-foreground-muted">No link metrics collected yet.</div>
+          ) : links.map((link, i) => (
+            <div key={i} className="px-6 py-4 grid grid-cols-2 gap-4 sm:grid-cols-4 lg:grid-cols-6 text-sm">
+              <div>
+                <div className="text-[10px] font-bold uppercase tracking-wider text-foreground-subtle mb-1">Link</div>
+                <div className="font-medium text-foreground">{link.name || `Link ${i + 1}`}</div>
+                <div className={`text-[10px] font-bold mt-0.5 ${link.state === "STABLE" ? "text-success" : link.state === "UNSTABLE" ? "text-major" : "text-critical"}`}>{link.state}</div>
+              </div>
+              <div>
+                <div className="text-[10px] font-bold uppercase tracking-wider text-foreground-subtle mb-1">VeloBrain Score</div>
+                <ScoreBar score={Math.min(link.score_tx, link.score_rx)} size="sm" />
+              </div>
+              <div>
+                <div className="text-[10px] font-bold uppercase tracking-wider text-foreground-subtle mb-1">Latency</div>
+                <div className="font-mono text-foreground">↓ {link.latency_ms_rx.toFixed(1)} ms</div>
+                <div className="font-mono text-foreground-muted text-[11px]">↑ {link.latency_ms_tx.toFixed(1)} ms</div>
+              </div>
+              <div>
+                <div className="text-[10px] font-bold uppercase tracking-wider text-foreground-subtle mb-1">Jitter</div>
+                <div className="font-mono text-foreground">↓ {link.jitter_ms_rx.toFixed(1)} ms</div>
+                <div className="font-mono text-foreground-muted text-[11px]">↑ {link.jitter_ms_tx.toFixed(1)} ms</div>
+              </div>
+              <div>
+                <div className="text-[10px] font-bold uppercase tracking-wider text-foreground-subtle mb-1">Packet Loss</div>
+                <div className={`font-mono ${link.loss_pct_rx > 1 ? "text-critical" : link.loss_pct_rx > 0.1 ? "text-major" : "text-success"}`}>↓ {link.loss_pct_rx.toFixed(2)}%</div>
+                <div className="font-mono text-foreground-muted text-[11px]">↑ {link.loss_pct_tx.toFixed(2)}%</div>
+              </div>
+              <div>
+                <div className="text-[10px] font-bold uppercase tracking-wider text-foreground-subtle mb-1">Bandwidth</div>
+                <div className="font-mono text-foreground text-xs">↓ {fmtMbps(link.bps_rx)}</div>
+                <div className="font-mono text-foreground-muted text-[11px]">↑ {fmtMbps(link.bps_tx)}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function LinkHealthTab({ devices }: { devices: DeviceSummary[] }) {
+  const sorted = useMemo(() =>
+    [...devices]
+      .filter(d => d.props?.links?.length)
+      .sort((a, b) => (a.props?.velobrain_score ?? 5) - (b.props?.velobrain_score ?? 5)),
+    [devices]
+  );
+
+  if (sorted.length === 0) {
+    return (
+      <div className="flex flex-col items-start gap-3 border-t border-border/60 py-12">
+        <Activity className="h-6 w-6 text-foreground-subtle" />
+        <div>
+          <p className="font-semibold text-foreground">VeloBrain metrics not yet collected</p>
+          <p className="mt-1 text-sm text-foreground-muted">Link quality data will appear after the next worker collection cycle (runs every 60 seconds).</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      <p className="text-xs text-foreground-muted">Sorted worst-first by VeloBrain score. Expand any edge to see per-link latency, jitter, loss and bandwidth.</p>
+      {sorted.map(d => <LinkHealthRow key={d.device_id} device={d} />)}
+    </div>
+  );
+}
+
+// ── Troubleshoot Guide tab ────────────────────────────────────────────────────
+
+interface TroubleshootStep {
+  id: string;
+  title: string;
+  description: string;
+  checks: string[];
+  action: string;
+}
+
+const TROUBLESHOOT_FLOWS: Array<{ id: string; icon: React.ElementType; label: string; color: string; steps: TroubleshootStep[] }> = [
+  {
+    id: "edge-offline",
+    icon: WifiOff,
+    label: "Edge Offline",
+    color: "text-critical",
+    steps: [
+      {
+        id: "1", title: "Verify physical connectivity",
+        description: "An offline edge almost always means the device cannot reach the VCO. Start with layer 1.",
+        checks: ["Check WAN port LEDs — are they lit?", "Is the edge powered on and booting?", "Is the ISP link active? Call the ISP if needed."],
+        action: "If LEDs are dark → check cable / power cycle the edge.",
+      },
+      {
+        id: "2", title: "Check internet reachability from the edge",
+        description: "If the physical link is up but the edge is still offline, the ISP may be blocking outbound traffic.",
+        checks: ["Can the edge ping 8.8.8.8?", "Is DNS resolving?", "Is TCP/443 outbound to *.velocloud.net allowed?"],
+        action: "Ask the ISP to verify the circuit. Confirm firewall rules allow TCP/443 outbound.",
+      },
+      {
+        id: "3", title: "Verify VCO reachability",
+        description: "The edge needs to reach the VCO activation server.",
+        checks: ["Is vco109-usca1.velocloud.net reachable?", "Are there proxy or firewall rules blocking it?", "Has the activation key expired in VCO?"],
+        action: "In VCO → Configure → Edges → check the edge activation state and reissue if expired.",
+      },
+      {
+        id: "4", title: "Reboot the edge",
+        description: "If all network checks pass but the edge is still offline, a software hang may be the cause.",
+        checks: ["Remote reboot via VCO if partial connectivity exists", "Physical power cycle if fully unreachable", "Check edge logs via USB console for kernel panics"],
+        action: "Remote: VCO → Monitor → Edges → [edge] → Remote Actions → Reboot.",
+      },
+    ],
+  },
+  {
+    id: "degraded-link",
+    icon: TrendingDown,
+    label: "Degraded WAN Link",
+    color: "text-major",
+    steps: [
+      {
+        id: "1", title: "Identify which link is degraded in Link Health tab",
+        description: "VeloBrain scores below 3.5 indicate a link problem. Open the Link Health tab and expand the affected edge.",
+        checks: ["Which link interface is affected (GE1, GE2, LTE)?", "Are latency/jitter/loss all elevated, or just one?", "When did the score first drop?"],
+        action: "Note the specific link name and the metric that is worst — this tells you what to investigate.",
+      },
+      {
+        id: "2", title: "High latency (>100 ms)",
+        description: "Sustained high latency points to ISP routing issues or a congested circuit.",
+        checks: ["Run a traceroute from the edge (VCO → Diagnostics)", "Compare latency to the SLA for this circuit", "Check if it correlates with business hours (congestion vs. routing fault)"],
+        action: "Raise an ISP ticket with traceroute output. VeloCloud Dynamic Path will steer traffic away automatically.",
+      },
+      {
+        id: "3", title: "High packet loss (>0.5%)",
+        description: "Packet loss causes retransmissions and degrades real-time apps immediately.",
+        checks: ["Is loss only on one link? → ISP problem", "Is loss on all links? → possible local equipment fault", "Check cable/SFP integrity if using fiber"],
+        action: "For ISP loss: raise a ticket with VeloCloud latency graph export as evidence.",
+      },
+      {
+        id: "4", title: "Confirm VeloCloud DMPO is working",
+        description: "SD-WAN should already be steering away from the bad link automatically.",
+        checks: ["In VCO: Monitor → Edges → [edge] → QoE — is steering active?", "Are overlay tunnels re-established on the healthy link?", "Is the business policy enforcing the right path preference?"],
+        action: "If DMPO is not steering: check the Business Policy priority rules in VCO.",
+      },
+    ],
+  },
+  {
+    id: "high-loss",
+    icon: AlertTriangle,
+    label: "Packet Loss Alarm",
+    color: "text-critical",
+    steps: [
+      {
+        id: "1", title: "Confirm loss is real-time",
+        description: "VeloBrain metrics are 1-hour averages. Check live loss in VCO.",
+        checks: ["VCO → Monitor → Edges → [edge] → WAN Links → Live stats", "Is loss >0.5% sustained for >5 minutes?", "Or is it a spike that has already resolved?"],
+        action: "If already resolved: check VCO alerts for root cause. If ongoing: proceed to step 2.",
+      },
+      {
+        id: "2", title: "Isolate the loss to one link",
+        description: "Loss on a single link is usually an ISP problem. Loss on all links suggests a local switch/router issue.",
+        checks: ["Compare all WAN links in the Link Health tab", "Check if the LTE backup link is also showing loss", "Run VCO diagnostics → packet capture on the affected interface"],
+        action: "Single-link loss → ISP ticket. Multi-link loss → check the WAN aggregation switch.",
+      },
+      {
+        id: "3", title: "Check for duplex mismatch",
+        description: "A duplex mismatch on the WAN handoff port causes severe packet loss and is easy to miss.",
+        checks: ["VCO → Configure → Edge → Device settings → WAN interface speed/duplex", "Is the ISP CPE set to auto or hardcoded?", "Check interface error counters in VCO diagnostics"],
+        action: "Force both the edge and the ISP CPE to the same speed/duplex setting.",
+      },
+    ],
+  },
+  {
+    id: "app-performance",
+    icon: Activity,
+    label: "Application Performance",
+    color: "text-info",
+    steps: [
+      {
+        id: "1", title: "Check VeloBrain score for the affected edge",
+        description: "Application problems are often preceded by link quality degradation that VeloBrain detects first.",
+        checks: ["Is the VeloBrain score below 4.0 for this edge?", "Is latency elevated on the primary WAN link?", "Are any links in UNSTABLE state?"],
+        action: "If score is OK: the problem is likely an application-layer issue, not the WAN. Proceed to step 2.",
+      },
+      {
+        id: "2", title: "Check Business Policy and QoS",
+        description: "Application traffic may be mis-classified or placed on a suboptimal path.",
+        checks: ["VCO → Configure → Profiles → Business Policy: Is the app correctly matched?", "Is real-time traffic (VoIP, video) prioritised (P1)?", "Are there queuing policies that may be dropping bursts?"],
+        action: "Update the Business Policy to prioritise the affected application class.",
+      },
+      {
+        id: "3", title: "Verify DNS and overlay health",
+        description: "Overlay tunnel problems can cause intermittent application failures even when the underlay looks healthy.",
+        checks: ["VCO → Monitor → Edges: check overlay tunnel states", "Are all tunnels to the data centre / hub established?", "Run VCO → Diagnostics → Remote Diagnostics → tunnel test"],
+        action: "If tunnels are down: check hub edge status. Restart the VCO edge service if needed.",
+      },
+    ],
+  },
+];
+
+function TroubleshootTab() {
+  const [activeFlow, setActiveFlow] = useState<string | null>(null);
+  const [expandedStep, setExpandedStep] = useState<string | null>(null);
+
+  const flow = TROUBLESHOOT_FLOWS.find(f => f.id === activeFlow);
+
+  return (
+    <div className="flex gap-6 min-h-[500px]">
+      {/* Sidebar */}
+      <div className="w-52 shrink-0 space-y-1">
+        <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-foreground-subtle px-2 mb-3">Fault Scenarios</p>
+        {TROUBLESHOOT_FLOWS.map(f => (
+          <button key={f.id} onClick={() => { setActiveFlow(f.id); setExpandedStep(null); }}
+            className={`w-full flex items-center gap-2.5 rounded-lg px-3 py-2.5 text-left text-sm transition-colors ${
+              activeFlow === f.id
+                ? "bg-primary/10 border border-primary/25 text-primary"
+                : "hover:bg-surface/60 text-foreground-muted hover:text-foreground border border-transparent"
+            }`}>
+            <f.icon className={`h-4 w-4 shrink-0 ${activeFlow === f.id ? "text-primary" : f.color}`} />
+            <span className="font-medium">{f.label}</span>
+          </button>
+        ))}
+        <div className="pt-4 border-t border-border/30 mt-4">
+          <p className="text-[9px] uppercase tracking-[0.2em] text-foreground-subtle px-2 mb-2">Reference</p>
+          {[
+            { icon: Globe, label: "VCO Portal" },
+            { icon: Shield, label: "Security Policy" },
+            { icon: Layers, label: "DMPO Logic" },
+          ].map(r => (
+            <div key={r.label} className="flex items-center gap-2 px-3 py-2 text-xs text-foreground-subtle">
+              <r.icon className="h-3.5 w-3.5" />{r.label}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Content */}
+      <div className="flex-1 min-w-0">
+        {!flow ? (
+          <div className="flex flex-col items-center justify-center h-full gap-4 text-center py-16">
+            <HelpCircle className="h-10 w-10 text-foreground-subtle" />
+            <div>
+              <p className="font-semibold text-foreground">Select a fault scenario</p>
+              <p className="text-sm text-foreground-muted mt-1 max-w-sm">
+                Choose a fault type from the left to walk through a structured troubleshooting guide for your SD-WAN environment.
+              </p>
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            <div className="flex items-center gap-3 pb-4 border-b border-border/40">
+              <flow.icon className={`h-5 w-5 ${flow.color}`} />
+              <div>
+                <h3 className="font-semibold text-foreground">{flow.label}</h3>
+                <p className="text-xs text-foreground-muted">Follow each step in sequence. Steps build on each other.</p>
+              </div>
+            </div>
+            <div className="space-y-3">
+              {flow.steps.map((step, idx) => (
+                <div key={step.id} className={`rounded-lg border transition-all ${expandedStep === step.id ? "border-primary/30 bg-primary/4" : "border-border/40 bg-surface/30 hover:bg-surface/50"}`}>
+                  <button onClick={() => setExpandedStep(expandedStep === step.id ? null : step.id)}
+                    className="w-full flex items-center justify-between px-4 py-3 text-left">
+                    <div className="flex items-center gap-3">
+                      <span className={`flex h-6 w-6 items-center justify-center rounded-full text-[11px] font-bold shrink-0 ${expandedStep === step.id ? "bg-primary text-white" : "bg-surface-subtle text-foreground-subtle"}`}>{idx + 1}</span>
+                      <span className="font-medium text-foreground text-sm">{step.title}</span>
+                    </div>
+                    {expandedStep === step.id ? <ChevronDown className="h-4 w-4 text-foreground-subtle" /> : <ChevronRight className="h-4 w-4 text-foreground-subtle" />}
+                  </button>
+                  {expandedStep === step.id && (
+                    <div className="px-4 pb-4 space-y-4">
+                      <p className="text-sm text-foreground-muted">{step.description}</p>
+                      <div>
+                        <p className="text-[10px] font-bold uppercase tracking-wider text-foreground-subtle mb-2">Checks</p>
+                        <ul className="space-y-1.5">
+                          {step.checks.map((c, i) => (
+                            <li key={i} className="flex items-start gap-2 text-sm text-foreground">
+                              <Circle className="h-3.5 w-3.5 shrink-0 mt-0.5 text-foreground-subtle" />{c}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                      <div className="flex items-start gap-2 rounded-lg border border-info/20 bg-info/8 px-3 py-2.5">
+                        <ArrowRight className="h-4 w-4 text-info shrink-0 mt-0.5" />
+                        <p className="text-sm text-foreground"><span className="font-semibold text-info">Action: </span>{step.action}</p>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Page ──────────────────────────────────────────────────────────────────────
+
+const TABS: Array<{ id: NavTab; label: string; icon: React.ElementType }> = [
+  { id: "overview",     label: "Overview",     icon: Activity },
+  { id: "edges",        label: "Edges",        icon: Radio },
+  { id: "linkhealth",   label: "Link Health",  icon: Wifi },
+  { id: "troubleshoot", label: "Troubleshoot", icon: HelpCircle },
+];
+
+export default function SdwanObserverPage() {
+  const [activeTab, setActiveTab] = useState<NavTab>("overview");
 
   const { data, isLoading, error } = useQuery({
     queryKey: ["sdwan-devices"],
@@ -149,181 +654,64 @@ export default function SdwanObserverPage() {
 
   const devices = data?.devices ?? [];
 
-  const filteredDevices = useMemo(() => {
-    const term = search.toLowerCase();
-    return devices.filter((d) => {
-      if (reachabilityFilter !== "all" && d.reachability !== reachabilityFilter) return false;
-      if (!term) return true;
-      return (
-        d.hostname.toLowerCase().includes(term) ||
-        d.serial.toLowerCase().includes(term) ||
-        d.model.toLowerCase().includes(term) ||
-        d.site_name.toLowerCase().includes(term) ||
-        d.ip_address.toLowerCase().includes(term)
-      );
-    });
-  }, [devices, reachabilityFilter, search]);
-
-  const stats = useMemo(() => ({
-    total: devices.length,
-    reachable: devices.filter((d) => d.reachability === "reachable").length,
-    degraded: devices.filter((d) => d.reachability === "degraded").length,
-    offline: devices.filter((d) => d.reachability === "unreachable").length,
+  const tabStats = useMemo(() => ({
+    issues: devices.filter(d => d.reachability !== "reachable").length,
+    degraded: devices.filter(d => (d.props?.velobrain_score ?? 5) < 3.5).length,
   }), [devices]);
-
-  const siteGroups = useMemo(() => {
-    const map = new Map<string, DeviceSummary[]>();
-    for (const d of filteredDevices) {
-      const key = d.site_name || d.site_id || "Unknown Site";
-      if (!map.has(key)) map.set(key, []);
-      map.get(key)!.push(d);
-    }
-    return Array.from(map.entries()).sort((a, b) => a[0].localeCompare(b[0]));
-  }, [filteredDevices]);
 
   return (
     <div className="min-h-screen px-4 py-10 sm:px-6 lg:px-8">
       <div className="mx-auto max-w-7xl space-y-8">
 
         {/* Header */}
-        <div className="border-b border-border/60 pb-8">
-          <div className="flex items-start justify-between gap-4 flex-wrap">
-            <div>
-              <div className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-[0.2em] text-emerald-400">
-                <Radio className="h-3.5 w-3.5" />
-                Platform Observer
-              </div>
-              <h1 className="mt-1 text-3xl font-semibold tracking-tight text-foreground">VeloCloud SD-WAN</h1>
-              <p className="mt-1 text-sm text-foreground-muted">
-                SD-WAN edge inventory — {stats.total} edges across {siteGroups.length} sites
-              </p>
-            </div>
-            <div className="flex gap-8">
-              <div className="text-right">
-                <div className="text-2xl font-semibold text-foreground">{stats.total}</div>
-                <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-foreground-subtle">Total Edges</div>
-              </div>
-              <div className="text-right">
-                <div className="text-2xl font-semibold text-success">{stats.reachable}</div>
-                <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-foreground-subtle">Connected</div>
-              </div>
-              {stats.degraded > 0 && (
-                <div className="text-right">
-                  <div className="text-2xl font-semibold text-major">{stats.degraded}</div>
-                  <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-foreground-subtle">Degraded</div>
-                </div>
+        <div className="border-b border-border/60 pb-6">
+          <div className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-[0.2em] text-emerald-400">
+            <Radio className="h-3.5 w-3.5" /> Platform Observer
+          </div>
+          <h1 className="mt-1 text-3xl font-semibold tracking-tight text-foreground">VeloCloud SD-WAN</h1>
+          <p className="mt-1 text-sm text-foreground-muted">
+            {devices.length} edges · VeloBrain link intelligence · Real-time WAN health
+          </p>
+        </div>
+
+        {/* Tab nav */}
+        <div className="flex items-center gap-1 border-b border-border/40">
+          {TABS.map(tab => (
+            <button key={tab.id} onClick={() => setActiveTab(tab.id)}
+              className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium transition-colors border-b-2 -mb-px ${
+                activeTab === tab.id
+                  ? "border-primary text-primary"
+                  : "border-transparent text-foreground-muted hover:text-foreground hover:border-border"
+              }`}>
+              <tab.icon className="h-4 w-4" />
+              {tab.label}
+              {tab.id === "overview" && tabStats.issues > 0 && (
+                <span className="ml-1 rounded-full bg-critical/15 px-1.5 py-0.5 text-[10px] font-bold text-critical">{tabStats.issues}</span>
               )}
-              <div className="text-right">
-                <div className="text-2xl font-semibold text-critical">{stats.offline}</div>
-                <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-foreground-subtle">Offline</div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Filters */}
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-          <div className="relative flex-1">
-            <Search className="absolute left-0 top-1/2 h-4 w-4 -translate-y-1/2 text-foreground-subtle" />
-            <input
-              type="text"
-              placeholder="Search edge name, serial, model, site, WAN IP..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="w-full border-b border-border/70 bg-transparent pl-7 pr-4 py-2 text-sm text-foreground outline-none placeholder:text-foreground-subtle focus:border-primary/30"
-            />
-          </div>
-          <div className="flex items-center gap-3">
-            <Filter className="h-4 w-4 text-foreground-subtle" />
-            <select
-              value={reachabilityFilter}
-              onChange={(e) => setReachabilityFilter(e.target.value as DeviceReachability | "all")}
-              className="border-b border-border/70 bg-transparent px-1 py-2 text-sm text-foreground outline-none focus:border-primary/30"
-            >
-              <option value="all">All Status</option>
-              <option value="reachable">Connected</option>
-              <option value="unreachable">Offline</option>
-            </select>
-            <button
-              onClick={() => setGroupBySite((g) => !g)}
-              className={`text-sm px-2 py-1 rounded border transition-colors ${
-                groupBySite ? "border-primary/40 text-primary bg-primary/5" : "border-border/60 text-foreground-muted hover:text-foreground"
-              }`}
-            >
-              Group by site
+              {tab.id === "linkhealth" && tabStats.degraded > 0 && (
+                <span className="ml-1 rounded-full bg-major/15 px-1.5 py-0.5 text-[10px] font-bold text-major">{tabStats.degraded}</span>
+              )}
             </button>
-            {(search || reachabilityFilter !== "all") && (
-              <button
-                onClick={() => { setSearch(""); setReachabilityFilter("all"); }}
-                className="inline-flex items-center gap-1 text-sm text-foreground-muted hover:text-foreground"
-              >
-                <X className="h-3.5 w-3.5" /> Clear
-              </button>
-            )}
-          </div>
+          ))}
         </div>
 
-        {/* Content */}
+        {/* Tab content */}
         {isLoading ? (
           <div className="space-y-3">
-            {Array.from({ length: 4 }).map((_, i) => (
-              <div key={i} className="border border-border/50 rounded-lg p-4 space-y-3">
-                <Skeleton className="h-5 w-48" />
-                {Array.from({ length: 3 }).map((_, j) => (
-                  <div key={j} className="flex items-center gap-3">
-                    <Skeleton className="h-9 w-9 rounded-lg" />
-                    <div className="flex-1 space-y-1.5">
-                      <Skeleton className="h-4 w-40" />
-                      <Skeleton className="h-3 w-28" />
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ))}
+            {Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-16 w-full rounded-lg" />)}
           </div>
         ) : error ? (
           <div className="border-l-2 border-l-critical-border pl-4 py-3 text-critical">
-            <AlertCircle className="mb-2 h-6 w-6" />
-            <p className="font-medium">Failed to load inventory</p>
+            <p className="font-medium">Failed to load SD-WAN inventory</p>
             <p className="text-sm text-foreground-muted">{error instanceof Error ? error.message : "Unknown error"}</p>
           </div>
-        ) : filteredDevices.length === 0 ? (
-          <div className="flex flex-col items-start gap-3 border-t border-border/60 py-12">
-            <Server className="h-6 w-6 text-foreground-subtle" />
-            <div>
-              <p className="font-semibold text-foreground">No edges found</p>
-              <p className="mt-1 text-sm text-foreground-muted">
-                {devices.length === 0
-                  ? "SD-WAN edge inventory will appear after the first collection cycle completes."
-                  : "No edges match your current filters."}
-              </p>
-            </div>
-          </div>
-        ) : groupBySite ? (
-          <div className="space-y-3">
-            {siteGroups.map(([siteName, siteDevices]) => (
-              <SiteGroup key={siteName} siteName={siteName} devices={siteDevices} />
-            ))}
-          </div>
         ) : (
-          <div className="border border-border/50 rounded-lg overflow-hidden">
-            <div className="hidden grid-cols-12 gap-3 border-b border-border/60 bg-surface px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-foreground-subtle lg:grid">
-              <div className="col-span-4">Edge Device</div>
-              <div className="col-span-3">Site</div>
-              <div className="col-span-2">WAN IP</div>
-              <div className="col-span-2">Firmware</div>
-              <div className="col-span-1 text-right">Status</div>
-            </div>
-            <div className="divide-y divide-border/40">
-              {filteredDevices.map((d) => <EdgeRow key={d.device_id} device={d} />)}
-            </div>
-          </div>
-        )}
-
-        {filteredDevices.length > 0 && (
-          <div className="text-center text-xs text-foreground-subtle pt-2">
-            Showing {filteredDevices.length} of {data?.total ?? devices.length} edges
-          </div>
+          <>
+            {activeTab === "overview"     && <OverviewTab devices={devices} />}
+            {activeTab === "edges"        && <EdgesTab devices={devices} />}
+            {activeTab === "linkhealth"   && <LinkHealthTab devices={devices} />}
+            {activeTab === "troubleshoot" && <TroubleshootTab />}
+          </>
         )}
 
       </div>

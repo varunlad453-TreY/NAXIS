@@ -1,5 +1,26 @@
 export type DeviceReachability = "reachable" | "unreachable" | "degraded" | "unknown";
 
+export interface VeloBrainLink {
+  name: string;
+  state: string;
+  score_tx: number;
+  score_rx: number;
+  latency_ms_rx: number;
+  latency_ms_tx: number;
+  jitter_ms_rx: number;
+  jitter_ms_tx: number;
+  loss_pct_rx: number;
+  loss_pct_tx: number;
+  bps_rx: number;
+  bps_tx: number;
+}
+
+export interface DeviceProps {
+  links?: VeloBrainLink[];
+  velobrain_score?: number;
+  [key: string]: unknown;
+}
+
 export interface DeviceSummary {
   device_id: string;
   platform: string;
@@ -18,6 +39,7 @@ export interface DeviceSummary {
   firmware_version: string;
   management_state: string;
   last_seen: string | null;
+  props: DeviceProps;
 }
 
 export interface DeviceListResponse {

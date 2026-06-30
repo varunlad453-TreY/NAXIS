@@ -240,6 +240,7 @@ export default function CorrelationEnginePage() {
         firmware_version: "",
         management_state: "",
         last_seen: null,
+        props: {},
       };
 
       const sorted = [...devEvents].sort(

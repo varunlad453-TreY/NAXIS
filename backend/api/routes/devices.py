@@ -41,7 +41,8 @@ _INVENTORY_QUERY = """
         uptime_seconds,
         firmware_version,
         'managed'   AS management_state,
-        last_seen
+        last_seen,
+        props
     FROM inventory
     WHERE 1=1
     {where}
@@ -55,6 +56,18 @@ _COUNT_QUERY = """
 
 
 def _row_to_summary(row) -> DeviceSummary:
+    import json as _json
+    raw_props = row["props"]
+    if isinstance(raw_props, str):
+        try:
+            props = _json.loads(raw_props)
+        except Exception:
+            props = {}
+    elif isinstance(raw_props, dict):
+        props = raw_props
+    else:
+        props = {}
+
     return DeviceSummary(
         device_id=row["device_id"] or "",
         platform=row["platform"] or "",
@@ -73,6 +86,7 @@ def _row_to_summary(row) -> DeviceSummary:
         firmware_version=row["firmware_version"] or "",
         management_state=row["management_state"],
         last_seen=row["last_seen"],
+        props=props,
     )
 
 
