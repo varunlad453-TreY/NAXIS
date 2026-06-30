@@ -16,12 +16,14 @@ export function DeviceReachabilityBadge({
   const labels: Record<DeviceReachability, string> = {
     reachable: "Reachable",
     unreachable: "Unreachable",
+    degraded: "Degraded",
     unknown: "Unknown",
   };
 
   const variants: Record<DeviceReachability, "success" | "critical" | "default"> = {
     reachable: "success",
     unreachable: "critical",
+    degraded: "default",
     unknown: "default",
   };
 
@@ -33,6 +35,7 @@ export function DeviceReachabilityBadge({
             "mr-1.5 h-1.5 w-1.5 rounded-full",
             reachability === "reachable" && "bg-success",
             reachability === "unreachable" && "bg-critical",
+            reachability === "degraded" && "bg-major",
             reachability === "unknown" && "bg-foreground-subtle"
           )}
         />

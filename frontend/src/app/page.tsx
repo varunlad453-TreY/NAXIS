@@ -146,7 +146,7 @@ function OrbitalSystem({ eventCount }: { eventCount: number }) {
       </div>
       <div className="absolute bottom-14 left-6" style={{ animation: "naxis-enter 1s 1s both" }}>
         <div className="text-[9px] font-bold uppercase tracking-[0.2em] text-foreground-subtle">Vendors</div>
-        <div className="font-mono text-sm font-bold text-emerald-400">1 Live</div>
+        <div className="font-mono text-sm font-bold text-emerald-400">2 Live</div>
       </div>
     </div>
   );
@@ -163,11 +163,11 @@ function HudCorner({ pos }: { pos: "tl" | "tr" | "bl" | "br" }) {
 
 const TICKER = [
   "MIST · Wireless observer active",
+  "VELOCLOUD · SD-WAN observer active",
   "NAXIS · Multi-vendor ingestion running",
   "SYSTEM · 61 sites monitored",
   "TELEMETRY · Event stream live",
   "NETWORK · 4 platform connectors",
-  "STATUS · All collectors nominal",
 ];
 
 function DataTicker({ eventCount }: { eventCount: number }) {
@@ -400,13 +400,15 @@ export default function HomePage() {
   const [showInventory, setShowInventory] = useState(false);
   const { data: health } = useQuery({ queryKey: ["health"], queryFn: () => api.health(), refetchInterval: 10000 });
   const mistDeviceCount = useCount(["mist-devices-count"], () => api.listDevices({ platform: "mist", limit: 1 }));
+  const veloEdgeCount = useCount(["velo-devices-count"], () => api.listDevices({ platform: "velocloud", limit: 1 }));
   const eventCount = useCount(["events-count"], () => api.listEvents({ limit: 1 }));
   const isOnline = health?.status === "healthy";
 
   // Platform-level stats — only counts things we actually have
+  const vendorsLive = (mistDeviceCount > 0 ? 1 : 0) + (veloEdgeCount > 0 ? 1 : 0);
   const hudStats = [
     { label: "Events Ingested", value: eventCount, rgb: "6,182,212" },
-    { label: "Vendors Live", value: 1, rgb: "52,211,153" },
+    { label: "Vendors Live", value: vendorsLive || 1, rgb: "52,211,153" },
     { label: "Sites Monitored", value: 61, rgb: "167,139,250" },
     { label: "Platforms Total", value: 4, rgb: "251,191,36" },
   ];
@@ -511,9 +513,10 @@ export default function HomePage() {
             <PlatformCard href="/dnac" icon={<Network className="h-5 w-5" />} label="Cisco DNA Center" sublabel="Wired"
               description="Switches, routers and campus fabric. Full physical infrastructure."
               active={false} accentRgb="59,130,246" tag="Wired" delay={0.6} />
-            <PlatformCard href="/sdwan" icon={<Radio className="h-5 w-5" />} label="Arista SD-WAN" sublabel="WAN"
+            <PlatformCard href="/sdwan" icon={<Radio className="h-5 w-5" />} label="VeloCloud SD-WAN" sublabel="WAN"
               description="Edge devices, tunnel health and WAN telemetry across all sites."
-              active={false} accentRgb="52,211,153" tag="SD-WAN" delay={0.7} />
+              stat={veloEdgeCount > 0 ? { value: fmt(veloEdgeCount), label: "Edges" } : undefined}
+              active accentRgb="52,211,153" tag="Live" delay={0.7} />
             <PlatformCard href="/wlc" icon={<HardDrive className="h-5 w-5" />} label="Arista WLC" sublabel="Controllers"
               description="Wireless LAN controllers and managed AP visibility."
               active={false} accentRgb="251,191,36" tag="WLC" delay={0.8} />

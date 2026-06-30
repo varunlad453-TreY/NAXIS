@@ -33,9 +33,10 @@ const platformColors: Record<string, string> = {
 };
 
 function ReachabilityDot({ status }: { status: DeviceReachability }) {
-  const colors = {
+  const colors: Record<DeviceReachability, string> = {
     reachable: "bg-success",
     unreachable: "bg-critical",
+    degraded: "bg-major",
     unknown: "bg-foreground-subtle",
   };
   return (

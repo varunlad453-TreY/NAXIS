@@ -6,14 +6,12 @@ import {
   AlertCircle,
   ChevronDown,
   ChevronRight,
-  Clock,
   Filter,
   MapPin,
   Network,
+  Radio,
   Search,
   Server,
-  Users,
-  Wifi,
   X,
   Zap,
 } from "lucide-react";
@@ -22,15 +20,6 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import type { DeviceReachability, DeviceSummary } from "@/types/device";
 
-function formatUptime(seconds: number): string {
-  if (!seconds) return "—";
-  const d = Math.floor(seconds / 86400);
-  const h = Math.floor((seconds % 86400) / 3600);
-  if (d > 0) return `${d}d ${h}h`;
-  const m = Math.floor((seconds % 3600) / 60);
-  return `${h}h ${m}m`;
-}
-
 function ReachabilityDot({ status }: { status: DeviceReachability }) {
   const colors: Record<DeviceReachability, string> = {
     reachable: "bg-success",
@@ -38,15 +27,23 @@ function ReachabilityDot({ status }: { status: DeviceReachability }) {
     degraded: "bg-major",
     unknown: "bg-foreground-subtle",
   };
-  return <span className={`inline-block h-2 w-2 rounded-full ${colors[status]}`} title={status} />;
+  return <span className={`inline-block h-2 w-2 rounded-full ${colors[status] ?? "bg-foreground-subtle"}`} title={status} />;
 }
 
-function DeviceRow({ device }: { device: DeviceSummary }) {
+function StateChip({ reachability }: { reachability: string }) {
+  if (reachability === "reachable")
+    return <span className="inline-flex items-center gap-1 rounded-full border border-success/25 bg-success/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-success">Connected</span>;
+  if (reachability === "degraded")
+    return <span className="inline-flex items-center gap-1 rounded-full border border-major/25 bg-major/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-major">Degraded</span>;
+  return <span className="inline-flex items-center gap-1 rounded-full border border-critical/25 bg-critical/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-critical">Offline</span>;
+}
+
+function EdgeRow({ device }: { device: DeviceSummary }) {
   return (
     <div className="group grid grid-cols-12 items-center gap-3 px-3 py-3 transition-colors hover:bg-surface text-sm">
       <div className="col-span-12 flex items-center gap-3 lg:col-span-4">
         <div className="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-surface-subtle/40 text-foreground-subtle">
-          <Wifi className="h-4 w-4" />
+          <Radio className="h-4 w-4" />
           <span className="absolute -right-0.5 -top-0.5">
             <ReachabilityDot status={device.reachability} />
           </span>
@@ -56,9 +53,11 @@ function DeviceRow({ device }: { device: DeviceSummary }) {
             {device.hostname || device.device_id}
           </div>
           <div className="flex items-center gap-2 mt-0.5">
-            <span className="font-mono text-[11px] text-foreground-subtle">{device.mac || device.device_id}</span>
+            {device.serial && (
+              <span className="font-mono text-[11px] text-foreground-subtle">{device.serial}</span>
+            )}
             {device.model && (
-              <span className="inline-flex items-center rounded border border-violet-400/20 bg-violet-400/10 px-1.5 py-0 text-[10px] font-semibold uppercase tracking-wider text-violet-400">
+              <span className="inline-flex items-center rounded border border-emerald-400/20 bg-emerald-400/10 px-1.5 py-0 text-[10px] font-semibold uppercase tracking-wider text-emerald-400">
                 {device.model}
               </span>
             )}
@@ -66,7 +65,7 @@ function DeviceRow({ device }: { device: DeviceSummary }) {
         </div>
       </div>
 
-      <div className="col-span-6 lg:col-span-2">
+      <div className="col-span-6 lg:col-span-3">
         <div className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-foreground-subtle mb-0.5">
           <MapPin className="h-3 w-3" /> Site
         </div>
@@ -75,39 +74,20 @@ function DeviceRow({ device }: { device: DeviceSummary }) {
 
       <div className="col-span-6 lg:col-span-2">
         <div className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-foreground-subtle mb-0.5">
-          <Network className="h-3 w-3" /> IP
+          <Network className="h-3 w-3" /> WAN IP
         </div>
         <div className="font-mono text-foreground">{device.ip_address || "—"}</div>
       </div>
 
       <div className="col-span-6 lg:col-span-2">
-        <div className="flex gap-4">
-          <div>
-            <div className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-foreground-subtle mb-0.5">
-              <Users className="h-3 w-3" /> Clients
-            </div>
-            <div className="text-foreground">{device.num_clients}</div>
-          </div>
-          <div>
-            <div className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-foreground-subtle mb-0.5">
-              <Clock className="h-3 w-3" /> Uptime
-            </div>
-            <div className="text-foreground">{formatUptime(device.uptime_seconds)}</div>
-          </div>
+        <div className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-foreground-subtle mb-0.5">
+          <Zap className="h-3 w-3" /> Firmware
         </div>
+        <div className="text-foreground text-[11px]">{device.firmware_version || "—"}</div>
       </div>
 
-      <div className="col-span-6 lg:col-span-2 text-right">
-        <div className="flex items-center justify-end gap-1.5 mb-1">
-          <ReachabilityDot status={device.reachability} />
-          <span className="capitalize text-foreground">{device.reachability}</span>
-        </div>
-        {device.firmware_version && (
-          <div className="flex items-center justify-end gap-1 text-[11px] text-foreground-subtle">
-            <Zap className="h-3 w-3" />
-            {device.firmware_version}
-          </div>
-        )}
+      <div className="col-span-6 lg:col-span-1 text-right">
+        <StateChip reachability={device.reachability} />
       </div>
     </div>
   );
@@ -116,8 +96,8 @@ function DeviceRow({ device }: { device: DeviceSummary }) {
 function SiteGroup({ siteName, devices }: { siteName: string; devices: DeviceSummary[] }) {
   const [open, setOpen] = useState(true);
   const reachable = devices.filter((d) => d.reachability === "reachable").length;
-  const unreachable = devices.filter((d) => d.reachability === "unreachable").length;
-  const totalClients = devices.reduce((s, d) => s + (d.num_clients || 0), 0);
+  const degraded = devices.filter((d) => d.reachability === "degraded").length;
+  const offline = devices.filter((d) => d.reachability === "unreachable").length;
 
   return (
     <div className="border border-border/50 rounded-lg overflow-hidden">
@@ -127,41 +107,43 @@ function SiteGroup({ siteName, devices }: { siteName: string; devices: DeviceSum
       >
         <div className="flex items-center gap-3">
           {open ? <ChevronDown className="h-4 w-4 text-foreground-subtle" /> : <ChevronRight className="h-4 w-4 text-foreground-subtle" />}
-          <MapPin className="h-4 w-4 text-violet-400" />
+          <MapPin className="h-4 w-4 text-emerald-400" />
           <span className="font-medium text-foreground">{siteName}</span>
-          <Badge variant="outline" className="text-[10px]">{devices.length} APs</Badge>
+          <Badge variant="outline" className="text-[10px]">{devices.length} edges</Badge>
         </div>
         <div className="flex items-center gap-4 text-sm">
           <span className="flex items-center gap-1.5 text-success">
             <span className="h-1.5 w-1.5 rounded-full bg-success" />{reachable} up
           </span>
-          {unreachable > 0 && (
-            <span className="flex items-center gap-1.5 text-critical">
-              <span className="h-1.5 w-1.5 rounded-full bg-critical" />{unreachable} down
+          {degraded > 0 && (
+            <span className="flex items-center gap-1.5 text-major">
+              <span className="h-1.5 w-1.5 rounded-full bg-major" />{degraded} degraded
             </span>
           )}
-          <span className="flex items-center gap-1 text-foreground-subtle text-[12px]">
-            <Users className="h-3.5 w-3.5" />{totalClients} clients
-          </span>
+          {offline > 0 && (
+            <span className="flex items-center gap-1.5 text-critical">
+              <span className="h-1.5 w-1.5 rounded-full bg-critical" />{offline} down
+            </span>
+          )}
         </div>
       </button>
       {open && (
         <div className="divide-y divide-border/40">
-          {devices.map((d) => <DeviceRow key={d.device_id} device={d} />)}
+          {devices.map((d) => <EdgeRow key={d.device_id} device={d} />)}
         </div>
       )}
     </div>
   );
 }
 
-export default function MistObserverPage() {
+export default function SdwanObserverPage() {
   const [search, setSearch] = useState("");
   const [reachabilityFilter, setReachabilityFilter] = useState<DeviceReachability | "all">("all");
   const [groupBySite, setGroupBySite] = useState(true);
 
   const { data, isLoading, error } = useQuery({
-    queryKey: ["mist-devices"],
-    queryFn: () => api.listDevices({ platform: "mist", limit: 2000 }),
+    queryKey: ["sdwan-devices"],
+    queryFn: () => api.listDevices({ platform: "velocloud", limit: 2000 }),
     refetchInterval: 60000,
   });
 
@@ -174,11 +156,10 @@ export default function MistObserverPage() {
       if (!term) return true;
       return (
         d.hostname.toLowerCase().includes(term) ||
-        d.mac.toLowerCase().includes(term) ||
+        d.serial.toLowerCase().includes(term) ||
         d.model.toLowerCase().includes(term) ||
         d.site_name.toLowerCase().includes(term) ||
-        d.ip_address.toLowerCase().includes(term) ||
-        d.serial.toLowerCase().includes(term)
+        d.ip_address.toLowerCase().includes(term)
       );
     });
   }, [devices, reachabilityFilter, search]);
@@ -186,8 +167,8 @@ export default function MistObserverPage() {
   const stats = useMemo(() => ({
     total: devices.length,
     reachable: devices.filter((d) => d.reachability === "reachable").length,
-    unreachable: devices.filter((d) => d.reachability === "unreachable").length,
-    totalClients: devices.reduce((s, d) => s + (d.num_clients || 0), 0),
+    degraded: devices.filter((d) => d.reachability === "degraded").length,
+    offline: devices.filter((d) => d.reachability === "unreachable").length,
   }), [devices]);
 
   const siteGroups = useMemo(() => {
@@ -208,31 +189,33 @@ export default function MistObserverPage() {
         <div className="border-b border-border/60 pb-8">
           <div className="flex items-start justify-between gap-4 flex-wrap">
             <div>
-              <div className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-[0.2em] text-violet-400">
-                <Wifi className="h-3.5 w-3.5" />
+              <div className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-[0.2em] text-emerald-400">
+                <Radio className="h-3.5 w-3.5" />
                 Platform Observer
               </div>
-              <h1 className="mt-1 text-3xl font-semibold tracking-tight text-foreground">Juniper Mist</h1>
+              <h1 className="mt-1 text-3xl font-semibold tracking-tight text-foreground">VeloCloud SD-WAN</h1>
               <p className="mt-1 text-sm text-foreground-muted">
-                Wireless access point inventory for Tata Motors — {stats.total} APs across {siteGroups.length} sites
+                SD-WAN edge inventory — {stats.total} edges across {siteGroups.length} sites
               </p>
             </div>
             <div className="flex gap-8">
               <div className="text-right">
                 <div className="text-2xl font-semibold text-foreground">{stats.total}</div>
-                <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-foreground-subtle">Total APs</div>
+                <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-foreground-subtle">Total Edges</div>
               </div>
               <div className="text-right">
                 <div className="text-2xl font-semibold text-success">{stats.reachable}</div>
-                <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-foreground-subtle">Online</div>
+                <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-foreground-subtle">Connected</div>
               </div>
+              {stats.degraded > 0 && (
+                <div className="text-right">
+                  <div className="text-2xl font-semibold text-major">{stats.degraded}</div>
+                  <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-foreground-subtle">Degraded</div>
+                </div>
+              )}
               <div className="text-right">
-                <div className="text-2xl font-semibold text-critical">{stats.unreachable}</div>
+                <div className="text-2xl font-semibold text-critical">{stats.offline}</div>
                 <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-foreground-subtle">Offline</div>
-              </div>
-              <div className="text-right">
-                <div className="text-2xl font-semibold text-foreground">{stats.totalClients}</div>
-                <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-foreground-subtle">Clients</div>
               </div>
             </div>
           </div>
@@ -244,7 +227,7 @@ export default function MistObserverPage() {
             <Search className="absolute left-0 top-1/2 h-4 w-4 -translate-y-1/2 text-foreground-subtle" />
             <input
               type="text"
-              placeholder="Search hostname, MAC, model, site, IP, serial..."
+              placeholder="Search edge name, serial, model, site, WAN IP..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               className="w-full border-b border-border/70 bg-transparent pl-7 pr-4 py-2 text-sm text-foreground outline-none placeholder:text-foreground-subtle focus:border-primary/30"
@@ -258,7 +241,7 @@ export default function MistObserverPage() {
               className="border-b border-border/70 bg-transparent px-1 py-2 text-sm text-foreground outline-none focus:border-primary/30"
             >
               <option value="all">All Status</option>
-              <option value="reachable">Online</option>
+              <option value="reachable">Connected</option>
               <option value="unreachable">Offline</option>
             </select>
             <button
@@ -308,9 +291,11 @@ export default function MistObserverPage() {
           <div className="flex flex-col items-start gap-3 border-t border-border/60 py-12">
             <Server className="h-6 w-6 text-foreground-subtle" />
             <div>
-              <p className="font-semibold text-foreground">No devices found</p>
+              <p className="font-semibold text-foreground">No edges found</p>
               <p className="mt-1 text-sm text-foreground-muted">
-                {devices.length === 0 ? "Inventory will appear after the first collection cycle." : "No devices match your filters."}
+                {devices.length === 0
+                  ? "SD-WAN edge inventory will appear after the first collection cycle completes."
+                  : "No edges match your current filters."}
               </p>
             </div>
           </div>
@@ -323,21 +308,21 @@ export default function MistObserverPage() {
         ) : (
           <div className="border border-border/50 rounded-lg overflow-hidden">
             <div className="hidden grid-cols-12 gap-3 border-b border-border/60 bg-surface px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-foreground-subtle lg:grid">
-              <div className="col-span-4">Device</div>
-              <div className="col-span-2">Site</div>
-              <div className="col-span-2">IP Address</div>
-              <div className="col-span-2">Clients / Uptime</div>
-              <div className="col-span-2 text-right">Status</div>
+              <div className="col-span-4">Edge Device</div>
+              <div className="col-span-3">Site</div>
+              <div className="col-span-2">WAN IP</div>
+              <div className="col-span-2">Firmware</div>
+              <div className="col-span-1 text-right">Status</div>
             </div>
             <div className="divide-y divide-border/40">
-              {filteredDevices.map((d) => <DeviceRow key={d.device_id} device={d} />)}
+              {filteredDevices.map((d) => <EdgeRow key={d.device_id} device={d} />)}
             </div>
           </div>
         )}
 
         {filteredDevices.length > 0 && (
           <div className="text-center text-xs text-foreground-subtle pt-2">
-            Showing {filteredDevices.length} of {data?.total ?? devices.length} devices
+            Showing {filteredDevices.length} of {data?.total ?? devices.length} edges
           </div>
         )}
 

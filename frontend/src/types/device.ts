@@ -1,4 +1,4 @@
-export type DeviceReachability = "reachable" | "unreachable" | "unknown";
+export type DeviceReachability = "reachable" | "unreachable" | "degraded" | "unknown";
 
 export interface DeviceSummary {
   device_id: string;

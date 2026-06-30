@@ -62,6 +62,11 @@ class Settings(BaseSettings):
     mist_base_url: str = Field(default="https://api.mist.com", description="Mist API base URL")
     mist_enabled: bool = Field(default=False, description="Enable Mist collector")
 
+    # VeloCloud SD-WAN
+    velocloud_url: str = Field(default="", description="VeloCloud Orchestrator base URL")
+    velocloud_api_key: str = Field(default="", description="VeloCloud API token")
+    velocloud_enabled: bool = Field(default=False, description="Enable VeloCloud collector")
+
     # Collectors
     collector_interval: int = Field(default=60, description="Worker collection interval in seconds")
 
