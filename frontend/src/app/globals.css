@@ -3,8 +3,92 @@
 @tailwind utilities;
 
 @layer base {
+  :root {
+    --background: 210 40% 98%;
+    --background-elevated: 210 40% 96%;
+    --background-hover: 210 40% 94%;
+
+    --foreground: 222 47% 11%;
+    --foreground-muted: 215 16% 47%;
+    --foreground-subtle: 215 16% 60%;
+
+    --surface: 210 40% 96%;
+    --surface-elevated: 0 0% 100%;
+    --surface-subtle: 214 32% 91%;
+    --surface-hover: 210 40% 94%;
+
+    --primary: 199 89% 40%;
+    --primary-hover: 199 89% 33%;
+    --primary-subtle: 199 70% 90%;
+
+    --border: 214 32% 86%;
+    --border-hover: 214 32% 78%;
+
+    --critical: 0 72% 51%;
+    --critical-bg: 0 75% 96%;
+    --critical-border: 0 70% 88%;
+
+    --major: 38 92% 45%;
+    --major-bg: 45 90% 96%;
+    --major-border: 40 80% 88%;
+
+    --minor: 45 93% 47%;
+    --minor-bg: 48 90% 96%;
+    --minor-border: 45 80% 88%;
+
+    --info: 199 89% 40%;
+    --info-bg: 199 80% 96%;
+    --info-border: 199 70% 90%;
+
+    --success: 142 71% 39%;
+    --success-bg: 142 70% 96%;
+    --success-border: 142 60% 90%;
+  }
+
+  [data-theme="dark"] {
+    --background: 222 47% 8%;
+    --background-elevated: 222 47% 11%;
+    --background-hover: 222 47% 14%;
+
+    --foreground: 210 40% 98%;
+    --foreground-muted: 215 14% 62%;
+    --foreground-subtle: 215 12% 46%;
+
+    --surface: 222 30% 13%;
+    --surface-elevated: 222 30% 17%;
+    --surface-subtle: 222 24% 22%;
+    --surface-hover: 222 30% 20%;
+
+    --primary: 199 89% 48%;
+    --primary-hover: 199 89% 56%;
+    --primary-subtle: 199 70% 18%;
+
+    --border: 217 19% 20%;
+    --border-hover: 217 19% 30%;
+
+    --critical: 0 84% 62%;
+    --critical-bg: 0 70% 14%;
+    --critical-border: 0 60% 26%;
+
+    --major: 38 92% 52%;
+    --major-bg: 38 70% 14%;
+    --major-border: 38 60% 26%;
+
+    --minor: 48 96% 55%;
+    --minor-bg: 48 70% 14%;
+    --minor-border: 48 60% 26%;
+
+    --info: 199 89% 48%;
+    --info-bg: 199 70% 14%;
+    --info-border: 199 60% 26%;
+
+    --success: 142 71% 47%;
+    --success-bg: 142 60% 14%;
+    --success-border: 142 50% 26%;
+  }
+
   html {
-    color-scheme: dark;
+    color-scheme: light dark;
     scroll-behavior: smooth;
   }
 
@@ -13,17 +97,26 @@
   }
 
   body {
-    @apply bg-background text-foreground;
+    @apply bg-background text-foreground antialiased;
     font-feature-settings: "rlig" 1, "calt" 1;
     text-rendering: optimizeLegibility;
     -webkit-font-smoothing: antialiased;
-    background-color: hsl(222 47% 11%);
     min-height: 100vh;
   }
 
   ::selection {
-    background: hsl(199 89% 48% / 0.28);
-    color: hsl(210 40% 98%);
+    background: hsl(var(--primary) / 0.28);
+    color: hsl(var(--foreground));
+  }
+}
+
+@layer components {
+  .surface {
+    @apply bg-surface shadow-surface rounded-xl;
+  }
+
+  .surface-elevated {
+    @apply bg-surface-elevated shadow-surface-lg rounded-xl;
   }
 }
 

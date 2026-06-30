@@ -26,7 +26,7 @@ export function DeviceReachabilityBadge({
   };
 
   return (
-    <Badge variant={variants[reachability]} className={cn("uppercase tracking-wide", className)}>
+    <Badge variant={variants[reachability]} className={cn("uppercase tracking-wider", className)}>
       {showDot && (
         <span
           className={cn(

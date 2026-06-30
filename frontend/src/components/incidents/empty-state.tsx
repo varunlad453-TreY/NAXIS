@@ -7,31 +7,31 @@ interface EmptyStateProps {
 export function EmptyState({ variant = "no-incidents" }: EmptyStateProps) {
   if (variant === "no-active") {
     return (
-      <div className="flex flex-col items-center justify-center py-16 px-4 text-center">
-        <div className="rounded-full bg-success-bg p-4 mb-4">
-          <CheckCircle className="h-8 w-8 text-success" />
+      <div className="flex flex-col items-start gap-3 border-t border-border/60 py-12">
+        <div className="flex h-10 w-10 items-center justify-center rounded-full bg-success/10 text-success">
+          <CheckCircle className="h-5 w-5" />
         </div>
-        <h3 className="text-lg font-medium text-foreground mb-2">
-          No active incidents
-        </h3>
-        <p className="text-sm text-foreground-muted max-w-sm">
-          All systems operational. You'll see new incidents here as they're detected by the correlation engine.
-        </p>
+        <div>
+          <h3 className="font-semibold text-foreground">No active incidents</h3>
+          <p className="mt-1 max-w-sm text-sm text-foreground-muted">
+            All systems operational. New incidents will appear here as they're detected.
+          </p>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="flex flex-col items-center justify-center py-16 px-4 text-center">
-      <div className="rounded-full bg-background-elevated p-4 mb-4 border border-border">
-        <AlertCircle className="h-8 w-8 text-foreground-subtle" />
+    <div className="flex flex-col items-start gap-3 border-t border-border/60 py-12">
+      <div className="flex h-10 w-10 items-center justify-center rounded-full bg-surface text-foreground-subtle">
+        <AlertCircle className="h-5 w-5" />
       </div>
-      <h3 className="text-lg font-medium text-foreground mb-2">
-        No incidents found
-      </h3>
-      <p className="text-sm text-foreground-muted max-w-sm">
-        No incidents match your filters. Try adjusting your search criteria.
-      </p>
+      <div>
+        <h3 className="font-semibold text-foreground">No incidents found</h3>
+        <p className="mt-1 max-w-sm text-sm text-foreground-muted">
+          No incidents match your filters. Try adjusting your search criteria.
+        </p>
+      </div>
     </div>
   );
 }

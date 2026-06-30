@@ -24,7 +24,7 @@ export function SeverityBadge({ severity, showDot = false, className }: Severity
   };
 
   return (
-    <Badge variant={variants[severity]} className={cn("uppercase tracking-wide", className)}>
+    <Badge variant={variants[severity]} className={cn("uppercase tracking-wider", className)}>
       {showDot && (
         <span
           className={cn(

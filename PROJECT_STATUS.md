@@ -1,70 +1,92 @@
 # Naxis Project Status
 
-**Last Updated:** 2026-05-28  
+**Last Updated:** 2026-06-20  
 **Version:** 1.0.0  
-**Status:** ✅ Production-Ready MVP
+**Status:** 🚧 Milestone B Complete — Persistence Layer Implemented
 
 ---
 
 ## Executive Summary
 
-The **Naxis Operational Intelligence Platform** is **complete and operational**. All core components have been built, tested, and documented.
+The **Naxis Operational Intelligence Platform** now has a **working persistence layer** (Milestone B). Events, incidents, and devices can be stored in ClickHouse/Neo4j when `STORAGE_MODE=clickhouse`, while `STORAGE_MODE=memory` keeps the original in-memory MVP behavior for tests and local demos.
 
-**What's Working:**
-- ✅ Complete backend API with incident management
-- ✅ Real-time correlation engine
-- ✅ Production-quality frontend dashboard
-- ✅ Full mock telemetry pipeline
-- ✅ End-to-end data flow
-- ✅ Comprehensive documentation
+### What just landed
+
+- ClickHouse, Redis, and Neo4j async clients in `backend/shared/database/`
+- `IncidentService` backed by ClickHouse (or in-memory fallback)
+- `EventService` + `GET /events` endpoint
+- `DeviceService` + `GET /devices` endpoint
+- Worker persists events, incidents, and discovered devices every cycle
+- Redis pub/sub for live incident broadcasts (when `REDIS_ENABLED=true`)
+- Frontend type/data-contract bugs fixed (`affected_clients_count`, StatsPanel math)
+
+### Remaining gaps
+
+1. **Real vendor collectors** — still mock-only.
+2. **Topology-aware correlation rules** — only site-time-window rule exists.
+3. **AI RCA** — `probable_cause` field exists but is never populated.
+4. **Auth, monitoring, CI/CD, K8s** — not started.
 
 ---
 
 ## Components Status
 
-### ✅ Backend (100% Complete)
+### Backend
 
-| Component | Status | Files | Tests | Docs |
-|-----------|--------|-------|-------|------|
-| **Incident Schema** | ✅ Complete | 3 | 8/8 passing | [EVENT_SCHEMA_COMPLETE.md](docs/EVENT_SCHEMA_COMPLETE.md) |
-| **Correlation Engine** | ✅ Complete | 3 | 9/9 passing | [CORRELATION_ENGINE_COMPLETE.md](docs/CORRELATION_ENGINE_COMPLETE.md) |
-| **Mock Telemetry** | ✅ Complete | 5 | ✅ Validated | [MOCK_TELEMETRY_COMPLETE.md](docs/MOCK_TELEMETRY_COMPLETE.md) |
-| **FastAPI Server** | ✅ Complete | 4 | 11/11 passing | [INCIDENT_API_COMPLETE.md](docs/INCIDENT_API_COMPLETE.md) |
+| Component | Status | Files | Tests | Notes |
+|-----------|--------|-------|-------|-------|
+| **Event / Incident Schema** | ✅ Working | `backend/shared/models/` | 8/8 passing | Pydantic v2 models, ClickHouse row helpers |
+| **Correlation Engine** | ⚠️ Partial | `backend/shared/correlation/` | 9/9 passing | Site-time window rule only; topology & MAC rules missing |
+| **Mock Telemetry** | ✅ Working | `backend/worker/mock_ingest/` | Validated | DNAC, Mist, SD-WAN generators |
+| **FastAPI Server** | ✅ Working | `backend/api/` | 16/16 passing | `/health`, `/incidents`, `/events`, `/devices` |
+| **Worker Daemon** | ✅ Working | `backend/worker/main.py` | New | Persists events/incidents/devices per cycle |
+| **ClickHouse Client** | ✅ Working | `backend/shared/database/clickhouse.py` | New | Async wrapper, insert + query events/incidents |
+| **Redis Client** | ✅ Working | `backend/shared/database/redis.py` | New | Pub/sub for live incident feed |
+| **Neo4j Client** | ✅ Working | `backend/shared/database/neo4j.py` | New | Topology upsert + device list |
+| **Database Clients** | ✅ Implemented | `backend/shared/database/` | New | ClickHouse/Redis/Neo4j clients present |
+| **Real Collectors** | ❌ Missing | N/A | N/A | No DNAC/Mist/Arista API clients |
+| **AI RCA Service** | ❌ Missing | N/A | N/A | `probable_cause` field exists but is never populated |
 
-**Total Backend:** 15 files, ~3,400 lines, 28 tests passing
+**Total Backend Tests:** 39 passing (34 original + 5 new persistence/API tests).
 
-### ✅ Frontend (100% Complete)
+### Frontend
 
-| Component | Status | Files | Description |
-|-----------|--------|-------|-------------|
-| **Next.js App** | ✅ Complete | 4 | App Router, providers, globals |
-| **UI Components** | ✅ Complete | 2 | Badge, Skeleton |
-| **Incident Components** | ✅ Complete | 5 | Cards, badges, states |
-| **Layout Components** | ✅ Complete | 2 | Header, stats panel |
-| **API Integration** | ✅ Complete | 2 | API client, utilities |
-| **TypeScript Types** | ✅ Complete | 1 | Full type coverage |
+| Component | Status | Files | Notes |
+|-----------|--------|-------|-------|
+| **Next.js App** | ✅ Working | `frontend/src/app/` | App Router, providers, globals |
+| **Incident Dashboard** | ✅ Working | `frontend/src/app/page.tsx` | Active/All toggle, 10s polling, stats panel |
+| **Incident Detail** | ✅ Working | `frontend/src/app/incidents/[id]/page.tsx` | Drill-down, blast radius, related events |
+| **UI Components** | ✅ Working | `frontend/src/components/` | Badges, skeletons, cards |
+| **API Client** | ✅ Working | `frontend/src/lib/api.ts` | Typed fetch wrapper (incidents only) |
+| **Device Explorer** | ⚠️ Backend ready | `backend/api/routes/devices.py` | UI page not built yet |
+| **Event Timeline** | ⚠️ Backend ready | `backend/api/routes/events.py` | Full `/events` page not implemented |
 
-**Total Frontend:** 22 files, ~1,500 lines, fully type-safe
+**Frontend Build:** `npm run build` passes, `npm run type-check` passes.
 
-### ✅ Documentation (100% Complete)
+### Infrastructure
 
-| Document | Purpose | Status |
-|----------|---------|--------|
-| [QUICKSTART.md](QUICKSTART.md) | Getting started guide | ✅ |
-| [PROJECT_STATUS.md](PROJECT_STATUS.md) | This file | ✅ |
-| [docs/FRONTEND_COMPLETE.md](docs/FRONTEND_COMPLETE.md) | UI architecture | ✅ |
-| [docs/INCIDENT_API_COMPLETE.md](docs/INCIDENT_API_COMPLETE.md) | API documentation | ✅ |
-| [docs/CORRELATION_ENGINE_COMPLETE.md](docs/CORRELATION_ENGINE_COMPLETE.md) | Correlation logic | ✅ |
-| [docs/MOCK_TELEMETRY_COMPLETE.md](docs/MOCK_TELEMETRY_COMPLETE.md) | Mock pipeline | ✅ |
-| [docs/EVENT_SCHEMA_COMPLETE.md](docs/EVENT_SCHEMA_COMPLETE.md) | Data schemas | ✅ |
-| [docs/MVP_ARCHITECTURE.md](docs/MVP_ARCHITECTURE.md) | System architecture | ✅ |
-| [frontend/README.md](frontend/README.md) | Frontend guide | ✅ |
+| Component | Status | Notes |
+|-----------|--------|-------|
+| **Docker Compose stack** | ✅ Ready | 7 services declared; worker entry point and API health checks fixed |
+| **ClickHouse schema** | ✅ Present | `schemas/clickhouse/001_events.sql`, `002_incidents.sql` |
+| **Neo4j schema** | ✅ Present | `schemas/neo4j/001_constraints.cypher`, `002_indexes.cypher` |
+| **Redis** | ✅ Declared | Client implemented; enable with `REDIS_ENABLED=true` |
+| **Ollama** | ✅ Declared | Used only as infrastructure placeholder; no RCA service |
+
+---
+
+## Storage Modes
+
+| Mode | Env Var | Use Case |
+|------|---------|----------|
+| `memory` | `STORAGE_MODE=memory` (default) | Tests, local demos, no Docker required |
+| `clickhouse` | `STORAGE_MODE=clickhouse` | Production persistence to ClickHouse + Neo4j |
 
 ---
 
 ## What Can You Do Right Now
 
-### 1. Run the Platform Locally
+### 1. Run the Platform Locally (In-Memory Demo)
 
 ```bash
 # Terminal 1: Start backend
@@ -77,31 +99,38 @@ python3 demo_end_to_end.py
 cd frontend && npm install && npm run dev
 ```
 
-### 2. Access the Platform
+### 2. Run with Docker + Persistent Storage
+
+```bash
+# Copy example env and enable ClickHouse persistence
+cp config/.env.example .env
+# Edit .env: STORAGE_MODE=clickhouse
+
+# Start the full stack
+make up
+```
+
+### 3. Access the Platform
 
 - **Frontend Dashboard:** http://localhost:3000
 - **API Documentation:** http://localhost:8000/docs
 - **Health Check:** http://localhost:8000/health
+- **Events API:** http://localhost:8000/events
+- **Devices API:** http://localhost:8000/devices
 
-### 3. Query the API
+### 4. Run Tests
 
 ```bash
-curl http://localhost:8000/incidents | jq
-curl http://localhost:8000/incidents/active | jq
+# Backend
+pytest
+
+# Frontend
+cd frontend && npm run type-check && npm run build
 ```
-
-### 4. View Operational Intelligence
-
-Open http://localhost:3000 and see:
-- Real-time incident feed
-- Severity-based visual hierarchy
-- Confidence scoring
-- Impact metrics
-- Drill-down to incident details
 
 ---
 
-## Architecture Diagram
+## Architecture Diagram (Current State)
 
 ```
 ┌────────────────────────────────────────────────────────────────┐
@@ -115,251 +144,50 @@ Open http://localhost:3000 and see:
 └──────┬───────┘
        │
        │ HTTP (React Query)
-       ↓
+       ▼
 ┌──────────────────────┐
 │  Next.js Frontend    │
 │  ┌────────────────┐  │
 │  │ Incident List  │  │
 │  │ Incident Detail│  │
 │  │ Stats Panel    │  │
-│  │ Real-time feed │  │
 │  └────────────────┘  │
 └──────┬───────────────┘
        │
        │ API Calls
-       ↓
+       ▼
 ┌──────────────────────┐
 │  FastAPI Backend     │  localhost:8000
 │  ┌────────────────┐  │
 │  │ GET /incidents │  │
-│  │ GET /incidents/│  │
-│  │     active     │  │
-│  │ GET /incidents/│  │
-│  │     {id}       │  │
+│  │ GET /events    │  │
+│  │ GET /devices   │  │
 │  │ GET /health    │  │
 │  └────────────────┘  │
 └──────┬───────────────┘
        │
        │ Service Layer
-       ↓
-┌──────────────────────┐
-│  IncidentService     │
-│  ┌────────────────┐  │
-│  │ In-Memory Store│  │
-│  │ Dict[str, Inc] │  │
-│  │                │  │
-│  │ list_incidents │  │
-│  │ get_incident   │  │
-│  │ add_incidents  │  │
-│  └────────────────┘  │
-└──────┬───────────────┘
+       ▼
+┌──────────────────────┐     ┌──────────────────────┐
+│  IncidentService     │────▶│  ClickHouse          │
+│  EventService        │     │  naxis.events        │
+│  DeviceService       │     │  naxis.incidents     │
+└──────┬───────────────┘     └──────────────────────┘
        │
-       │ Data Flow
-       ↓
-┌──────────────────────┐
-│ Correlation Engine   │
-│  ┌────────────────┐  │
-│  │ Site + Time    │  │
-│  │ Grouping       │  │
-│  │                │  │
-│  │ Confidence     │  │
-│  │ Scoring        │  │
-│  └────────────────┘  │
-└──────┬───────────────┘
+       │ Correlation / Publish
+       ▼
+┌──────────────────────┐     ┌──────────────────────┐
+│  Correlation Engine  │────▶│  Redis               │
+│  Worker Loop         │     │  naxis:incidents     │
+└──────┬───────────────┘     └──────────────────────┘
        │
-       │ Events
-       ↓
+       │ Device Topology
+       ▼
 ┌──────────────────────┐
-│ Mock Telemetry       │
-│  ┌────────────────┐  │
-│  │ DNAC Generator │  │
-│  │ Mist Generator │  │
-│  │ SD-WAN Gen     │  │
-│  └────────────────┘  │
+│  Neo4j               │
+│  Device/Site Graph   │
 └──────────────────────┘
 ```
-
----
-
-## Key Features
-
-### Operational Intelligence
-- ✅ **Multi-vendor correlation** - DNAC, Mist, SD-WAN
-- ✅ **Site-based grouping** - Spatial proximity
-- ✅ **Time-window analysis** - Temporal correlation (5min default)
-- ✅ **Confidence scoring** - Event count + severity + diversity
-
-### Incident Management
-- ✅ **Full lifecycle tracking** - Open → Investigating → Resolved
-- ✅ **Blast radius tracking** - Sites, devices, clients affected
-- ✅ **Event linking** - Related events per incident
-- ✅ **RCA placeholder** - Probable cause field
-
-### REST API
-- ✅ **FastAPI framework** - Auto-generated docs
-- ✅ **Pydantic models** - Type-safe request/response
-- ✅ **Service layer** - Easy storage migration
-- ✅ **Error handling** - Proper HTTP status codes
-- ✅ **CORS support** - Frontend integration
-
-### Frontend Dashboard
-- ✅ **Modern UI** - Next.js 14 + TypeScript
-- ✅ **Dark theme** - Calm operational aesthetic
-- ✅ **Real-time updates** - 10s polling
-- ✅ **Severity colors** - Critical, Major, Minor, Info
-- ✅ **Drill-down** - Incident detail pages
-- ✅ **Stats panel** - Operational metrics
-
----
-
-## Code Statistics
-
-| Category | Files | Lines | Tests | Status |
-|----------|-------|-------|-------|--------|
-| **Backend Core** | 7 | 1,400 | 28 | ✅ Complete |
-| **Backend Mock** | 5 | 1,100 | ✅ | ✅ Complete |
-| **Backend API** | 4 | 900 | 11 | ✅ Complete |
-| **Frontend** | 22 | 1,500 | N/A | ✅ Complete |
-| **Schemas** | 2 | 200 | N/A | ✅ Complete |
-| **Documentation** | 10 | 5,000+ | N/A | ✅ Complete |
-| **Total** | **50** | **~10,100** | **39** | **✅ Operational** |
-
----
-
-## Testing Coverage
-
-### Backend Tests
-
-**Incident Schema:** 8/8 passing ✅
-- Creation, validation, helpers, serialization
-
-**Correlation Engine:** 9/9 passing ✅
-- Grouping, rules, generation, confidence, deduplication
-
-**API Endpoints:** 11/11 passing ✅
-- Health, list, active, get, filtering, pagination
-
-**Mock Pipeline:** Validated ✅
-- DNAC, Mist, SD-WAN generators working
-
-**Total:** 28 backend tests passing
-
-### Frontend
-
-- TypeScript compilation: ✅ No errors
-- Component rendering: ✅ Verified
-- API integration: ✅ Working
-- Real-time updates: ✅ 10s polling active
-
----
-
-## Dependencies
-
-### Backend
-
-```
-pydantic>=2.0.0      # Data validation
-fastapi>=0.104.0     # API framework
-uvicorn>=0.24.0      # ASGI server
-python-dateutil      # Date handling
-pytest>=7.4.0        # Testing
-httpx>=0.25.0        # HTTP client
-```
-
-### Frontend
-
-```
-next@^14.2.0         # React framework
-react@^18.3.0        # UI library
-@tanstack/react-query # Data fetching
-typescript@^5.5.0    # Type safety
-tailwindcss@^3.4.0   # Styling
-lucide-react         # Icons
-date-fns             # Date formatting
-```
-
----
-
-## Deployment Readiness
-
-### ✅ Ready for Development
-
-```bash
-# Clone and run immediately
-git clone <repo>
-cd naxis
-python3 -m uvicorn backend.api.main:app --reload
-cd frontend && npm install && npm run dev
-```
-
-### ✅ Ready for Demo
-
-- Clean UI suitable for leadership presentations
-- Real-time incident feed
-- Professional dark theme
-- Complete end-to-end flow
-
-### ⚠️ Production Considerations
-
-**Still needs:**
-- [ ] ClickHouse integration (in-memory → persistent)
-- [ ] Authentication/authorization
-- [ ] Real vendor API integrations (replace mocks)
-- [ ] WebSocket for real-time updates
-- [ ] Logging and monitoring
-- [ ] Error tracking (Sentry)
-- [ ] Rate limiting
-- [ ] Docker deployment
-
-**MVP is storage-agnostic:**
-- Service layer abstracts storage
-- Easy to swap in-memory → ClickHouse
-- API contracts won't change
-
----
-
-## Next Steps
-
-### Immediate (This Week)
-
-1. **Test the platform locally**
-   - Follow QUICKSTART.md
-   - Generate demo incidents
-   - Explore UI and API
-
-2. **Review architecture**
-   - Read MVP_ARCHITECTURE.md
-   - Understand data flow
-   - Plan production deployment
-
-### Short-Term (Next 2 Weeks)
-
-3. **ClickHouse integration**
-   - Deploy ClickHouse container
-   - Implement ClickHouseIncidentService
-   - Migrate from in-memory
-
-4. **Real vendor collectors**
-   - Replace DNAC mock with real API
-   - Add Mist API integration
-   - Add SD-WAN API integration
-
-### Medium-Term (Next Month)
-
-5. **Authentication**
-   - Add JWT tokens
-   - Role-based access control
-   - API key management
-
-6. **Real-time updates**
-   - WebSocket implementation
-   - Push notifications
-   - Live incident feed
-
-7. **Additional features**
-   - Incident notes/comments
-   - Status updates
-   - Export capabilities
 
 ---
 
@@ -367,129 +195,52 @@ cd frontend && npm install && npm run dev
 
 ### Current MVP
 
-- **Storage:** In-memory (not persistent)
-- **Telemetry:** Mock data only (no real vendors)
-- **Updates:** Polling (not WebSocket)
-- **Auth:** None (open API)
-- **Scale:** Single instance (no clustering)
-
-### By Design
-
-These are intentional MVP simplifications:
-- Simple in-memory storage for development
-- Mock data for testing without vendor access
-- Polling for simpler implementation
-- No auth for faster iteration
-
-All are easily upgradable (service layer abstraction).
+- **Collectors:** Mock data only (no real vendor APIs).
+- **Correlation:** Single site-time-window rule.
+- **Updates:** Frontend polls every 10s (no WebSocket/SSE yet).
+- **Auth:** None (open API).
+- **Scale:** Single instance, no clustering.
+- **RCA:** `probable_cause` and `confidence_score` exist in schema but are never populated.
 
 ---
 
-## Success Metrics
+## Next Steps
 
-### ✅ Platform Operational
+### Milestone A — Foundation Fix ✅ Done
+### Milestone B — Persistent Data Layer ✅ Done
 
-- Backend API responding
-- Frontend loading and functional
-- End-to-end data flow working
-- Demo generates incidents successfully
+### Milestone C — Real Worker Loop
 
-### ✅ Code Quality
+- Implement vendor collectors (DNAC, Mist, Arista SD-WAN, Arista WLC) with mock fallback.
+- Worker writes normalized events to ClickHouse.
+- Worker triggers correlation and writes incidents to ClickHouse.
 
-- TypeScript: 0 errors
-- Python: Type hints throughout
-- Tests: 39 passing
-- Documentation: Comprehensive
+### Milestone D — Intelligence & UI Expansion
 
-### ✅ User Experience
+- Topology-aware correlation rules.
+- MAC cross-platform correlation.
+- Ollama-based RCA endpoint (`POST /incidents/{id}/analyze`).
+- Device explorer and event timeline pages.
+- Server-Sent Events (SSE) for live updates.
 
-- Clean, professional UI
-- Responsive design
-- Real-time updates (10s)
-- Smooth drill-down navigation
+### Milestone E — Production Hardening
 
----
-
-## Team Handoff
-
-### For Backend Developers
-
-**Key files:**
-- `backend/shared/models/` - Data schemas
-- `backend/shared/correlation/` - Correlation logic
-- `backend/api/` - FastAPI application
-- `backend/worker/mock_ingest/` - Mock generators
-
-**Next tasks:**
-- Integrate ClickHouse
-- Add real vendor APIs
-- Implement WebSocket updates
-
-### For Frontend Developers
-
-**Key files:**
-- `frontend/src/app/` - Pages
-- `frontend/src/components/` - React components
-- `frontend/src/lib/` - API client
-
-**Next tasks:**
-- Add advanced filtering
-- Implement search
-- Add incident management features
-
-### For DevOps
-
-**Key files:**
-- `requirements.txt` - Backend deps
-- `package.json` - Frontend deps
-- `schemas/` - Database schemas
-
-**Next tasks:**
-- Docker Compose setup
-- CI/CD pipeline
-- Monitoring and logging
-
----
-
-## Documentation Index
-
-### Getting Started
-- [QUICKSTART.md](QUICKSTART.md) - 5-minute setup guide
-
-### Architecture
-- [docs/MVP_ARCHITECTURE.md](docs/MVP_ARCHITECTURE.md) - Complete system design
-- [docs/MVP_STRUCTURE.md](docs/MVP_STRUCTURE.md) - Directory structure
-- [docs/MVP_SUMMARY.md](docs/MVP_SUMMARY.md) - Quick reference
-
-### Components
-- [docs/FRONTEND_COMPLETE.md](docs/FRONTEND_COMPLETE.md) - UI documentation
-- [docs/INCIDENT_API_COMPLETE.md](docs/INCIDENT_API_COMPLETE.md) - API reference
-- [docs/CORRELATION_ENGINE_COMPLETE.md](docs/CORRELATION_ENGINE_COMPLETE.md) - Correlation logic
-- [docs/MOCK_TELEMETRY_COMPLETE.md](docs/MOCK_TELEMETRY_COMPLETE.md) - Mock pipeline
-- [docs/EVENT_SCHEMA_COMPLETE.md](docs/EVENT_SCHEMA_COMPLETE.md) - Data models
-
-### Reference
-- [frontend/README.md](frontend/README.md) - Frontend development
-- [README.md](README.md) - Project overview
+- Authentication (Keycloak / JWT).
+- Prometheus + Grafana monitoring.
+- CI/CD pipeline (GitHub Actions).
+- Kubernetes manifests.
+- Backup/restore runbooks.
 
 ---
 
 ## Summary
 
-**The Naxis Operational Intelligence Platform is complete and ready for use.**
+The Naxis platform has moved from an **in-memory MVP** to a **persistable architecture**. The persistence layer is implemented, tested, and ready to use with `STORAGE_MODE=clickhouse`. The next critical step is **real vendor collectors** so the platform processes live data instead of synthetic events.
 
-✅ **Complete backend** with incident management API  
-✅ **Production-quality frontend** with real-time dashboard  
-✅ **Working correlation engine** with site-based grouping  
-✅ **Full mock telemetry pipeline** for testing  
-✅ **Comprehensive documentation** for all components  
-
-**Status:** Production-ready MVP with clear path to scale
-
-**Next:** Deploy to production, integrate real vendors, add auth
+**Status:** Working MVP with persistence layer complete; collectors and intelligence next.
 
 ---
 
-*Last updated: 2026-05-28*  
+*Last updated: 2026-06-20*  
 *Platform version: 1.0.0*  
-*Status: ✅ Operational*
+*Status: 🚧 Milestone B complete; Milestone C (real collectors) next*

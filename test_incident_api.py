@@ -6,6 +6,7 @@ Tests for the FastAPI incident endpoints.
 Uses FastAPI TestClient for synchronous testing.
 """
 
+import asyncio
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -15,18 +16,18 @@ sys.path.insert(0, str(Path(__file__).parent / "backend"))
 
 from fastapi.testclient import TestClient  # noqa: E402
 
-from api.main import app  # noqa: E402
-from api.services.incident_service import incident_service  # noqa: E402
-from shared.models.incident import Incident, IncidentSeverity, IncidentStatus  # noqa: E402
+from backend.main import app  # noqa: E402
+from backend.services.incident_service import incident_service  # noqa: E402
+from backend.shared.models.incident import Incident, IncidentSeverity, IncidentStatus  # noqa: E402
 
 # Create test client
 client = TestClient(app)
 
 
-def setup_test_incidents():
-    """Create test incidents for API testing."""
+async def _setup_test_incidents_async():
+    """Async helper to create test incidents."""
     # Clear existing incidents
-    incident_service.clear_all()
+    await incident_service.clear_all()
 
     # Create test incidents
     incidents = [
@@ -62,8 +63,13 @@ def setup_test_incidents():
         ),
     ]
 
-    incident_service.add_incidents(incidents)
+    await incident_service.add_incidents(incidents)
     return incidents
+
+
+def setup_test_incidents():
+    """Create test incidents for API testing (sync wrapper)."""
+    return asyncio.run(_setup_test_incidents_async())
 
 
 def test_health_endpoint():
@@ -230,8 +236,7 @@ def test_empty_state():
     """Test behavior when no incidents exist."""
     print("✓ Testing empty state...")
 
-    # Clear all incidents
-    incident_service.clear_all()
+    asyncio.run(incident_service.clear_all())
 
     response = client.get("/incidents")
     assert response.status_code == 200

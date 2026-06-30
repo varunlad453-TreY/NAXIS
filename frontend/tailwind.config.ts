@@ -1,7 +1,7 @@
 import type { Config } from "tailwindcss";
 
 const config: Config = {
-  darkMode: ["class"],
+  darkMode: ["class", '[data-theme="dark"]'],
   content: [
     "./src/pages/**/*.{js,ts,jsx,tsx,mdx}",
     "./src/components/**/*.{js,ts,jsx,tsx,mdx}",
@@ -10,51 +10,55 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        // Naxis brand colors - calm, operational, premium
         background: {
-          DEFAULT: "hsl(222 47% 11%)", // Deep navy
-          elevated: "hsl(222 47% 14%)",
-          hover: "hsl(222 47% 16%)",
+          DEFAULT: "hsl(var(--background))",
+          elevated: "hsl(var(--background-elevated))",
+          hover: "hsl(var(--background-hover))",
         },
         foreground: {
-          DEFAULT: "hsl(210 40% 98%)",
-          muted: "hsl(217 10% 64%)",
-          subtle: "hsl(217 10% 50%)",
+          DEFAULT: "hsl(var(--foreground))",
+          muted: "hsl(var(--foreground-muted))",
+          subtle: "hsl(var(--foreground-subtle))",
+        },
+        surface: {
+          DEFAULT: "hsl(var(--surface))",
+          elevated: "hsl(var(--surface-elevated))",
+          subtle: "hsl(var(--surface-subtle))",
+          hover: "hsl(var(--surface-hover))",
         },
         primary: {
-          DEFAULT: "hsl(199 89% 48%)", // Cyan blue
-          hover: "hsl(199 89% 55%)",
-          subtle: "hsl(199 89% 20%)",
+          DEFAULT: "hsl(var(--primary))",
+          hover: "hsl(var(--primary-hover))",
+          subtle: "hsl(var(--primary-subtle))",
         },
         border: {
-          DEFAULT: "hsl(217 19% 27%)",
-          hover: "hsl(217 19% 35%)",
+          DEFAULT: "hsl(var(--border))",
+          hover: "hsl(var(--border-hover))",
         },
-        // Severity colors
         critical: {
-          DEFAULT: "hsl(0 84% 60%)", // Red
-          bg: "hsl(0 84% 15%)",
-          border: "hsl(0 84% 30%)",
+          DEFAULT: "hsl(var(--critical))",
+          bg: "hsl(var(--critical-bg))",
+          border: "hsl(var(--critical-border))",
         },
         major: {
-          DEFAULT: "hsl(38 92% 50%)", // Amber
-          bg: "hsl(38 92% 15%)",
-          border: "hsl(38 92% 30%)",
+          DEFAULT: "hsl(var(--major))",
+          bg: "hsl(var(--major-bg))",
+          border: "hsl(var(--major-border))",
         },
         minor: {
-          DEFAULT: "hsl(48 96% 53%)", // Yellow
-          bg: "hsl(48 96% 15%)",
-          border: "hsl(48 96% 30%)",
+          DEFAULT: "hsl(var(--minor))",
+          bg: "hsl(var(--minor-bg))",
+          border: "hsl(var(--minor-border))",
         },
         info: {
-          DEFAULT: "hsl(199 89% 48%)", // Cyan
-          bg: "hsl(199 89% 15%)",
-          border: "hsl(199 89% 30%)",
+          DEFAULT: "hsl(var(--info))",
+          bg: "hsl(var(--info-bg))",
+          border: "hsl(var(--info-border))",
         },
         success: {
-          DEFAULT: "hsl(142 71% 45%)", // Muted green
-          bg: "hsl(142 71% 15%)",
-          border: "hsl(142 71% 30%)",
+          DEFAULT: "hsl(var(--success))",
+          bg: "hsl(var(--success-bg))",
+          border: "hsl(var(--success-border))",
         },
       },
       fontFamily: {
@@ -77,9 +81,14 @@ const config: Config = {
         "2xs": ["0.625rem", { lineHeight: "0.875rem" }],
       },
       borderRadius: {
-        lg: "0.5rem",
-        md: "0.375rem",
+        lg: "0.75rem",
+        md: "0.5rem",
         sm: "0.25rem",
+      },
+      boxShadow: {
+        surface: "0 1px 2px 0 rgba(0, 0, 0, 0.08), 0 0 0 1px hsl(var(--border) / 0.5)",
+        "surface-lg": "0 8px 24px -4px rgba(0, 0, 0, 0.1), 0 0 0 1px hsl(var(--border) / 0.5)",
+        glow: "0 0 40px -12px hsl(var(--primary) / 0.35)",
       },
     },
   },
