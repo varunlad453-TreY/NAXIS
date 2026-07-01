@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState, useRef, useEffect } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import {
   Activity,
@@ -578,7 +579,18 @@ const TABS: Array<{ id: NavTab; label: string; icon: React.ElementType }> = [
 ];
 
 export default function SdwanObserverPage() {
-  const [activeTab, setActiveTab] = useState<NavTab>("overview");
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const tabParam = searchParams.get("tab") as NavTab | null;
+  const validTabs: NavTab[] = ["overview", "edges", "linkhealth", "chat"];
+  const [activeTab, setActiveTab] = useState<NavTab>(
+    tabParam && validTabs.includes(tabParam) ? tabParam : "overview"
+  );
+
+  const switchTab = (tab: NavTab) => {
+    setActiveTab(tab);
+    router.replace(`?tab=${tab}`, { scroll: false });
+  };
 
   const { data, isLoading, error } = useQuery({
     queryKey: ["sdwan-devices"],
@@ -611,7 +623,7 @@ export default function SdwanObserverPage() {
         {/* Tab nav */}
         <div className="flex items-center gap-1 border-b border-border/40">
           {TABS.map(tab => (
-            <button key={tab.id} onClick={() => setActiveTab(tab.id)}
+            <button key={tab.id} onClick={() => switchTab(tab.id)}
               className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium transition-colors border-b-2 -mb-px ${
                 activeTab === tab.id
                   ? "border-primary text-primary"
