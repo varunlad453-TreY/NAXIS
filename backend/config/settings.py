@@ -39,6 +39,7 @@ class Settings(BaseSettings):
         default="http://localhost:3000,http://localhost:8000",
         description="Comma-separated allowed CORS origins",
     )
+    api_key: str = Field(default="", description="API key required in X-API-Key header")
 
     # PostgreSQL
     postgres_host: str = Field(default="localhost", description="PostgreSQL host")
@@ -61,6 +62,11 @@ class Settings(BaseSettings):
     mist_org_id: str = Field(default="", description="Mist organization UUID")
     mist_base_url: str = Field(default="https://api.mist.com", description="Mist API base URL")
     mist_enabled: bool = Field(default=False, description="Enable Mist collector")
+
+    # VeloCloud (Arista SD-WAN)
+    velocloud_url: str = Field(default="", description="VeloCloud Orchestrator URL")
+    velocloud_api_key: str = Field(default="", description="VeloCloud API key / JWT token")
+    velocloud_enabled: bool = Field(default=False, description="Enable VeloCloud collector")
 
     # Collectors
     collector_interval: int = Field(default=60, description="Worker collection interval in seconds")

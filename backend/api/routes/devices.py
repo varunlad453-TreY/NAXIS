@@ -6,6 +6,7 @@ Serves from the `inventory` table (populated by MistInventoryCollector).
 Falls back to deriving from events if inventory is empty.
 """
 
+import json
 import logging
 from typing import List, Optional
 
@@ -41,7 +42,8 @@ _INVENTORY_QUERY = """
         uptime_seconds,
         firmware_version,
         'managed'   AS management_state,
-        last_seen
+        last_seen,
+        props
     FROM inventory
     WHERE 1=1
     {where}
@@ -55,6 +57,8 @@ _COUNT_QUERY = """
 
 
 def _row_to_summary(row) -> DeviceSummary:
+    raw_props = row["props"]
+    props = json.loads(raw_props) if isinstance(raw_props, str) else (raw_props or None)
     return DeviceSummary(
         device_id=row["device_id"] or "",
         platform=row["platform"] or "",
@@ -73,6 +77,7 @@ def _row_to_summary(row) -> DeviceSummary:
         firmware_version=row["firmware_version"] or "",
         management_state=row["management_state"],
         last_seen=row["last_seen"],
+        props=props,
     )
 
 
@@ -130,4 +135,4 @@ async def list_devices(
         )
     except Exception as exc:
         logger.error("Error listing devices: %s", exc, exc_info=True)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc))
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")

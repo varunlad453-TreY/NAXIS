@@ -3,7 +3,7 @@ Device API Models
 """
 
 from datetime import datetime
-from typing import Optional
+from typing import Any, Dict, Optional
 
 from pydantic import BaseModel, Field
 
@@ -26,6 +26,7 @@ class DeviceSummary(BaseModel):
     firmware_version: str = Field(default="", description="Firmware/software version")
     management_state: str = Field(default="managed", description="Management state")
     last_seen: Optional[datetime] = Field(None, description="Last seen timestamp")
+    props: Optional[Dict[str, Any]] = Field(None, description="Platform-specific properties (VeloBrain scores, links, etc.)")
 
 
 class DeviceListResponse(BaseModel):

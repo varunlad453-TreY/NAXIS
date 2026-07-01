@@ -2,8 +2,6 @@ services:
   postgres:
     image: postgres:16-alpine
     container_name: naxis-postgres
-    ports:
-      - "5432:5432"
     environment:
       POSTGRES_DB: naxis
       POSTGRES_USER: naxis
@@ -23,12 +21,11 @@ services:
   redis:
     image: redis:7-alpine
     container_name: naxis-redis
-    ports:
-      - "6379:6379"
+    command: redis-server --requirepass "${REDIS_PASSWORD}"
     volumes:
       - redis_data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
       interval: 10s
       timeout: 5s
       retries: 3
@@ -95,11 +92,15 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: http://localhost:8000
+        NEXT_PUBLIC_API_KEY: 14fc7a8b6c6b608652192b2f68cc1dfa12a3bfe559651c0fe9092843c3c9573f
     container_name: naxis-web
     ports:
       - "3000:3000"
     environment:
       NEXT_PUBLIC_API_URL: http://localhost:8000
+      NEXT_PUBLIC_API_KEY: 14fc7a8b6c6b608652192b2f68cc1dfa12a3bfe559651c0fe9092843c3c9573f
     depends_on:
       api:
         condition: service_healthy

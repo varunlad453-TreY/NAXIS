@@ -11,9 +11,10 @@ const platformColors: Record<string, string> = {
 };
 
 function ReachabilityDot({ status }: { status: DeviceReachability }) {
-  const colors = {
+  const colors: Record<DeviceReachability, string> = {
     reachable: "bg-success",
     unreachable: "bg-critical",
+    degraded: "bg-orange-400",
     unknown: "bg-foreground-subtle",
   };
   return <span className={`inline-block h-2 w-2 rounded-full ${colors[status]}`} title={status} />;

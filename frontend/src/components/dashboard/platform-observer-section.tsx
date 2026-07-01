@@ -5,21 +5,18 @@ import { PlatformCard } from "./platform-card";
 
 interface PlatformObserverSectionProps {
   mistDeviceCount: number;
+  sdwanEdgeCount: number;
 }
 
-export function PlatformObserverSection({ mistDeviceCount }: PlatformObserverSectionProps) {
+export function PlatformObserverSection({ mistDeviceCount, sdwanEdgeCount }: PlatformObserverSectionProps) {
   return (
     <section style={{ animation: "naxis-enter 0.8s 0.4s both" }}>
-      <div className="mb-5 flex items-center gap-3">
-        <div className="h-px flex-1 bg-gradient-to-r from-transparent via-primary/20 to-transparent" />
-        <p className="text-[9px] font-bold uppercase tracking-[0.35em] text-foreground-subtle">
-          Platform Observers
-        </p>
-        <div className="h-px flex-1 bg-gradient-to-l from-transparent via-primary/20 to-transparent" />
-      </div>
+      <p className="mb-4 text-[10px] font-semibold uppercase tracking-[0.3em] text-foreground-subtle">
+        Platform Observers
+      </p>
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <PlatformCard
-          href="/integrations"
+          href="/mist"
           icon={<Wifi className="h-5 w-5" />}
           label="Juniper Mist"
           sublabel="Wireless"
@@ -42,14 +39,15 @@ export function PlatformObserverSection({ mistDeviceCount }: PlatformObserverSec
           delay={0.6}
         />
         <PlatformCard
-          href="/integrations"
+          href="/sdwan"
           icon={<Radio className="h-5 w-5" />}
           label="Arista SD-WAN"
           sublabel="WAN"
           description="Edge devices, tunnel health and WAN telemetry across all sites."
-          active={false}
+          stat={{ value: sdwanEdgeCount.toLocaleString(), label: "Edges" }}
+          active
           accentRgb="52,211,153"
-          tag="SD-WAN"
+          tag="Live"
           delay={0.7}
         />
         <PlatformCard

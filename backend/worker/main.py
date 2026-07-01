@@ -22,6 +22,8 @@ from shared.database.client import db
 from shared.database.events import insert_events
 from worker.collectors.mist import MistCollector
 from worker.collectors.mist_inventory import MistInventoryCollector
+from worker.collectors.velocloud_inventory import VelocloudInventoryCollector
+from worker.collectors.velocloud_metrics import VelocloudMetricsCollector
 
 logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO").upper(),
@@ -48,6 +50,8 @@ class WorkerDaemon:
         self._running = False
         self._mist = MistCollector()
         self._mist_inventory = MistInventoryCollector()
+        self._velo_inventory = VelocloudInventoryCollector()
+        self._velo_metrics = VelocloudMetricsCollector()
         self._last_collected: datetime = datetime.utcnow() - timedelta(hours=24)
 
     async def run_once(self) -> None:
@@ -76,6 +80,8 @@ class WorkerDaemon:
             logger.info("Persisted %d new events to Postgres", len(events))
 
         await self._mist_inventory.collect()
+        await self._velo_inventory.collect()
+        await self._velo_metrics.collect()
 
         self._last_collected = now
 
@@ -95,6 +101,7 @@ class WorkerDaemon:
         logger.info("Naxis Worker starting")
         logger.info("  Collector interval: %ds", COLLECTOR_INTERVAL)
         logger.info("  Mist enabled:       %s", _settings.mist_enabled)
+        logger.info("  VeloCloud enabled:  %s", _settings.velocloud_enabled)
         logger.info("=" * 60)
 
         await db.connect()

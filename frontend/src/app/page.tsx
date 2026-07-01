@@ -25,15 +25,18 @@ export default function HomePage() {
   const mistDeviceCount = useCount(["mist-devices-count"], () =>
     api.listDevices({ platform: "mist", limit: 1 })
   );
+  const sdwanEdgeCount = useCount(["sdwan-devices-count"], () =>
+    api.listDevices({ platform: "velocloud", limit: 1 })
+  );
   const eventCount = useCount(["events-count"], () => api.listEvents({ limit: 1 }));
 
   const isOnline = health?.status === "healthy";
 
   return (
-    <DashboardBackground eventCount={eventCount}>
+    <DashboardBackground>
       <div className="relative mx-auto max-w-6xl space-y-16 px-6 py-20 lg:px-8">
         <HeroSection isOnline={isOnline} eventCount={eventCount} />
-        <PlatformObserverSection mistDeviceCount={mistDeviceCount} />
+        <PlatformObserverSection mistDeviceCount={mistDeviceCount} sdwanEdgeCount={sdwanEdgeCount} />
         <InventoryToggle
           show={showInventory}
           onToggle={() => setShowInventory((s) => !s)}

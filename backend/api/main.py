@@ -1,12 +1,5 @@
 #!/usr/bin/env python3
-"""
-Naxis Monolith API
-
-Main FastAPI application for the Naxis operational intelligence platform.
-
-Run with:
-    uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000
-"""
+"""Naxis API entry point for development (uvicorn api.main:app)."""
 
 import logging
 from contextlib import asynccontextmanager
@@ -69,14 +62,13 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=_settings.api_cors_origins_list,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["Content-Type", "X-API-Key", "Authorization"],
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 
 @app.middleware("http")
 async def add_process_time_header(request, call_next):
-    """Add X-Process-Time header to responses."""
     start_time = datetime.utcnow()
     response = await call_next(request)
     process_time = (datetime.utcnow() - start_time).total_seconds()
@@ -95,22 +87,9 @@ app.include_router(sdwan_router, dependencies=_auth)
 
 @app.get("/", include_in_schema=False)
 async def root():
-    """Root endpoint - redirect to docs."""
     return {
         "message": "Naxis API",
         "version": "1.0.0",
         "docs": "/docs",
         "health": "/health",
     }
-
-
-if __name__ == "__main__":
-    import uvicorn
-
-    uvicorn.run(
-        "backend.main:app",
-        host=_settings.api_host,
-        port=_settings.api_port,
-        reload=True,
-        log_level="info",
-    )

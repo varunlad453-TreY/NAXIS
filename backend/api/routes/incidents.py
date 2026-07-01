@@ -77,7 +77,7 @@ async def list_incidents(
         return IncidentListResponse(incidents=summaries, total=total, page=1, page_size=limit)
     except Exception as e:
         logger.error(f"Error listing incidents: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("/active", response_model=IncidentListResponse, summary="List active incidents")
@@ -92,7 +92,7 @@ async def list_active_incidents(
         return IncidentListResponse(incidents=summaries, total=total, page=1, page_size=limit)
     except Exception as e:
         logger.error(f"Error listing active incidents: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("/{incident_id}", response_model=IncidentDetail, summary="Get incident by ID")
@@ -106,7 +106,7 @@ async def get_incident(incident_id: str) -> IncidentDetail:
         raise
     except Exception as e:
         logger.error(f"Error retrieving incident {incident_id}: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 health_router = APIRouter(tags=["health"])

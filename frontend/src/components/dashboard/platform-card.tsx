@@ -2,7 +2,6 @@
 
 import Link from "next/link";
 import { ChevronRight } from "lucide-react";
-import { HudCorner } from "./hud-corner";
 
 interface PlatformCardProps {
   href: string;
@@ -32,55 +31,43 @@ export function PlatformCard({
   return (
     <Link
       href={href}
-      className="group relative flex flex-col gap-4 overflow-hidden rounded-xl p-5 transition-all duration-500"
+      className="group flex flex-col gap-4 rounded-xl border border-border/60 bg-surface/40 p-5 transition-colors duration-200 hover:border-border hover:bg-surface"
       style={{
-        border: `1px solid rgba(${accentRgb},0.2)`,
-        background: `radial-gradient(circle at 50% 0%, rgba(${accentRgb},0.06) 0%, transparent 70%)`,
-        opacity: active ? 1 : 0.35,
+        opacity: active ? 1 : 0.4,
         pointerEvents: active ? "auto" : "none",
-        animation: `naxis-enter 0.7s ${delay}s both`,
+        animation: `naxis-enter 0.6s ${delay}s both`,
       }}
     >
-      {active && (
+      <div className="flex items-start justify-between gap-2">
         <div
-          className="absolute inset-0 rounded-xl opacity-0 transition-opacity duration-500 group-hover:opacity-100"
-          style={{
-            background: `radial-gradient(circle at 50% 0%, rgba(${accentRgb},0.1) 0%, transparent 60%)`,
-          }}
-        />
-      )}
-      <div className="relative flex items-start justify-between gap-2">
-        <div
-          className="flex h-11 w-11 items-center justify-center rounded-lg"
+          className="flex h-10 w-10 items-center justify-center rounded-lg"
           style={{
             background: `rgba(${accentRgb},0.1)`,
-            border: `1px solid rgba(${accentRgb},0.2)`,
             color: `rgb(${accentRgb})`,
-            boxShadow: active ? `0 0 20px rgba(${accentRgb},0.15)` : "none",
           }}
         >
           {icon}
         </div>
         <div className="flex items-center gap-1.5">
           <span
-            className="rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest"
+            className="rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider"
             style={{
               color: `rgb(${accentRgb})`,
-              background: `rgba(${accentRgb},0.1)`,
-              border: `1px solid rgba(${accentRgb},0.25)`,
+              background: `rgba(${accentRgb},0.08)`,
             }}
           >
             {tag}
           </span>
           {!active && (
-            <span className="rounded-full border border-border/30 px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest text-foreground-subtle">
+            <span className="rounded-full border border-border/40 px-2 py-0.5 text-[10px] text-foreground-subtle">
               Soon
             </span>
           )}
         </div>
       </div>
-      <div className="relative flex-1 space-y-1.5">
-        <p className="text-[9px] font-bold uppercase tracking-[0.25em] text-foreground-subtle">
+
+      <div className="flex-1 space-y-1">
+        <p className="text-[9px] font-semibold uppercase tracking-[0.2em] text-foreground-subtle">
           {sublabel}
         </p>
         <h3 className="text-sm font-semibold text-foreground transition-colors group-hover:text-primary">
@@ -88,16 +75,11 @@ export function PlatformCard({
         </h3>
         <p className="text-xs leading-relaxed text-foreground-muted">{description}</p>
       </div>
-      <div
-        className="relative flex items-center justify-between border-t pt-3"
-        style={{ borderColor: `rgba(${accentRgb},0.12)` }}
-      >
+
+      <div className="flex items-center justify-between border-t border-border/40 pt-3">
         {stat ? (
           <div>
-            <span
-              className="font-mono text-base font-bold"
-              style={{ color: `rgb(${accentRgb})` }}
-            >
+            <span className="font-mono text-sm font-semibold" style={{ color: `rgb(${accentRgb})` }}>
               {stat.value}
             </span>
             <span className="ml-1.5 text-[10px] text-foreground-subtle">{stat.label}</span>
@@ -106,23 +88,11 @@ export function PlatformCard({
           <span className="text-[10px] text-foreground-subtle">Awaiting credentials</span>
         )}
         {active && (
-          <div
-            className="flex h-6 w-6 items-center justify-center rounded-full transition-all duration-300 group-hover:translate-x-1"
-            style={{
-              background: `rgba(${accentRgb},0.1)`,
-              color: `rgb(${accentRgb})`,
-            }}
-          >
-            <ChevronRight className="h-3.5 w-3.5" />
-          </div>
+          <ChevronRight
+            className="h-4 w-4 text-foreground-subtle transition-transform duration-200 group-hover:translate-x-0.5 group-hover:text-foreground"
+          />
         )}
       </div>
-      {active && (
-        <>
-          <HudCorner pos="tl" />
-          <HudCorner pos="br" />
-        </>
-      )}
     </Link>
   );
 }
