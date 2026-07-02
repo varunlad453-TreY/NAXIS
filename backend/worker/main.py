@@ -2,9 +2,13 @@
 """
 Naxis Worker
 
-Background daemon that runs the collection, normalization, and correlation
-pipeline. Designed to run as a separate process from the same Docker image
-as the API service.
+Background daemon that runs the full telemetry pipeline:
+  - REST API polling  (Mist inventory + events, VeloCloud inventory + metrics + events)
+  - SNMP polling      (interface counters + LLDP/CDP topology discovery)
+  - SNMP trap receiver (push-based, always-on UDP listener)
+  - Syslog receiver   (push-based, always-on UDP+TCP listener)
+  - Topology sync     (builds topology_nodes + topology_edges from all sources)
+  - Correlation       (TODO Phase 6)
 
 Entry point:
     python -m worker.main
@@ -24,6 +28,11 @@ from worker.collectors.mist import MistCollector
 from worker.collectors.mist_inventory import MistInventoryCollector
 from worker.collectors.velocloud_inventory import VelocloudInventoryCollector
 from worker.collectors.velocloud_metrics import VelocloudMetricsCollector
+from worker.collectors.velocloud_events import VelocloudEventsCollector
+from worker.collectors.snmp_poller import SnmpPoller
+from worker.collectors.topology_sync import TopologySync
+from worker.receivers.snmp_trap_receiver import SnmpTrapReceiver
+from worker.receivers.syslog_receiver import SyslogReceiver
 
 logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO").upper(),
@@ -40,48 +49,71 @@ class WorkerDaemon:
     """
     Main worker daemon.
 
-    Responsibilities (to be filled in as each phase is implemented):
-      Phase 3 — Collect from DNAC → normalize → write events to Postgres
-      Phase 6 — Run correlation engine → write incidents to Postgres
-      Phase 7 — Sync topology → write nodes/edges to Postgres
+    Lifecycle:
+      start()        → connect DB, start push receivers, run poll loop
+      run_once()     → one full poll+normalize+topology pass
+      stop()         → signal graceful shutdown
     """
 
     def __init__(self):
         self._running = False
+
+        # REST API collectors
         self._mist = MistCollector()
         self._mist_inventory = MistInventoryCollector()
-        self._velo_inventory = VelocloudInventoryCollector()
-        self._velo_metrics = VelocloudMetricsCollector()
+        self._velocloud_inventory = VelocloudInventoryCollector()
+        self._velocloud_metrics = VelocloudMetricsCollector()
+        self._velocloud_events = VelocloudEventsCollector()
+
+        # SNMP poller (interface counters + LLDP/CDP topology)
+        self._snmp_poller = SnmpPoller()
+
+        # Topology sync (builds topology graph from all inventory sources)
+        self._topology_sync = TopologySync()
+
+        # Push receivers — started once, run permanently alongside the poll loop
+        self._snmp_trap_receiver = SnmpTrapReceiver()
+        self._syslog_receiver = SyslogReceiver()
+
         self._last_collected: datetime = datetime.utcnow() - timedelta(hours=24)
 
     async def run_once(self) -> None:
         """Execute one full pipeline pass."""
-        logger.debug("Worker pass started")
-
-        # Phase 3: collect + normalize
         await self._collect_and_normalize()
-
-        # Phase 6: correlate + create incidents
         await self._correlate()
-
-        # Phase 7: topology sync
         await self._sync_topology()
 
-        logger.debug("Worker pass complete")
-
     async def _collect_and_normalize(self) -> None:
-        """Collect telemetry from all enabled vendors and write normalized events to DB."""
+        """Collect telemetry from all enabled vendors and persist normalized events."""
         since = self._last_collected
         now = datetime.utcnow()
 
-        events = await self._mist.collect(since=since)
-        if events:
-            await insert_events(events)
-            logger.info("Persisted %d new events to Postgres", len(events))
+        # Mist events (alarms + audit logs)
+        mist_events = await self._mist.collect(since=since)
+        if mist_events:
+            await insert_events(mist_events)
+            logger.info("Mist events: persisted %d", len(mist_events))
 
+        # Mist inventory (APs, sites, live stats)
         await self._mist_inventory.collect()
-        await self._velo_inventory.collect()
-        await self._velo_metrics.collect()
+
+        # VeloCloud inventory (edges + site info)
+        await self._velocloud_inventory.collect()
+
+        # VeloCloud link metrics (latency, jitter, loss, VeloBrain score)
+        await self._velocloud_metrics.collect()
+
+        # VeloCloud events (edge state changes, HA failovers, config changes)
+        velo_events = await self._velocloud_events.collect(since=since)
+        if velo_events:
+            await insert_events(velo_events)
+            logger.info("VeloCloud events: persisted %d", len(velo_events))
+
+        # SNMP interface polls (generates events only on state transitions)
+        snmp_events = await self._snmp_poller.collect()
+        if snmp_events:
+            await insert_events(snmp_events)
+            logger.info("SNMP poll events: persisted %d", len(snmp_events))
 
         self._last_collected = now
 
@@ -91,20 +123,31 @@ class WorkerDaemon:
         pass
 
     async def _sync_topology(self) -> None:
-        """Pull topology from vendors, upsert topology_nodes / topology_edges."""
-        # TODO Phase 7: implement topology sync
-        pass
+        """Sync topology_nodes + topology_edges from all vendor data."""
+        await self._topology_sync.sync()
 
     async def start(self) -> None:
         self._running = True
+
         logger.info("=" * 60)
         logger.info("Naxis Worker starting")
-        logger.info("  Collector interval: %ds", COLLECTOR_INTERVAL)
-        logger.info("  Mist enabled:       %s", _settings.mist_enabled)
-        logger.info("  VeloCloud enabled:  %s", _settings.velocloud_enabled)
+        logger.info("  Collector interval : %ds", COLLECTOR_INTERVAL)
+        logger.info("  Mist enabled       : %s", _settings.mist_enabled)
+        logger.info("  VeloCloud enabled  : %s", _settings.velocloud_enabled)
+        logger.info("  SNMP polling       : %s (targets: %d)",
+                    _settings.snmp_enabled, len(_settings.snmp_targets_list))
+        logger.info("  SNMP trap receiver : %s (port %d)",
+                    _settings.snmp_trap_enabled, _settings.snmp_trap_port)
+        logger.info("  Syslog receiver    : %s (UDP %d / TCP %d)",
+                    _settings.syslog_enabled, _settings.syslog_udp_port, _settings.syslog_tcp_port)
         logger.info("=" * 60)
 
         await db.connect()
+
+        # Start push receivers (they run continuously in the background)
+        await self._snmp_trap_receiver.start()
+        await self._syslog_receiver.start()
+
         try:
             while self._running:
                 try:
@@ -114,8 +157,10 @@ class WorkerDaemon:
 
                 await asyncio.sleep(COLLECTOR_INTERVAL)
         finally:
+            await self._snmp_trap_receiver.stop()
+            await self._syslog_receiver.stop()
             await db.disconnect()
-            logger.info("Worker DB pool closed")
+            logger.info("Worker shut down cleanly")
 
     def stop(self) -> None:
         logger.info("Worker shutting down...")

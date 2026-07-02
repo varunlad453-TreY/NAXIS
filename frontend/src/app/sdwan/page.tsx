@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useRef, useEffect } from "react";
+import { useMemo, useState, useRef, useEffect, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -578,7 +578,7 @@ const TABS: Array<{ id: NavTab; label: string; icon: React.ElementType }> = [
   { id: "chat",       label: "VeloBrain AI", icon: Bot },
 ];
 
-export default function SdwanObserverPage() {
+function SdwanObserverPageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const tabParam = searchParams.get("tab") as NavTab | null;
@@ -663,4 +663,8 @@ export default function SdwanObserverPage() {
       </div>
     </div>
   );
+}
+
+export default function SdwanObserverPage() {
+  return <Suspense><SdwanObserverPageInner /></Suspense>;
 }
