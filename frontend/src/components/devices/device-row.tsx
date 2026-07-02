@@ -32,7 +32,7 @@ export function DeviceRow({ device }: DeviceRowProps) {
           </div>
         </div>
 
-        <div className="rounded-md border border-border/70 bg-surface-subtle/50 px-2 py-0.5 text-[11px] font-medium uppercase tracking-wider text-foreground min-w-fit">
+        <div className="rounded-md border border-border/70 bg-surface-subtle/50 px-2 py-0.5 text-xs font-medium uppercase tracking-wider text-foreground min-w-fit">
           {device.platform.toUpperCase()}
         </div>
 

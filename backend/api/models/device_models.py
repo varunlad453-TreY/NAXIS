@@ -26,7 +26,7 @@ class DeviceSummary(BaseModel):
     firmware_version: str = Field(default="", description="Firmware/software version")
     management_state: str = Field(default="managed", description="Management state")
     last_seen: Optional[datetime] = Field(None, description="Last seen timestamp")
-    props: Dict[str, Any] = Field(default_factory=dict, description="Platform-specific metadata (VeloBrain scores etc.)")
+    props: Dict[str, Any] = Field(default_factory=dict, description="Platform-specific metadata (VeloBrain scores, links, etc.)")
 
 
 class DeviceListResponse(BaseModel):

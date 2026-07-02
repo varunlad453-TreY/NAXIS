@@ -18,6 +18,10 @@ class EventSource(str, Enum):
     MIST = "mist"
     ARISTA_SDWAN = "arista_sdwan"
     ARISTA_WLC = "arista_wlc"
+    VELOCLOUD = "velocloud"
+    SNMP = "snmp"
+    SNMP_TRAP = "snmp_trap"
+    SYSLOG = "syslog"
     SYSTEM = "system"
 
 

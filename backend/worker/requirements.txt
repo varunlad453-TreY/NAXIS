@@ -1,11 +1,11 @@
 -e ../shared
 
 # Settings
-pydantic-settings==2.1.0
+pydantic-settings==2.7.0
 
 # HTTP clients
 httpx==0.27.0
-aiohttp==3.9.5
+aiohttp==3.11.18
 
 # Scheduling
 schedule==1.2.0
@@ -15,6 +15,10 @@ tenacity==9.0.0
 
 # Database
 asyncpg==0.29.0
+
+# SNMP polling + trap receiver
+# pysnmp 6.x is the maintained asyncio-compatible fork (pysnmp-lextudio)
+pysnmp>=6.1.0
 
 # Testing
 pytest==7.4.3

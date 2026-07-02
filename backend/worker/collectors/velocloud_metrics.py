@@ -117,6 +117,8 @@ class VelocloudMetricsCollector:
                     "loss_pct_tx": round(float(m.get("bestLossPctTx") or 0), 2),
                     "bps_rx": int(m.get("bpsOfBestPathRx") or 0),
                     "bps_tx": int(m.get("bpsOfBestPathTx") or 0),
+                    "avg_mbps_rx": round((int(m.get("bytesRx") or 0) * 8) / 3_600_000_000, 2),
+                    "avg_mbps_tx": round((int(m.get("bytesTx") or 0) * 8) / 3_600_000_000, 2),
                     "upstream_mbps": cap.get("upstream_mbps"),
                     "downstream_mbps": cap.get("downstream_mbps"),
                     "isp": cap.get("isp") or iface_info.get("isp", "") or "",

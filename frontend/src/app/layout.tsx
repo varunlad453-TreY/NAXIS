@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Manrope } from "next/font/google";
 import { QueryProvider } from "./providers";
 import { Header } from "@/components/layout/header";
+import { Sidebar } from "@/components/layout/sidebar";
 import "./globals.css";
 
 const manrope = Manrope({ subsets: ["latin"], variable: "--font-manrope" });
@@ -36,13 +37,18 @@ export default function RootLayout({
       </head>
       <body suppressHydrationWarning className={`${manrope.variable} font-sans antialiased bg-background text-foreground`}>
         <QueryProvider>
-          <div className="relative min-h-screen flex flex-col">
-            <div aria-hidden className="pointer-events-none fixed inset-0 -z-10 overflow-hidden">
-              <div className="absolute inset-0 bg-[radial-gradient(ellipse_80%_50%_at_50%_0%,hsl(var(--primary)/0.18),transparent_60%),linear-gradient(180deg,hsl(var(--background))_0%,hsl(var(--background-elevated))_100%)]" />
-              <div className="absolute inset-0 bg-[linear-gradient(hsl(var(--border)/0.3)_1px,transparent_1px),linear-gradient(90deg,hsl(var(--border)/0.3)_1px,transparent_1px)] bg-[size:80px_80px] [mask-image:radial-gradient(ellipse_at_center,black,transparent_80%)]" />
-            </div>
+          {/* Global background */}
+          <div aria-hidden className="pointer-events-none fixed inset-0 -z-10 overflow-hidden">
+            <div className="absolute inset-0 bg-[radial-gradient(ellipse_80%_50%_at_50%_0%,hsl(var(--primary)/0.18),transparent_60%),linear-gradient(180deg,hsl(var(--background))_0%,hsl(var(--background-elevated))_100%)]" />
+            <div className="absolute inset-0 bg-[linear-gradient(hsl(var(--border)/0.3)_1px,transparent_1px),linear-gradient(90deg,hsl(var(--border)/0.3)_1px,transparent_1px)] bg-[size:80px_80px] [mask-image:radial-gradient(ellipse_at_center,black,transparent_80%)]" />
+          </div>
+
+          <Sidebar />
+
+          {/* Content area — padding-left is handled via CSS data-sidebar-collapsed on body */}
+          <div className="flex flex-col min-h-screen" id="main-layout">
             <Header />
-            <main className="flex-1">{children}</main>
+            <main className="flex-1 w-full">{children}</main>
           </div>
         </QueryProvider>
       </body>

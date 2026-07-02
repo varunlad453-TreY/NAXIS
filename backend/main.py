@@ -12,8 +12,10 @@ import logging
 from contextlib import asynccontextmanager
 from datetime import datetime
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI, Security
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import APIKeyHeader
+from fastapi.exceptions import HTTPException
 
 from api.routes.devices import router as devices_router
 from api.routes.events import router as events_router
@@ -23,6 +25,16 @@ from config.settings import get_settings
 from shared.database.client import db
 
 _settings = get_settings()
+
+_api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
+
+
+async def _require_api_key(api_key: str = Security(_api_key_header)) -> None:
+    if not _settings.api_key:
+        return
+    if api_key != _settings.api_key:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
 
 logging.basicConfig(
     level=getattr(logging, _settings.log_level.upper(), logging.INFO),
@@ -57,8 +69,8 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=_settings.api_cors_origins_list,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "X-API-Key", "Authorization"],
 )
 
 
@@ -72,11 +84,13 @@ async def add_process_time_header(request, call_next):
     return response
 
 
+_auth = [Depends(_require_api_key)]
+
 app.include_router(health_router)
-app.include_router(incidents_router)
-app.include_router(events_router)
-app.include_router(devices_router)
-app.include_router(sdwan_chat_router)
+app.include_router(incidents_router, dependencies=_auth)
+app.include_router(events_router, dependencies=_auth)
+app.include_router(devices_router, dependencies=_auth)
+app.include_router(sdwan_chat_router, dependencies=_auth)
 
 
 @app.get("/", include_in_schema=False)

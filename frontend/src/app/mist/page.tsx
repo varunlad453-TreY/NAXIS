@@ -56,9 +56,9 @@ function DeviceRow({ device }: { device: DeviceSummary }) {
             {device.hostname || device.device_id}
           </div>
           <div className="flex items-center gap-2 mt-0.5">
-            <span className="font-mono text-[11px] text-foreground-subtle">{device.mac || device.device_id}</span>
+            <span className="font-mono text-xs text-foreground-subtle">{device.mac || device.device_id}</span>
             {device.model && (
-              <span className="inline-flex items-center rounded border border-violet-400/20 bg-violet-400/10 px-1.5 py-0 text-[10px] font-semibold uppercase tracking-wider text-violet-400">
+              <span className="inline-flex items-center rounded border border-violet-400/20 bg-violet-400/10 px-1.5 py-0 text-xs font-semibold uppercase tracking-wider text-violet-400">
                 {device.model}
               </span>
             )}
@@ -67,14 +67,14 @@ function DeviceRow({ device }: { device: DeviceSummary }) {
       </div>
 
       <div className="col-span-6 lg:col-span-2">
-        <div className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-foreground-subtle mb-0.5">
+        <div className="flex items-center gap-1 text-xs font-semibold uppercase tracking-wider text-foreground-subtle mb-0.5">
           <MapPin className="h-3 w-3" /> Site
         </div>
         <div className="truncate text-foreground">{device.site_name || "—"}</div>
       </div>
 
       <div className="col-span-6 lg:col-span-2">
-        <div className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-foreground-subtle mb-0.5">
+        <div className="flex items-center gap-1 text-xs font-semibold uppercase tracking-wider text-foreground-subtle mb-0.5">
           <Network className="h-3 w-3" /> IP
         </div>
         <div className="font-mono text-foreground">{device.ip_address || "—"}</div>
@@ -83,13 +83,13 @@ function DeviceRow({ device }: { device: DeviceSummary }) {
       <div className="col-span-6 lg:col-span-2">
         <div className="flex gap-4">
           <div>
-            <div className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-foreground-subtle mb-0.5">
+            <div className="flex items-center gap-1 text-xs font-semibold uppercase tracking-wider text-foreground-subtle mb-0.5">
               <Users className="h-3 w-3" /> Clients
             </div>
             <div className="text-foreground">{device.num_clients}</div>
           </div>
           <div>
-            <div className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-foreground-subtle mb-0.5">
+            <div className="flex items-center gap-1 text-xs font-semibold uppercase tracking-wider text-foreground-subtle mb-0.5">
               <Clock className="h-3 w-3" /> Uptime
             </div>
             <div className="text-foreground">{formatUptime(device.uptime_seconds)}</div>
@@ -103,7 +103,7 @@ function DeviceRow({ device }: { device: DeviceSummary }) {
           <span className="capitalize text-foreground">{device.reachability}</span>
         </div>
         {device.firmware_version && (
-          <div className="flex items-center justify-end gap-1 text-[11px] text-foreground-subtle">
+          <div className="flex items-center justify-end gap-1 text-xs text-foreground-subtle">
             <Zap className="h-3 w-3" />
             {device.firmware_version}
           </div>
@@ -129,7 +129,7 @@ function SiteGroup({ siteName, devices }: { siteName: string; devices: DeviceSum
           {open ? <ChevronDown className="h-4 w-4 text-foreground-subtle" /> : <ChevronRight className="h-4 w-4 text-foreground-subtle" />}
           <MapPin className="h-4 w-4 text-violet-400" />
           <span className="font-medium text-foreground">{siteName}</span>
-          <Badge variant="outline" className="text-[10px]">{devices.length} APs</Badge>
+          <Badge variant="outline" className="text-xs">{devices.length} APs</Badge>
         </div>
         <div className="flex items-center gap-4 text-sm">
           <span className="flex items-center gap-1.5 text-success">
@@ -140,7 +140,7 @@ function SiteGroup({ siteName, devices }: { siteName: string; devices: DeviceSum
               <span className="h-1.5 w-1.5 rounded-full bg-critical" />{unreachable} down
             </span>
           )}
-          <span className="flex items-center gap-1 text-foreground-subtle text-[12px]">
+          <span className="flex items-center gap-1 text-foreground-subtle text-xs">
             <Users className="h-3.5 w-3.5" />{totalClients} clients
           </span>
         </div>
@@ -201,14 +201,14 @@ export default function MistObserverPage() {
   }, [filteredDevices]);
 
   return (
-    <div className="min-h-screen px-4 py-10 sm:px-6 lg:px-8">
-      <div className="mx-auto max-w-7xl space-y-8">
+    <div className="min-h-screen px-4 py-6 sm:px-6 xl:px-10 xl:py-8">
+      <div className="mx-auto max-w-screen-2xl space-y-8">
 
         {/* Header */}
         <div className="border-b border-border/60 pb-8">
           <div className="flex items-start justify-between gap-4 flex-wrap">
             <div>
-              <div className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-[0.2em] text-violet-400">
+              <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-[0.2em] text-violet-400">
                 <Wifi className="h-3.5 w-3.5" />
                 Platform Observer
               </div>
@@ -220,19 +220,19 @@ export default function MistObserverPage() {
             <div className="flex gap-8">
               <div className="text-right">
                 <div className="text-2xl font-semibold text-foreground">{stats.total}</div>
-                <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-foreground-subtle">Total APs</div>
+                <div className="text-xs font-bold uppercase tracking-[0.18em] text-foreground-subtle">Total APs</div>
               </div>
               <div className="text-right">
                 <div className="text-2xl font-semibold text-success">{stats.reachable}</div>
-                <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-foreground-subtle">Online</div>
+                <div className="text-xs font-bold uppercase tracking-[0.18em] text-foreground-subtle">Online</div>
               </div>
               <div className="text-right">
                 <div className="text-2xl font-semibold text-critical">{stats.unreachable}</div>
-                <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-foreground-subtle">Offline</div>
+                <div className="text-xs font-bold uppercase tracking-[0.18em] text-foreground-subtle">Offline</div>
               </div>
               <div className="text-right">
                 <div className="text-2xl font-semibold text-foreground">{stats.totalClients}</div>
-                <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-foreground-subtle">Clients</div>
+                <div className="text-xs font-bold uppercase tracking-[0.18em] text-foreground-subtle">Clients</div>
               </div>
             </div>
           </div>
@@ -322,7 +322,7 @@ export default function MistObserverPage() {
           </div>
         ) : (
           <div className="border border-border/50 rounded-lg overflow-hidden">
-            <div className="hidden grid-cols-12 gap-3 border-b border-border/60 bg-surface px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-foreground-subtle lg:grid">
+            <div className="hidden grid-cols-12 gap-3 border-b border-border/60 bg-surface px-3 py-2 text-xs font-semibold uppercase tracking-[0.14em] text-foreground-subtle lg:grid">
               <div className="col-span-4">Device</div>
               <div className="col-span-2">Site</div>
               <div className="col-span-2">IP Address</div>

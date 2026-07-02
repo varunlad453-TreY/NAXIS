@@ -36,9 +36,10 @@ class Settings(BaseSettings):
     api_host: str = Field(default="0.0.0.0", description="API bind host")
     api_port: int = Field(default=8000, description="API bind port")
     api_cors_origins: str = Field(
-        default="http://localhost:3000,http://localhost:8000",
-        description="Comma-separated allowed CORS origins",
+        default="*",
+        description="Comma-separated allowed CORS origins, or * to allow all",
     )
+    api_key: str = Field(default="", description="API key required in X-API-Key header")
 
     # PostgreSQL
     postgres_host: str = Field(default="localhost", description="PostgreSQL host")
@@ -62,10 +63,30 @@ class Settings(BaseSettings):
     mist_base_url: str = Field(default="https://api.mist.com", description="Mist API base URL")
     mist_enabled: bool = Field(default=False, description="Enable Mist collector")
 
-    # VeloCloud SD-WAN
+    # VeloCloud (Arista SD-WAN)
     velocloud_url: str = Field(default="", description="VeloCloud Orchestrator base URL")
-    velocloud_api_key: str = Field(default="", description="VeloCloud API token")
+    velocloud_api_key: str = Field(default="", description="VeloCloud API key / JWT token")
     velocloud_enabled: bool = Field(default=False, description="Enable VeloCloud collector")
+
+    # SNMP polling
+    snmp_enabled: bool = Field(default=False, description="Enable SNMP polling collector")
+    snmp_community: str = Field(default="public", description="SNMP v2c community string")
+    snmp_port: int = Field(default=161, description="SNMP target port")
+    snmp_timeout: float = Field(default=5.0, description="SNMP request timeout seconds")
+    snmp_retries: int = Field(default=2, description="SNMP request retries")
+    # Comma-separated list of device IPs to SNMP-poll for interface stats + LLDP topology
+    snmp_targets: str = Field(default="", description="Comma-separated IPs to poll via SNMP")
+
+    # SNMP Trap receiver
+    snmp_trap_enabled: bool = Field(default=False, description="Enable SNMP trap receiver")
+    snmp_trap_host: str = Field(default="0.0.0.0", description="SNMP trap listener bind address")
+    snmp_trap_port: int = Field(default=162, description="SNMP trap listener UDP port")
+
+    # Syslog receiver
+    syslog_enabled: bool = Field(default=False, description="Enable syslog receiver")
+    syslog_host: str = Field(default="0.0.0.0", description="Syslog listener bind address")
+    syslog_udp_port: int = Field(default=514, description="Syslog UDP listener port")
+    syslog_tcp_port: int = Field(default=1514, description="Syslog TCP listener port (non-privileged)")
 
     # Collectors
     collector_interval: int = Field(default=60, description="Worker collection interval in seconds")
@@ -85,8 +106,15 @@ class Settings(BaseSettings):
         )
 
     @property
+    def snmp_targets_list(self) -> List[str]:
+        """Return SNMP target IPs as a list."""
+        return [t.strip() for t in self.snmp_targets.split(",") if t.strip()]
+
+    @property
     def api_cors_origins_list(self) -> List[str]:
-        """Return CORS origins as a list."""
+        """Return CORS origins as a list. '*' allows all origins."""
+        if self.api_cors_origins.strip() == "*":
+            return ["*"]
         return [part.strip() for part in self.api_cors_origins.split(",") if part.strip()]
 
     @property

@@ -96,6 +96,8 @@
   html {
     color-scheme: light dark;
     scroll-behavior: smooth;
+    /* Fluid base: 13px @ 1024px → 16px @ 1440px+ */
+    font-size: clamp(13px, 0.813rem + 0.521vw, 16px);
   }
 
   * {
@@ -129,6 +131,18 @@
 @layer utilities {
   .text-balance {
     text-wrap: balance;
+  }
+}
+
+/* ── Sidebar-aware layout shift ───────────────────────────────────────────── */
+
+@media (min-width: 1024px) {
+  #main-layout {
+    padding-left: 14rem; /* w-56 */
+    transition: padding-left 200ms ease;
+  }
+  body[data-sidebar-collapsed="true"] #main-layout {
+    padding-left: 3.75rem;
   }
 }
 

@@ -20,8 +20,7 @@ import {
   Zap,
 } from "lucide-react";
 import { api } from "@/lib/api";
-import { Skeleton } from "@/components/ui/skeleton";
-import { Badge } from "@/components/ui/badge";
+import { DeviceFilterBar, DeviceListView } from "@/components/devices";
 import type { DeviceReachability, DeviceSummary } from "@/types/device";
 
 function fmt(n: number) { return new Intl.NumberFormat("en-US").format(n); }
@@ -42,7 +41,7 @@ const PLATFORM_STYLE: Record<string, { color: string; label: string; Icon: React
 function PlatformBadge({ platform }: { platform: string }) {
   const s = PLATFORM_STYLE[platform] ?? { color: "text-foreground-muted bg-surface-subtle/30 border-border/70", label: platform, Icon: Server };
   return (
-    <span className={`inline-flex items-center gap-1 rounded border px-1.5 py-0 text-[10px] font-bold uppercase tracking-wider ${s.color}`}>
+    <span className={`inline-flex items-center gap-1 rounded border px-1.5 py-0 text-xs font-bold uppercase tracking-wider ${s.color}`}>
       {s.label}
     </span>
   );
@@ -73,11 +72,11 @@ function DeviceRow({ device }: { device: DeviceSummary }) {
           </div>
           <div className="flex items-center gap-2 mt-0.5 flex-wrap">
             <PlatformBadge platform={device.platform} />
-            <span className="font-mono text-[10px] text-foreground-subtle">
+            <span className="font-mono text-xs text-foreground-subtle">
               {isEdge ? (device.serial || device.device_id) : (device.mac || device.device_id)}
             </span>
             {device.model && (
-              <span className="rounded border border-border/40 bg-surface-subtle/40 px-1 text-[9px] font-semibold uppercase tracking-wider text-foreground-subtle">
+              <span className="rounded border border-border/40 bg-surface-subtle/40 px-1 text-2xs font-semibold uppercase tracking-wider text-foreground-subtle">
                 {device.model}
               </span>
             )}
@@ -86,14 +85,14 @@ function DeviceRow({ device }: { device: DeviceSummary }) {
       </div>
 
       <div className="col-span-6 lg:col-span-2">
-        <div className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-foreground-subtle mb-0.5">
+        <div className="flex items-center gap-1 text-xs font-semibold uppercase tracking-wider text-foreground-subtle mb-0.5">
           <MapPin className="h-3 w-3" /> Site
         </div>
         <div className="truncate text-foreground text-xs">{device.site_name || "—"}</div>
       </div>
 
       <div className="col-span-6 lg:col-span-2">
-        <div className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-foreground-subtle mb-0.5">
+        <div className="flex items-center gap-1 text-xs font-semibold uppercase tracking-wider text-foreground-subtle mb-0.5">
           <Network className="h-3 w-3" /> {isEdge ? "WAN IP" : "IP"}
         </div>
         <div className="font-mono text-xs text-foreground">{device.ip_address || "—"}</div>
@@ -103,22 +102,22 @@ function DeviceRow({ device }: { device: DeviceSummary }) {
         {isEdge ? (
           score !== undefined && score !== null ? (
             <div>
-              <div className="text-[10px] font-semibold uppercase tracking-wider text-foreground-subtle mb-0.5">VeloBrain</div>
+              <div className="text-xs font-semibold uppercase tracking-wider text-foreground-subtle mb-0.5">VeloBrain</div>
               <ScoreBar score={score} />
             </div>
           ) : (
-            <div className="text-[10px] text-foreground-subtle">No metrics yet</div>
+            <div className="text-xs text-foreground-subtle">No metrics yet</div>
           )
         ) : (
           <div className="flex gap-4">
             <div>
-              <div className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-foreground-subtle mb-0.5">
+              <div className="flex items-center gap-1 text-xs font-semibold uppercase tracking-wider text-foreground-subtle mb-0.5">
                 <Users className="h-3 w-3" /> Clients
               </div>
               <div className="text-foreground text-xs">{device.num_clients}</div>
             </div>
             <div>
-              <div className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-foreground-subtle mb-0.5">
+              <div className="flex items-center gap-1 text-xs font-semibold uppercase tracking-wider text-foreground-subtle mb-0.5">
                 <Clock className="h-3 w-3" /> Uptime
               </div>
               <div className="text-foreground text-xs">{formatUptime(device.uptime_seconds)}</div>
@@ -130,7 +129,7 @@ function DeviceRow({ device }: { device: DeviceSummary }) {
       <div className="col-span-6 lg:col-span-2 text-right">
         <StateChip reachability={device.reachability} />
         {device.firmware_version && (
-          <div className="flex items-center justify-end gap-1 mt-1 text-[10px] text-foreground-subtle">
+          <div className="flex items-center justify-end gap-1 mt-1 text-xs text-foreground-subtle">
             <Zap className="h-3 w-3" />{device.firmware_version}
           </div>
         )}
@@ -155,10 +154,10 @@ function ScoreBar({ score }: { score: number }) {
 }
 
 function StateChip({ reachability }: { reachability: DeviceReachability }) {
-  if (reachability === "reachable") return <span className="text-[10px] font-bold text-success">Connected</span>;
-  if (reachability === "degraded") return <span className="text-[10px] font-bold text-major">Degraded</span>;
-  if (reachability === "unreachable") return <span className="text-[10px] font-bold text-critical">Offline</span>;
-  return <span className="text-[10px] font-bold text-foreground-subtle">Unknown</span>;
+  if (reachability === "reachable") return <span className="text-xs font-bold text-success">Connected</span>;
+  if (reachability === "degraded") return <span className="text-xs font-bold text-major">Degraded</span>;
+  if (reachability === "unreachable") return <span className="text-xs font-bold text-critical">Offline</span>;
+  return <span className="text-xs font-bold text-foreground-subtle">Unknown</span>;
 }
 
 function SiteGroup({ siteName, devices }: { siteName: string; devices: DeviceSummary[] }) {
@@ -178,7 +177,7 @@ function SiteGroup({ siteName, devices }: { siteName: string; devices: DeviceSum
           {open ? <ChevronDown className="h-4 w-4 text-foreground-subtle" /> : <ChevronRight className="h-4 w-4 text-foreground-subtle" />}
           <MapPin className="h-4 w-4 text-foreground-subtle" />
           <span className="font-medium text-foreground">{siteName}</span>
-          <Badge variant="outline" className="text-[10px]">{devices.length} devices</Badge>
+          <Badge variant="outline" className="text-xs">{devices.length} devices</Badge>
           <div className="flex gap-1">
             {platforms.map((p) => <PlatformBadge key={p} platform={p} />)}
           </div>
@@ -256,13 +255,13 @@ export default function DevicesPage() {
   }, [filteredDevices]);
 
   return (
-    <div className="min-h-screen px-4 py-10 sm:px-6 lg:px-8">
-      <div className="mx-auto max-w-7xl space-y-6">
+    <div className="min-h-screen px-4 py-6 sm:px-6 xl:px-10 xl:py-8">
+      <div className="mx-auto max-w-screen-2xl space-y-6">
 
         {/* Header */}
         <div className="flex flex-col gap-6 border-b border-border/60 pb-8 sm:flex-row sm:items-end sm:justify-between">
           <div>
-            <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-foreground-subtle">
+            <div className="text-xs font-semibold uppercase tracking-[0.18em] text-foreground-subtle">
               Multi-vendor inventory
             </div>
             <h1 className="mt-1 text-3xl font-semibold tracking-tight text-foreground">All Devices</h1>
@@ -276,15 +275,15 @@ export default function DevicesPage() {
           <div className="flex gap-8">
             <div className="text-right">
               <div className="text-2xl font-semibold text-foreground">{fmt(stats.total)}</div>
-              <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-foreground-subtle">Total</div>
+              <div className="text-xs font-semibold uppercase tracking-[0.18em] text-foreground-subtle">Total</div>
             </div>
             <div className="text-right">
               <div className="text-2xl font-semibold text-success">{fmt(stats.reachable)}</div>
-              <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-foreground-subtle">Online</div>
+              <div className="text-xs font-semibold uppercase tracking-[0.18em] text-foreground-subtle">Online</div>
             </div>
             <div className="text-right">
               <div className="text-2xl font-semibold text-critical">{fmt(stats.offline)}</div>
-              <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-foreground-subtle">Offline</div>
+              <div className="text-xs font-semibold uppercase tracking-[0.18em] text-foreground-subtle">Offline</div>
             </div>
           </div>
         </div>
@@ -347,13 +346,13 @@ export default function DevicesPage() {
           <div className="space-y-3">
             {Array.from({ length: 4 }).map((_, i) => (
               <div key={i} className="border border-border/50 rounded-lg p-4 space-y-3">
-                <Skeleton className="h-5 w-48" />
+                <div className="h-5 w-48 rounded bg-surface-subtle animate-pulse" />
                 {Array.from({ length: 3 }).map((_, j) => (
                   <div key={j} className="flex items-center gap-3">
-                    <Skeleton className="h-9 w-9 rounded-lg" />
+                    <div className="h-9 w-9 rounded-lg bg-surface-subtle animate-pulse" />
                     <div className="flex-1 space-y-1.5">
-                      <Skeleton className="h-4 w-40" />
-                      <Skeleton className="h-3 w-28" />
+                      <div className="h-4 w-40 rounded bg-surface-subtle animate-pulse" />
+                      <div className="h-3 w-28 rounded bg-surface-subtle animate-pulse" />
                     </div>
                   </div>
                 ))}
@@ -384,7 +383,7 @@ export default function DevicesPage() {
           </div>
         ) : (
           <div className="border border-border/50 rounded-lg overflow-hidden">
-            <div className="hidden grid-cols-12 gap-3 border-b border-border/60 bg-surface px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-foreground-subtle lg:grid">
+            <div className="hidden grid-cols-12 gap-3 border-b border-border/60 bg-surface px-3 py-2 text-xs font-semibold uppercase tracking-[0.14em] text-foreground-subtle lg:grid">
               <div className="col-span-4">Device</div>
               <div className="col-span-2">Site</div>
               <div className="col-span-2">IP</div>

@@ -88,7 +88,7 @@ export function StatsPanel({ incidents, className }: StatsPanelProps) {
         </h3>
         <div className="grid gap-3 sm:grid-cols-2">
           <div className="rounded-2xl border border-border/50 bg-surface/50 p-3">
-            <div className="text-[11px] uppercase tracking-[0.2em] text-foreground-subtle">
+            <div className="text-xs uppercase tracking-[0.2em] text-foreground-subtle">
               Affected Sites
             </div>
             <div className="mt-2 text-2xl font-semibold tracking-tight text-foreground">
@@ -96,7 +96,7 @@ export function StatsPanel({ incidents, className }: StatsPanelProps) {
             </div>
           </div>
           <div className="rounded-2xl border border-border/50 bg-surface/50 p-3">
-            <div className="text-[11px] uppercase tracking-[0.2em] text-foreground-subtle">
+            <div className="text-xs uppercase tracking-[0.2em] text-foreground-subtle">
               Affected Devices
             </div>
             <div className="mt-2 text-2xl font-semibold tracking-tight text-foreground">

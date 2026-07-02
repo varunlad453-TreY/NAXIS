@@ -65,7 +65,7 @@ function SeverityBadge({ severity }: { severity: EventSeverity }) {
   const config = severityConfig[severity] ?? severityConfig.info;
   return (
     <div
-      className={`inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider ${config.color} ${config.bg} ${config.border}`}
+      className={`inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-xs font-semibold uppercase tracking-wider ${config.color} ${config.bg} ${config.border}`}
     >
       {config.icon}
       {severity}
@@ -75,7 +75,7 @@ function SeverityBadge({ severity }: { severity: EventSeverity }) {
 
 function SourceBadge({ source }: { source: string }) {
   return (
-    <div className="inline-flex items-center gap-1.5 rounded-md border border-border/70 bg-surface-subtle/30 px-2 py-0.5 text-[11px] font-medium uppercase tracking-wider text-foreground-muted">
+    <div className="inline-flex items-center gap-1.5 rounded-md border border-border/70 bg-surface-subtle/30 px-2 py-0.5 text-xs font-medium uppercase tracking-wider text-foreground-muted">
       {sourceIcons[source] ?? <Activity className="h-3 w-3" />}
       {source}
     </div>
@@ -104,10 +104,10 @@ function EventRow({ event }: { event: EventSummary }) {
         <p className="line-clamp-2 text-sm text-foreground-muted">{event.description}</p>
         <div className="flex flex-wrap items-center gap-2">
           <SourceBadge source={event.source} />
-          <Badge variant="outline" className="text-[10px] uppercase tracking-wider">
+          <Badge variant="outline" className="text-xs uppercase tracking-wider">
             {event.event_type}
           </Badge>
-          <Badge variant="outline" className="text-[10px] uppercase tracking-wider">
+          <Badge variant="outline" className="text-xs uppercase tracking-wider">
             {event.category}
           </Badge>
         </div>
@@ -223,12 +223,12 @@ export default function EventsPage() {
   ];
 
   return (
-    <div className="min-h-screen px-4 py-10 sm:px-6 lg:px-8">
-      <div className="mx-auto max-w-7xl space-y-6">
+    <div className="min-h-screen px-4 py-6 sm:px-6 xl:px-10 xl:py-8">
+      <div className="mx-auto max-w-screen-2xl space-y-6">
         {/* Header */}
         <div className="flex flex-col gap-4 border-b border-border/60 pb-8 sm:flex-row sm:items-end sm:justify-between">
           <div>
-            <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-foreground-subtle">
+            <div className="text-xs font-semibold uppercase tracking-[0.18em] text-foreground-subtle">
               Telemetry stream
             </div>
             <h1 className="mt-1 text-3xl font-semibold tracking-tight text-foreground">Events</h1>
@@ -238,7 +238,7 @@ export default function EventsPage() {
           </div>
           <div className="text-right">
             <div className="text-3xl font-semibold text-foreground">{filteredEvents.length}</div>
-            <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-foreground-subtle">
+            <div className="text-xs font-semibold uppercase tracking-[0.18em] text-foreground-subtle">
               {severityFilter === "all" ? "Total" : severityFilter} events
             </div>
           </div>
@@ -331,7 +331,7 @@ export default function EventsPage() {
           </div>
         ) : (
           <div className="border-t border-border/60">
-            <div className="hidden grid-cols-12 gap-4 border-b border-border/60 px-2 py-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-foreground-subtle lg:grid">
+            <div className="hidden grid-cols-12 gap-4 border-b border-border/60 px-2 py-2 text-xs font-semibold uppercase tracking-[0.14em] text-foreground-subtle lg:grid">
               <div className="col-span-2">Time / Severity</div>
               <div className="col-span-5">Event</div>
               <div className="col-span-3">Scope</div>

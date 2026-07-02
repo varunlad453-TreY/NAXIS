@@ -52,7 +52,7 @@ export function IncidentCard({ incident }: IncidentCardProps) {
       </div>
 
       <div className="col-span-6 pl-5 text-sm lg:col-span-2 lg:pl-0">
-        <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-foreground-subtle">Confidence</div>
+        <div className="text-xs font-semibold uppercase tracking-[0.14em] text-foreground-subtle">Confidence</div>
         <div className="mt-0.5 font-semibold text-foreground">
           {formatConfidence(incident.confidence_score)}
         </div>

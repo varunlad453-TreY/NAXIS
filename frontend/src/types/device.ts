@@ -2,6 +2,7 @@ export type DeviceReachability = "reachable" | "unreachable" | "degraded" | "unk
 
 export interface VeloBrainLink {
   name: string;
+  interface?: string;
   state: string;
   score_tx: number;
   score_rx: number;
@@ -13,6 +14,8 @@ export interface VeloBrainLink {
   loss_pct_tx: number;
   bps_rx: number;
   bps_tx: number;
+  avg_mbps_rx?: number;
+  avg_mbps_tx?: number;
   upstream_mbps?: number | null;
   downstream_mbps?: number | null;
   isp?: string;

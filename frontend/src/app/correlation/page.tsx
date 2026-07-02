@@ -69,7 +69,7 @@ function SeverityPill({ severity }: { severity: EventSeverity }) {
     info: <Activity className="h-3 w-3" />,
   };
   return (
-    <span className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider ${severityText[severity]} ${severityBg[severity]} ${severityBorder[severity]}`}>
+    <span className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-xs font-semibold uppercase tracking-wider ${severityText[severity]} ${severityBg[severity]} ${severityBorder[severity]}`}>
       {icons[severity]}{severity}
     </span>
   );
@@ -124,12 +124,12 @@ function DeviceSignalCard({ item }: { item: DeviceSignals }) {
             </div>
             <div className="mt-2 flex flex-wrap items-center gap-2">
               {criticalEvents.length > 0 && (
-                <span className="text-[11px] font-semibold text-critical">{criticalEvents.length} critical signal{criticalEvents.length > 1 ? "s" : ""}</span>
+                <span className="text-xs font-semibold text-critical">{criticalEvents.length} critical signal{criticalEvents.length > 1 ? "s" : ""}</span>
               )}
               {majorEvents.length > 0 && (
-                <span className="text-[11px] font-semibold text-major">{majorEvents.length} major signal{majorEvents.length > 1 ? "s" : ""}</span>
+                <span className="text-xs font-semibold text-major">{majorEvents.length} major signal{majorEvents.length > 1 ? "s" : ""}</span>
               )}
-              <span className="text-[11px] text-foreground-subtle">{events.length} total event{events.length > 1 ? "s" : ""}</span>
+              <span className="text-xs text-foreground-subtle">{events.length} total event{events.length > 1 ? "s" : ""}</span>
             </div>
           </div>
         </div>
@@ -147,7 +147,7 @@ function DeviceSignalCard({ item }: { item: DeviceSignals }) {
       {/* Expanded signals */}
       {expanded && (
         <div className="border-t border-border/30 divide-y divide-border/20">
-          <div className="px-5 py-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-foreground-subtle bg-background/30">
+          <div className="px-5 py-2 text-xs font-semibold uppercase tracking-[0.14em] text-foreground-subtle bg-background/30">
             Correlated signals
           </div>
           {events.map((e) => (
@@ -156,10 +156,10 @@ function DeviceSignalCard({ item }: { item: DeviceSignals }) {
               <div className="flex-1 min-w-0">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="text-sm font-medium text-foreground">{e.title}</span>
-                  <span className={`text-[10px] font-semibold uppercase ${severityText[e.severity]}`}>{e.severity}</span>
+                  <span className={`text-xs font-semibold uppercase ${severityText[e.severity]}`}>{e.severity}</span>
                 </div>
                 {e.description && <p className="text-xs text-foreground-muted mt-0.5 line-clamp-2">{e.description}</p>}
-                <div className="flex items-center gap-3 mt-1 text-[11px] text-foreground-subtle">
+                <div className="flex items-center gap-3 mt-1 text-xs text-foreground-subtle">
                   <span className="flex items-center gap-1">
                     <Clock className="h-3 w-3" />{formatTimestamp(e.timestamp)}
                   </span>
@@ -280,12 +280,12 @@ export default function CorrelationEnginePage() {
   }), [faultyDevices]);
 
   return (
-    <div className="min-h-screen px-4 py-10 sm:px-6 lg:px-8">
-      <div className="mx-auto max-w-5xl space-y-10">
+    <div className="min-h-screen px-4 py-6 sm:px-6 xl:px-10 xl:py-8">
+      <div className="mx-auto max-w-screen-xl space-y-10">
 
         {/* Header */}
         <div className="border-b border-border/60 pb-8">
-          <div className="inline-flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.2em] text-primary">
+          <div className="inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.2em] text-primary">
             <Sparkles className="h-3 w-3" />
             Naxis Intelligence
           </div>
@@ -298,19 +298,19 @@ export default function CorrelationEnginePage() {
           <div className="mt-8 flex flex-wrap gap-8">
             <div>
               <div className="text-3xl font-semibold text-critical">{stats.critical}</div>
-              <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-foreground-subtle mt-0.5">Critical devices</div>
+              <div className="text-xs font-semibold uppercase tracking-[0.16em] text-foreground-subtle mt-0.5">Critical devices</div>
             </div>
             <div>
               <div className="text-3xl font-semibold text-major">{stats.major}</div>
-              <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-foreground-subtle mt-0.5">Major faults</div>
+              <div className="text-xs font-semibold uppercase tracking-[0.16em] text-foreground-subtle mt-0.5">Major faults</div>
             </div>
             <div>
               <div className="text-3xl font-semibold text-minor">{stats.minor}</div>
-              <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-foreground-subtle mt-0.5">Minor issues</div>
+              <div className="text-xs font-semibold uppercase tracking-[0.16em] text-foreground-subtle mt-0.5">Minor issues</div>
             </div>
             <div>
               <div className="text-3xl font-semibold text-foreground">{events.length.toLocaleString()}</div>
-              <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-foreground-subtle mt-0.5">Signals ingested</div>
+              <div className="text-xs font-semibold uppercase tracking-[0.16em] text-foreground-subtle mt-0.5">Signals ingested</div>
             </div>
           </div>
         </div>

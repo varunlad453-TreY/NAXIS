@@ -92,7 +92,7 @@ export default function IncidentDetailPage() {
             <p className="font-mono text-sm text-foreground-subtle">{incident.incident_id}</p>
           </div>
           <div className="text-left lg:text-right">
-            <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-foreground-subtle">
+            <div className="text-xs font-semibold uppercase tracking-[0.18em] text-foreground-subtle">
               Confidence
             </div>
             <div className="mt-1 text-4xl font-semibold text-foreground">
@@ -167,7 +167,7 @@ export default function IncidentDetailPage() {
                 <EventListSkeleton />
               ) : eventsData?.events && eventsData.events.length > 0 ? (
                 <div className="border-t border-border/60">
-                  <div className="hidden grid-cols-12 gap-4 border-b border-border/60 px-2 py-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-foreground-subtle lg:grid">
+                  <div className="hidden grid-cols-12 gap-4 border-b border-border/60 px-2 py-2 text-xs font-semibold uppercase tracking-[0.14em] text-foreground-subtle lg:grid">
                     <div className="col-span-2">Severity / Time</div>
                     <div className="col-span-5">Event</div>
                     <div className="col-span-3">Scope</div>
@@ -219,7 +219,7 @@ export default function IncidentDetailPage() {
 
               {incident.affected_sites.length > 0 && (
                 <div>
-                  <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-foreground-subtle">
+                  <div className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-foreground-subtle">
                     Sites
                   </div>
                   <div className="space-y-1.5 border-l border-border/70 pl-3">
@@ -234,7 +234,7 @@ export default function IncidentDetailPage() {
 
               {incident.affected_devices.length > 0 && (
                 <div>
-                  <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-foreground-subtle">
+                  <div className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-foreground-subtle">
                     Devices
                   </div>
                   <div className="space-y-1.5 border-l border-border/70 pl-3">
@@ -270,7 +270,7 @@ function ImpactStat({
 }) {
   return (
     <div>
-      <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-foreground-subtle">
+      <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-[0.14em] text-foreground-subtle">
         {icon}
         {label}
       </div>

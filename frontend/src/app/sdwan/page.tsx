@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState, useRef, useEffect } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import {
   Activity,
@@ -74,22 +75,21 @@ function ScoreBar({ score, size = "md" }: { score: number; size?: "sm" | "md" })
         <div className={`h-full rounded-full ${scoreBg(score)}`} style={{ width: `${pct}%` }} />
       </div>
       <span className={`text-xs font-mono font-bold ${scoreColor(score)}`}>{score.toFixed(1)}</span>
-      <span className={`text-[10px] ${scoreColor(score)}`}>{scoreLabel(score)}</span>
+      <span className={`text-xs ${scoreColor(score)}`}>{scoreLabel(score)}</span>
     </div>
   );
 }
 
-function UtilBar({ bps, provisionedMbps, dir }: { bps: number; provisionedMbps: number | null; dir: string }) {
-  const actual = bps / 1_000_000;
-  const pct = provisionedMbps && provisionedMbps > 0 ? Math.min(100, (actual / provisionedMbps) * 100) : null;
+function UtilBar({ avgMbps, provisionedMbps, dir }: { avgMbps: number; provisionedMbps: number | null; dir: string }) {
+  const pct = provisionedMbps && provisionedMbps > 0 ? Math.min(100, (avgMbps / provisionedMbps) * 100) : null;
   const barColor = pct == null ? "bg-foreground-subtle" : pct > 90 ? "bg-critical" : pct > 70 ? "bg-major" : "bg-success";
   return (
     <div className="flex items-center gap-1.5 mt-0.5">
-      <span className="text-foreground-subtle text-[10px] w-3">{dir}</span>
+      <span className="text-foreground-subtle text-xs w-3">{dir}</span>
       <div className="h-1 w-16 rounded-full bg-surface-subtle overflow-hidden">
         {pct != null && <div className={`h-full rounded-full ${barColor}`} style={{ width: `${pct}%` }} />}
       </div>
-      <span className="font-mono text-[11px] text-foreground">
+      <span className="font-mono text-xs text-foreground">
         {actual >= 1 ? `${actual.toFixed(0)}` : bps ? `${(bps / 1000).toFixed(0)}k` : "—"}
         {provisionedMbps ? `/${provisionedMbps}` : ""} Mbps
         {pct != null && <span className="text-foreground-subtle ml-0.5">({pct.toFixed(0)}%)</span>}
@@ -100,10 +100,10 @@ function UtilBar({ bps, provisionedMbps, dir }: { bps: number; provisionedMbps: 
 
 function StateChip({ reachability }: { reachability: DeviceReachability }) {
   if (reachability === "reachable")
-    return <span className="inline-flex items-center gap-1 rounded-full border border-success/25 bg-success/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-success">Connected</span>;
+    return <span className="inline-flex items-center gap-1 rounded-full border border-success/25 bg-success/10 px-2 py-0.5 text-xs font-bold uppercase tracking-wider text-success">Connected</span>;
   if (reachability === "degraded")
-    return <span className="inline-flex items-center gap-1 rounded-full border border-major/25 bg-major/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-major">Degraded</span>;
-  return <span className="inline-flex items-center gap-1 rounded-full border border-critical/25 bg-critical/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-critical">Offline</span>;
+    return <span className="inline-flex items-center gap-1 rounded-full border border-major/25 bg-major/10 px-2 py-0.5 text-xs font-bold uppercase tracking-wider text-major">Degraded</span>;
+  return <span className="inline-flex items-center gap-1 rounded-full border border-critical/25 bg-critical/10 px-2 py-0.5 text-xs font-bold uppercase tracking-wider text-critical">Offline</span>;
 }
 
 // ── Overview tab ──────────────────────────────────────────────────────────────
@@ -115,7 +115,7 @@ function OverviewTab({ devices }: { devices: DeviceSummary[] }) {
     const offline = devices.filter(d => d.reachability === "unreachable").length;
     const withScore = devices.filter(d => d.props?.velobrain_score !== undefined);
     const avgScore = withScore.length
-      ? withScore.reduce((s, d) => s + (d.props.velobrain_score ?? 0), 0) / withScore.length
+      ? withScore.reduce((s, d) => s + (d.props?.velobrain_score ?? 0), 0) / withScore.length
       : 0;
     const criticalLinks = devices.filter(d => (d.props?.velobrain_score ?? 5) < 2);
     const sites = new Set(devices.map(d => d.site_name)).size;
@@ -142,12 +142,12 @@ function OverviewTab({ devices }: { devices: DeviceSummary[] }) {
         ].map(k => (
           <div key={k.label} className="rounded-lg border border-border/50 bg-surface/40 px-4 py-3">
             <div className={`text-xl font-bold font-mono ${k.color}`}>{k.value}</div>
-            <div className="text-[10px] font-bold uppercase tracking-wider text-foreground-subtle mt-0.5">{k.label}</div>
+            <div className="text-xs font-bold uppercase tracking-wider text-foreground-subtle mt-0.5">{k.label}</div>
           </div>
         ))}
         <div className="rounded-lg border border-border/50 bg-surface/40 px-4 py-3">
           <div className={`text-xl font-bold font-mono ${scoreColor(stats.avgScore)}`}>{stats.avgScore.toFixed(1)}</div>
-          <div className="text-[10px] font-bold uppercase tracking-wider text-foreground-subtle mt-0.5">Avg VeloBrain</div>
+          <div className="text-xs font-bold uppercase tracking-wider text-foreground-subtle mt-0.5">Avg VeloBrain</div>
         </div>
       </div>
 
@@ -164,7 +164,7 @@ function OverviewTab({ devices }: { devices: DeviceSummary[] }) {
                   <Radio className="h-4 w-4 text-foreground-subtle" />
                   <div>
                     <div className="text-sm font-medium text-foreground">{d.hostname}</div>
-                    <div className="text-[11px] text-foreground-muted">{d.site_name}</div>
+                    <div className="text-xs text-foreground-muted">{d.site_name}</div>
                   </div>
                 </div>
                 <div className="flex items-center gap-3">
@@ -206,27 +206,27 @@ function EdgeRow({ device }: { device: DeviceSummary }) {
         <div className="min-w-0">
           <div className="truncate font-medium text-foreground group-hover:text-primary text-xs">{device.hostname}</div>
           <div className="flex items-center gap-1.5 mt-0.5">
-            {device.serial && <span className="font-mono text-[10px] text-foreground-subtle">{device.serial}</span>}
-            {device.model && <span className="rounded border border-emerald-400/20 bg-emerald-400/8 px-1 text-[9px] font-bold uppercase tracking-wider text-emerald-400">{device.model}</span>}
+            {device.serial && <span className="font-mono text-xs text-foreground-subtle">{device.serial}</span>}
+            {device.model && <span className="rounded border border-emerald-400/20 bg-emerald-400/8 px-1 text-2xs font-bold uppercase tracking-wider text-emerald-400">{device.model}</span>}
           </div>
         </div>
       </div>
       <div className="col-span-6 lg:col-span-2 text-xs">
-        <div className="text-[10px] font-semibold uppercase tracking-wider text-foreground-subtle mb-0.5 flex items-center gap-1"><MapPin className="h-3 w-3" />Site</div>
+        <div className="text-xs font-semibold uppercase tracking-wider text-foreground-subtle mb-0.5 flex items-center gap-1"><MapPin className="h-3 w-3" />Site</div>
         <div className="truncate text-foreground">{device.site_name || "—"}</div>
       </div>
       <div className="col-span-6 lg:col-span-2 text-xs">
-        <div className="text-[10px] font-semibold uppercase tracking-wider text-foreground-subtle mb-0.5">WAN IP</div>
+        <div className="text-xs font-semibold uppercase tracking-wider text-foreground-subtle mb-0.5">WAN IP</div>
         <div className="font-mono text-foreground">{device.ip_address || "—"}</div>
       </div>
       <div className="col-span-6 lg:col-span-2 text-xs">
-        <div className="text-[10px] font-semibold uppercase tracking-wider text-foreground-subtle mb-0.5">VeloBrain Score</div>
+        <div className="text-xs font-semibold uppercase tracking-wider text-foreground-subtle mb-0.5">VeloBrain Score</div>
         {score !== undefined ? <ScoreBar score={score} size="sm" /> : <span className="text-foreground-subtle">—</span>}
       </div>
       <div className="col-span-6 lg:col-span-2 text-right">
         <StateChip reachability={device.reachability} />
         {device.firmware_version && (
-          <div className="flex items-center justify-end gap-1 mt-1 text-[10px] text-foreground-subtle">
+          <div className="flex items-center justify-end gap-1 mt-1 text-xs text-foreground-subtle">
             <Zap className="h-3 w-3" />{device.firmware_version}
           </div>
         )}
@@ -305,7 +305,7 @@ function EdgesTab({ devices }: { devices: DeviceSummary[] }) {
                     {open ? <ChevronDown className="h-4 w-4 text-foreground-subtle" /> : <ChevronRight className="h-4 w-4 text-foreground-subtle" />}
                     <MapPin className="h-4 w-4 text-emerald-400" />
                     <span className="font-medium text-foreground text-sm">{site}</span>
-                    <Badge variant="outline" className="text-[10px]">{devs.length} edges</Badge>
+                    <Badge variant="outline" className="text-xs">{devs.length} edges</Badge>
                   </div>
                   <div className="flex gap-4 text-xs">
                     <span className="text-success">{up} up</span>
@@ -319,7 +319,7 @@ function EdgesTab({ devices }: { devices: DeviceSummary[] }) {
         </div>
       ) : (
         <div className="border border-border/50 rounded-lg overflow-hidden">
-          <div className="hidden grid-cols-12 gap-3 border-b border-border/60 bg-surface px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-foreground-subtle lg:grid">
+          <div className="hidden grid-cols-12 gap-3 border-b border-border/60 bg-surface px-3 py-2 text-xs font-semibold uppercase tracking-[0.14em] text-foreground-subtle lg:grid">
             <div className="col-span-4">Edge</div><div className="col-span-2">Site</div>
             <div className="col-span-2">WAN IP</div><div className="col-span-2">VeloBrain</div>
             <div className="col-span-2 text-right">Status</div>
@@ -350,7 +350,7 @@ function LinkHealthRow({ device }: { device: DeviceSummary }) {
           <Radio className="h-4 w-4 text-emerald-400" />
           <span className="font-medium text-foreground text-sm">{device.hostname}</span>
           <span className="text-xs text-foreground-muted">{device.site_name}</span>
-          <Badge variant="outline" className="text-[10px]">{links.length} WAN links</Badge>
+          <Badge variant="outline" className="text-xs">{links.length} WAN links</Badge>
         </div>
         <div className="flex items-center gap-4">
           {score !== undefined ? <ScoreBar score={score} size="sm" /> : <span className="text-xs text-foreground-subtle">No data</span>}
@@ -364,37 +364,37 @@ function LinkHealthRow({ device }: { device: DeviceSummary }) {
           ) : links.map((link, i) => (
             <div key={i} className="px-6 py-4 grid grid-cols-2 gap-4 sm:grid-cols-4 lg:grid-cols-6 text-sm">
               <div>
-                <div className="text-[10px] font-bold uppercase tracking-wider text-foreground-subtle mb-1">Link</div>
+                <div className="text-xs font-bold uppercase tracking-wider text-foreground-subtle mb-1">Link</div>
                 <div className="font-medium text-foreground">{link.name || `Link ${i + 1}`}</div>
-                <div className={`text-[10px] font-bold mt-0.5 ${link.state === "STABLE" ? "text-success" : link.state === "UNSTABLE" ? "text-major" : "text-critical"}`}>{link.state}</div>
+                <div className={`text-xs font-bold mt-0.5 ${link.state === "STABLE" ? "text-success" : link.state === "UNSTABLE" ? "text-major" : "text-critical"}`}>{link.state}</div>
               </div>
               <div>
-                <div className="text-[10px] font-bold uppercase tracking-wider text-foreground-subtle mb-1">VeloBrain Score</div>
+                <div className="text-xs font-bold uppercase tracking-wider text-foreground-subtle mb-1">VeloBrain Score</div>
                 <ScoreBar score={Math.min(link.score_tx, link.score_rx)} size="sm" />
               </div>
               <div>
-                <div className="text-[10px] font-bold uppercase tracking-wider text-foreground-subtle mb-1">Latency</div>
+                <div className="text-xs font-bold uppercase tracking-wider text-foreground-subtle mb-1">Latency</div>
                 <div className="font-mono text-foreground">↓ {link.latency_ms_rx.toFixed(1)} ms</div>
-                <div className="font-mono text-foreground-muted text-[11px]">↑ {link.latency_ms_tx.toFixed(1)} ms</div>
+                <div className="font-mono text-foreground-muted text-xs">↑ {link.latency_ms_tx.toFixed(1)} ms</div>
               </div>
               <div>
-                <div className="text-[10px] font-bold uppercase tracking-wider text-foreground-subtle mb-1">Jitter</div>
+                <div className="text-xs font-bold uppercase tracking-wider text-foreground-subtle mb-1">Jitter</div>
                 <div className="font-mono text-foreground">↓ {link.jitter_ms_rx.toFixed(1)} ms</div>
-                <div className="font-mono text-foreground-muted text-[11px]">↑ {link.jitter_ms_tx.toFixed(1)} ms</div>
+                <div className="font-mono text-foreground-muted text-xs">↑ {link.jitter_ms_tx.toFixed(1)} ms</div>
               </div>
               <div>
-                <div className="text-[10px] font-bold uppercase tracking-wider text-foreground-subtle mb-1">Packet Loss</div>
+                <div className="text-xs font-bold uppercase tracking-wider text-foreground-subtle mb-1">Packet Loss</div>
                 <div className={`font-mono ${link.loss_pct_rx > 1 ? "text-critical" : link.loss_pct_rx > 0.1 ? "text-major" : "text-success"}`}>↓ {link.loss_pct_rx.toFixed(2)}%</div>
-                <div className="font-mono text-foreground-muted text-[11px]">↑ {link.loss_pct_tx.toFixed(2)}%</div>
+                <div className="font-mono text-foreground-muted text-xs">↑ {link.loss_pct_tx.toFixed(2)}%</div>
               </div>
               <div>
-                <div className="text-[10px] font-bold uppercase tracking-wider text-foreground-subtle mb-1">
+                <div className="text-xs font-bold uppercase tracking-wider text-foreground-subtle mb-1">
                   Throughput{link.downstream_mbps ? " / Capacity" : ""}
                 </div>
-                <UtilBar bps={link.bps_rx} provisionedMbps={link.downstream_mbps ?? null} dir="↓" />
-                <UtilBar bps={link.bps_tx} provisionedMbps={link.upstream_mbps ?? null} dir="↑" />
+                <UtilBar avgMbps={link.avg_mbps_rx ?? (link.bps_rx / 1_000_000)} provisionedMbps={link.downstream_mbps ?? null} dir="↓" />
+                <UtilBar avgMbps={link.avg_mbps_tx ?? (link.bps_tx / 1_000_000)} provisionedMbps={link.upstream_mbps ?? null} dir="↑" />
                 {link.isp && (
-                  <div className="text-[10px] text-foreground-subtle mt-1 truncate">{link.isp}</div>
+                  <div className="text-xs text-foreground-subtle mt-1 truncate">{link.isp}</div>
                 )}
               </div>
             </div>
@@ -572,7 +572,7 @@ function TroubleshootTab() {
     <div className="flex gap-6 min-h-[500px]">
       {/* Sidebar */}
       <div className="w-52 shrink-0 space-y-1">
-        <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-foreground-subtle px-2 mb-3">Fault Scenarios</p>
+        <p className="text-xs font-bold uppercase tracking-[0.2em] text-foreground-subtle px-2 mb-3">Fault Scenarios</p>
         {TROUBLESHOOT_FLOWS.map(f => (
           <button key={f.id} onClick={() => { setActiveFlow(f.id); setExpandedStep(null); }}
             className={`w-full flex items-center gap-2.5 rounded-lg px-3 py-2.5 text-left text-sm transition-colors ${
@@ -585,7 +585,7 @@ function TroubleshootTab() {
           </button>
         ))}
         <div className="pt-4 border-t border-border/30 mt-4">
-          <p className="text-[9px] uppercase tracking-[0.2em] text-foreground-subtle px-2 mb-2">Reference</p>
+          <p className="text-2xs uppercase tracking-[0.2em] text-foreground-subtle px-2 mb-2">Reference</p>
           {[
             { icon: Globe, label: "VCO Portal" },
             { icon: Shield, label: "Security Policy" },
@@ -625,7 +625,7 @@ function TroubleshootTab() {
                   <button onClick={() => setExpandedStep(expandedStep === step.id ? null : step.id)}
                     className="w-full flex items-center justify-between px-4 py-3 text-left">
                     <div className="flex items-center gap-3">
-                      <span className={`flex h-6 w-6 items-center justify-center rounded-full text-[11px] font-bold shrink-0 ${expandedStep === step.id ? "bg-primary text-white" : "bg-surface-subtle text-foreground-subtle"}`}>{idx + 1}</span>
+                      <span className={`flex h-6 w-6 items-center justify-center rounded-full text-xs font-bold shrink-0 ${expandedStep === step.id ? "bg-primary text-white" : "bg-surface-subtle text-foreground-subtle"}`}>{idx + 1}</span>
                       <span className="font-medium text-foreground text-sm">{step.title}</span>
                     </div>
                     {expandedStep === step.id ? <ChevronDown className="h-4 w-4 text-foreground-subtle" /> : <ChevronRight className="h-4 w-4 text-foreground-subtle" />}
@@ -634,7 +634,7 @@ function TroubleshootTab() {
                     <div className="px-4 pb-4 space-y-4">
                       <p className="text-sm text-foreground-muted">{step.description}</p>
                       <div>
-                        <p className="text-[10px] font-bold uppercase tracking-wider text-foreground-subtle mb-2">Checks</p>
+                        <p className="text-xs font-bold uppercase tracking-wider text-foreground-subtle mb-2">Checks</p>
                         <ul className="space-y-1.5">
                           {step.checks.map((c, i) => (
                             <li key={i} className="flex items-start gap-2 text-sm text-foreground">
@@ -722,12 +722,7 @@ function ChatTab() {
     setLoading(true);
     try {
       const history = messages.map(m => ({ role: m.role, content: m.content }));
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"}/sdwan/chat`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: text, history }),
-      });
-      const data = await res.json();
+      const data = await api.sdwanChat(text, history);
       setMessages(prev => [...prev, { role: "assistant", content: data.answer }]);
     } catch {
       setMessages(prev => [...prev, { role: "assistant", content: "Failed to reach the intelligence engine. Please try again." }]);
@@ -821,7 +816,18 @@ const TABS: Array<{ id: NavTab; label: string; icon: React.ElementType }> = [
 ];
 
 export default function SdwanObserverPage() {
-  const [activeTab, setActiveTab] = useState<NavTab>("overview");
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const tabParam = searchParams.get("tab") as NavTab | null;
+  const validTabs: NavTab[] = ["overview", "edges", "linkhealth", "troubleshoot", "chat"];
+  const [activeTab, setActiveTab] = useState<NavTab>(
+    tabParam && validTabs.includes(tabParam) ? tabParam : "overview"
+  );
+
+  const switchTab = (tab: NavTab) => {
+    setActiveTab(tab);
+    router.replace(`?tab=${tab}`, { scroll: false });
+  };
 
   const { data, isLoading, error } = useQuery({
     queryKey: ["sdwan-devices"],
@@ -837,12 +843,12 @@ export default function SdwanObserverPage() {
   }), [devices]);
 
   return (
-    <div className="min-h-screen px-4 py-10 sm:px-6 lg:px-8">
-      <div className="mx-auto max-w-7xl space-y-8">
+    <div className="min-h-screen px-4 py-6 sm:px-6 xl:px-10 xl:py-8">
+      <div className="mx-auto max-w-screen-2xl space-y-8">
 
         {/* Header */}
         <div className="border-b border-border/60 pb-6">
-          <div className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-[0.2em] text-emerald-400">
+          <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-[0.2em] text-emerald-400">
             <Radio className="h-3.5 w-3.5" /> Platform Observer
           </div>
           <h1 className="mt-1 text-3xl font-semibold tracking-tight text-foreground">VeloCloud SD-WAN</h1>
@@ -854,7 +860,7 @@ export default function SdwanObserverPage() {
         {/* Tab nav */}
         <div className="flex items-center gap-1 border-b border-border/40">
           {TABS.map(tab => (
-            <button key={tab.id} onClick={() => setActiveTab(tab.id)}
+            <button key={tab.id} onClick={() => switchTab(tab.id)}
               className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium transition-colors border-b-2 -mb-px ${
                 activeTab === tab.id
                   ? "border-primary text-primary"
@@ -863,10 +869,10 @@ export default function SdwanObserverPage() {
               <tab.icon className="h-4 w-4" />
               {tab.label}
               {tab.id === "overview" && tabStats.issues > 0 && (
-                <span className="ml-1 rounded-full bg-critical/15 px-1.5 py-0.5 text-[10px] font-bold text-critical">{tabStats.issues}</span>
+                <span className="ml-1 rounded-full bg-critical/15 px-1.5 py-0.5 text-xs font-bold text-critical">{tabStats.issues}</span>
               )}
               {tab.id === "linkhealth" && tabStats.degraded > 0 && (
-                <span className="ml-1 rounded-full bg-major/15 px-1.5 py-0.5 text-[10px] font-bold text-major">{tabStats.degraded}</span>
+                <span className="ml-1 rounded-full bg-major/15 px-1.5 py-0.5 text-xs font-bold text-major">{tabStats.degraded}</span>
               )}
             </button>
           ))}

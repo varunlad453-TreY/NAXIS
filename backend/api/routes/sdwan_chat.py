@@ -411,10 +411,8 @@ async def _handle_capacity(edges: List[Dict], query: str) -> ChatResponse:
             dn_mbps = lk.get("downstream_mbps")
             if not up_mbps and not dn_mbps:
                 continue
-            bps_rx = lk.get("bps_rx", 0)
-            bps_tx = lk.get("bps_tx", 0)
-            rx_mbps = bps_rx / 1_000_000
-            tx_mbps = bps_tx / 1_000_000
+            rx_mbps = lk.get("avg_mbps_rx") or (lk.get("bps_rx", 0) / 1_000_000)
+            tx_mbps = lk.get("avg_mbps_tx") or (lk.get("bps_tx", 0) / 1_000_000)
             dn_pct = round((rx_mbps / dn_mbps) * 100, 1) if dn_mbps else None
             up_pct = round((tx_mbps / up_mbps) * 100, 1) if up_mbps else None
             rows.append({
@@ -424,8 +422,8 @@ async def _handle_capacity(edges: List[Dict], query: str) -> ChatResponse:
                 "isp": lk.get("isp", ""),
                 "upstream_mbps": up_mbps,
                 "downstream_mbps": dn_mbps,
-                "rx_mbps": round(rx_mbps, 1),
-                "tx_mbps": round(tx_mbps, 1),
+                "rx_mbps": round(rx_mbps, 2),
+                "tx_mbps": round(tx_mbps, 2),
                 "dn_pct": dn_pct,
                 "up_pct": up_pct,
             })
