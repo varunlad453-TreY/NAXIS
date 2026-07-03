@@ -53,10 +53,6 @@ class Settings(BaseSettings):
     redis_enabled: bool = Field(default=False, description="Enable Redis pub/sub")
     redis_max_connections: int = Field(default=10, description="Redis connection pool size")
 
-    # Ollama
-    ollama_base_url: str = Field(default="http://localhost:11434", description="Ollama API URL")
-    ollama_model: str = Field(default="llama3.1:8b", description="Ollama model name")
-
     # Juniper Mist
     mist_api_key: str = Field(default="", description="Mist API token")
     mist_org_id: str = Field(default="", description="Mist organization UUID")
@@ -70,6 +66,29 @@ class Settings(BaseSettings):
 
     # Collectors
     collector_interval: int = Field(default=60, description="Worker collection interval in seconds")
+
+    # SNMP polling
+    snmp_enabled: bool = Field(default=False, description="Enable SNMP poller")
+    snmp_community: str = Field(default="public", description="SNMPv2c community")
+    snmp_port: int = Field(default=161, description="SNMP UDP port")
+    snmp_timeout: int = Field(default=5, description="SNMP request timeout (s)")
+    snmp_retries: int = Field(default=1, description="SNMP request retries")
+    snmp_targets: str = Field(default="", description="Comma-separated SNMP target hosts")
+
+    # SNMP trap receiver
+    snmp_trap_enabled: bool = Field(default=False, description="Enable SNMP trap receiver")
+    snmp_trap_host: str = Field(default="0.0.0.0", description="SNMP trap bind host")
+    snmp_trap_port: int = Field(default=162, description="SNMP trap UDP port")
+
+    # Syslog receiver
+    syslog_enabled: bool = Field(default=False, description="Enable syslog receiver")
+    syslog_host: str = Field(default="0.0.0.0", description="Syslog bind host")
+    syslog_udp_port: int = Field(default=514, description="Syslog UDP port")
+    syslog_tcp_port: int = Field(default=1514, description="Syslog TCP port")
+
+    @property
+    def snmp_targets_list(self) -> List[str]:
+        return [t.strip() for t in self.snmp_targets.split(",") if t.strip()]
 
     # Correlation
     correlation_time_window: int = Field(default=300, description="Correlation time window in seconds")

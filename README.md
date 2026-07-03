@@ -22,7 +22,7 @@ Naxis is **not a monitoring tool** — it's an operational intelligence platform
 - **2 backend services** (down from 7) - 71% reduction
 - **7 Docker containers** (down from 11) - 36% reduction
 - **50-70% lower operational complexity**
-- **Same powerful data architecture** (ClickHouse + Neo4j + Redis + Ollama)
+- **Simplified data architecture** (PostgreSQL)
 
 See [docs/MVP_ARCHITECTURE.md](docs/MVP_ARCHITECTURE.md) for complete design.
 
@@ -38,13 +38,9 @@ make setup
 # Start services
 make up
 
-# Pull LLM model
-make ollama
-
 # Access applications
 # API:      http://localhost:8000
 # Frontend: http://localhost:3000
-# Neo4j:    http://localhost:7474
 ```
 
 ## Architecture
@@ -93,10 +89,8 @@ make ollama
 |-----------|-----------|---------|
 | Backend | FastAPI | API Gateway & Services |
 | Frontend | Next.js 14 | Web UI |
-| Event Store | ClickHouse | Time-series events |
-| Graph DB | Neo4j Community | Network topology |
-| Event Bus | Redis Streams | Event processing |
-| AI Runtime | Ollama | Local LLM inference |
+| Database | PostgreSQL | Events, incidents, topology |
+| Cache | Redis | Real-time notifications |
 | Orchestration | Docker Compose | Local deployment |
 
 ## Project Structure (MVP v2.0)
@@ -202,7 +196,6 @@ CORRELATION_TIME_WINDOW=300
 - [ ] Graph visualization
 
 ### Phase 8: RCA (Weeks 11-12)
-- [ ] Ollama integration
 - [ ] RCA service
 - [ ] RCA UI
 

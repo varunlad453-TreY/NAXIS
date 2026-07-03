@@ -225,6 +225,30 @@ function EdgeRow({ device }: { device: DeviceSummary }) {
   );
 }
 
+function SiteGroup({ site, devs }: { site: string; devs: DeviceSummary[] }) {
+  const [open, setOpen] = useState(true);
+  const up = devs.filter(d => d.reachability === "reachable").length;
+  const down = devs.filter(d => d.reachability !== "reachable").length;
+  return (
+    <div className="border border-border/50 rounded-lg overflow-hidden">
+      <button onClick={() => setOpen(o => !o)}
+        className="w-full flex items-center justify-between px-4 py-3 bg-surface hover:bg-surface/80 transition-colors">
+        <div className="flex items-center gap-3">
+          {open ? <ChevronDown className="h-4 w-4 text-foreground-subtle" /> : <ChevronRight className="h-4 w-4 text-foreground-subtle" />}
+          <MapPin className="h-4 w-4 text-emerald-400" />
+          <span className="font-medium text-foreground text-sm">{site}</span>
+          <Badge variant="outline" className="text-[10px]">{devs.length} edges</Badge>
+        </div>
+        <div className="flex gap-4 text-xs">
+          <span className="text-success">{up} up</span>
+          {down > 0 && <span className="text-critical">{down} down</span>}
+        </div>
+      </button>
+      {open && <div className="divide-y divide-border/40">{devs.map(d => <EdgeRow key={d.device_id} device={d} />)}</div>}
+    </div>
+  );
+}
+
 function EdgesTab({ devices }: { devices: DeviceSummary[] }) {
   const [search, setSearch] = useState("");
   const [rf, setRf] = useState<DeviceReachability | "all">("all");
@@ -235,9 +259,10 @@ function EdgesTab({ devices }: { devices: DeviceSummary[] }) {
     return devices.filter(d => {
       if (rf !== "all" && d.reachability !== rf) return false;
       if (!term) return true;
-      return d.hostname.toLowerCase().includes(term) || d.serial.toLowerCase().includes(term) ||
-        d.model.toLowerCase().includes(term) || d.site_name.toLowerCase().includes(term) ||
-        d.ip_address.toLowerCase().includes(term);
+      const s = (v: string | null | undefined) => (v || "").toLowerCase();
+      return s(d.hostname).includes(term) || s(d.serial).includes(term) ||
+        s(d.model).includes(term) || s(d.site_name).includes(term) ||
+        s(d.ip_address).includes(term) || s(d.mac).includes(term);
     });
   }, [devices, rf, search]);
 
@@ -283,29 +308,9 @@ function EdgesTab({ devices }: { devices: DeviceSummary[] }) {
 
       {groupBySite ? (
         <div className="space-y-2">
-          {siteGroups.map(([site, devs]) => {
-            const [open, setOpen] = useState(true);
-            const up = devs.filter(d => d.reachability === "reachable").length;
-            const down = devs.filter(d => d.reachability !== "reachable").length;
-            return (
-              <div key={site} className="border border-border/50 rounded-lg overflow-hidden">
-                <button onClick={() => setOpen(o => !o)}
-                  className="w-full flex items-center justify-between px-4 py-3 bg-surface hover:bg-surface/80 transition-colors">
-                  <div className="flex items-center gap-3">
-                    {open ? <ChevronDown className="h-4 w-4 text-foreground-subtle" /> : <ChevronRight className="h-4 w-4 text-foreground-subtle" />}
-                    <MapPin className="h-4 w-4 text-emerald-400" />
-                    <span className="font-medium text-foreground text-sm">{site}</span>
-                    <Badge variant="outline" className="text-[10px]">{devs.length} edges</Badge>
-                  </div>
-                  <div className="flex gap-4 text-xs">
-                    <span className="text-success">{up} up</span>
-                    {down > 0 && <span className="text-critical">{down} down</span>}
-                  </div>
-                </button>
-                {open && <div className="divide-y divide-border/40">{devs.map(d => <EdgeRow key={d.device_id} device={d} />)}</div>}
-              </div>
-            );
-          })}
+          {siteGroups.map(([site, devs]) => (
+            <SiteGroup key={site} site={site} devs={devs} />
+          ))}
         </div>
       ) : (
         <div className="border border-border/50 rounded-lg overflow-hidden">

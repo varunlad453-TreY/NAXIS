@@ -135,4 +135,183 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ message, history }),
     }),
+
+  /**
+   * Mist AP lifecycle history
+   */
+  mistApHistory: (serial: string, params?: MistHistoryParams) => {
+    const q = new URLSearchParams();
+    if (params?.event) q.set("event", params.event);
+    if (params?.since) q.set("since", params.since);
+    if (params?.until) q.set("until", params.until);
+    const qs = q.toString();
+    return fetchAPI<MistHistoryResponse>(
+      `/mist/aps/${encodeURIComponent(serial)}/history${qs ? `?${qs}` : ""}`
+    );
+  },
+
+  mistApHistoryCsvUrl: (serial: string, params?: MistHistoryParams) => {
+    const q = new URLSearchParams();
+    if (params?.event) q.set("event", params.event);
+    if (params?.since) q.set("since", params.since);
+    if (params?.until) q.set("until", params.until);
+    const qs = q.toString();
+    return `${API_BASE}/mist/aps/${encodeURIComponent(serial)}/history.csv${qs ? `?${qs}` : ""}`;
+  },
+
+  /**
+   * Mist client 1:1 timeline (live pass-through)
+   */
+  mistClientTimeline: (mac: string, params?: MistClientTimelineParams) => {
+    const q = new URLSearchParams();
+    if (params?.since) q.set("since", params.since);
+    if (params?.until) q.set("until", params.until);
+    const qs = q.toString();
+    return fetchAPI<MistClientTimeline>(
+      `/mist/clients/${encodeURIComponent(mac)}/timeline${qs ? `?${qs}` : ""}`
+    );
+  },
+
+  mistClientTimelineCsvUrl: (mac: string, params?: MistClientTimelineParams) => {
+    const q = new URLSearchParams();
+    if (params?.since) q.set("since", params.since);
+    if (params?.until) q.set("until", params.until);
+    const qs = q.toString();
+    return `${API_BASE}/mist/clients/${encodeURIComponent(mac)}/timeline.csv${qs ? `?${qs}` : ""}`;
+  },
+
+  mistSleAnomalies: (params?: MistSleParams) => {
+    const q = new URLSearchParams();
+    if (params?.window) q.set("window", String(params.window));
+    if (params?.limit) q.set("limit", String(params.limit));
+    if (params?.sle) q.set("sle", params.sle);
+    if (params?.z_threshold != null) q.set("z_threshold", String(params.z_threshold));
+    const qs = q.toString();
+    return fetchAPI<MistSleAnomalyResponse>(`/mist/sle/anomalies${qs ? `?${qs}` : ""}`);
+  },
+
+  mistSleAnomaliesCsvUrl: (params?: MistSleParams) => {
+    const q = new URLSearchParams();
+    if (params?.window) q.set("window", String(params.window));
+    if (params?.sle) q.set("sle", params.sle);
+    if (params?.z_threshold != null) q.set("z_threshold", String(params.z_threshold));
+    q.set("limit", "1000");
+    return `${API_BASE}/mist/sle/anomalies.csv?${q.toString()}`;
+  },
 };
+
+export type MistLifecycleEvent =
+  | "first_seen"
+  | "firmware_change"
+  | "site_move"
+  | "rename"
+  | "hardware_replaced"
+  | "reachability"
+  | "reboot";
+
+export interface MistHistoryParams {
+  event?: MistLifecycleEvent;
+  since?: string;
+  until?: string;
+}
+
+export interface MistHistoryEntry {
+  observed_at: string;
+  event: MistLifecycleEvent;
+  field: string | null;
+  from_value: string | number | null;
+  to_value: string | number | null;
+  site_name: string;
+  hostname: string;
+  firmware: string;
+  reachability: string;
+  uptime_s: number;
+}
+
+export interface MistHistoryResponse {
+  serial: string;
+  count: number;
+  events: MistHistoryEntry[];
+}
+
+export interface MistClientTimelineParams {
+  since?: string;
+  until?: string;
+}
+
+export interface MistClientCurrent {
+  site_id: string | null;
+  site_name: string | null;
+  ap: string | null;
+  ssid: string | null;
+  band: string | null;
+  connected_since: string | null;
+  rssi: number | null;
+  hostname: string | null;
+  ip: string | null;
+}
+
+export interface MistClientSession {
+  site_id: string;
+  site_name: string;
+  ap: string | null;
+  ssid: string | null;
+  band: string | null;
+  started: string | null;
+  ended: string | null;
+  duration_s: number | null;
+  disconnect_reason: string | null;
+}
+
+export interface MistClientEvent {
+  ts: string | null;
+  site_id: string;
+  site_name: string;
+  ap: string | null;
+  type: string | null;
+  ssid: string | null;
+  band: string | null;
+  detail: string | null;
+}
+
+export interface MistSiteSeen {
+  site_id: string;
+  site_name: string;
+  first_seen: string;
+  last_seen: string;
+}
+
+export interface MistClientTimeline {
+  mac: string;
+  window: { since: string; until: string };
+  current: MistClientCurrent | null;
+  sessions: MistClientSession[];
+  events: MistClientEvent[];
+  sites_seen: MistSiteSeen[];
+}
+
+export interface MistSleParams {
+  window?: number;
+  limit?: number;
+  sle?: string;
+  z_threshold?: number;
+}
+
+export interface MistSleAnomaly {
+  site_id: string;
+  site_name: string;
+  sle: string;
+  current: number;
+  org_mean: number;
+  org_sd: number;
+  z_score: number;
+  delta_pct: number;
+  num_aps: number;
+  num_clients: number;
+}
+
+export interface MistSleAnomalyResponse {
+  window_hours: number;
+  count: number;
+  anomalies: MistSleAnomaly[];
+}

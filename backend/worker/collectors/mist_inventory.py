@@ -18,6 +18,7 @@ from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_ex
 
 from config.settings import get_settings
 from shared.database.client import db
+from worker.collectors.mist_ap_history import record_snapshots
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +54,7 @@ class MistInventoryCollector:
         rows = _build_rows(devices, site_map, stats_map, self._org_id)
         if rows:
             await _upsert_inventory(rows)
+            await record_snapshots(rows)
         logger.info("Mist inventory: upserted %d devices", len(rows))
         return len(rows)
 

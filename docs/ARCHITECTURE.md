@@ -36,7 +36,7 @@ Built for small teams with enterprise-grade requirements, Naxis leverages modern
 1. **Multi-Vendor Telemetry Normalization**: Unified event schema across Cisco DNAC, Juniper Mist, Arista SD-WAN, and Arista WLC
 2. **Topology-Aware Correlation**: Network graph-based event correlation using Neo4j
 3. **Incident Intelligence**: Time-series analysis and pattern detection with ClickHouse
-4. **AI-Assisted RCA**: Local LLM inference via Ollama with LangGraph workflows
+4. **AI-Assisted RCA**: LangGraph workflows for multi-step reasoning
 5. **Real-Time Event Processing**: Redis Streams-based event bus architecture
 
 ### 1.3 Design Principles
@@ -85,10 +85,10 @@ Built for small teams with enterprise-grade requirements, Naxis leverages modern
 │  │ Collectors  │  │ Ingestion   │  │ Correlation │        │
 │  │   Service   │  │   Service   │  │   Service   │        │
 │  └─────────────┘  └─────────────┘  └─────────────┘        │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐        │
-│  │  Topology   │  │     RCA     │  │   Ollama    │        │
-│  │   Service   │  │   Service   │  │  (LLM Host) │        │
-│  └─────────────┘  └─────────────┘  └─────────────┘        │
+│  ┌─────────────┐  ┌─────────────┐                          │
+│  │  Topology   │  │     RCA     │                          │
+│  │   Service   │  │   Service   │                          │
+│  └─────────────┘  └─────────────┘                          │
 └─────────────────────────────────────────────────────────────┘
                               ▲
                               │
@@ -161,7 +161,6 @@ Built for small teams with enterprise-grade requirements, Naxis leverages modern
 
 **RCA Service**
 - AI-assisted root cause analysis
-- Integrates Ollama for local LLM inference
 - Future: LangGraph workflows for multi-step reasoning
 - Generates human-readable explanations
 
@@ -402,14 +401,8 @@ Used by Docker health checks and future orchestration systems.
 
 ## 6. AI/ML Integration Strategy
 
-### 6.1 Ollama Local Inference
+### 6.1 AI Use Cases
 
-**Model Selection:**
-- **Default**: Llama 3.1 8B (fits on 16GB RAM laptop)
-- **Alternative**: Mistral 7B, Phi-3, or CodeLlama for specific tasks
-- **No Cloud APIs**: All inference runs locally
-
-**Use Cases:**
 1. **Event Summarization**: Generate human-readable incident summaries
 2. **RCA Suggestions**: Analyze correlated events and suggest root causes
 3. **Natural Language Queries**: "Why is Site A experiencing latency?"
@@ -449,10 +442,8 @@ workflow.add_edge("validate_hypothesis", "explain_rca")
 ```yaml
 # Production: docker-compose.yml
 services:
-  redis:         # Event bus + cache
-  clickhouse:    # Time-series storage
-  neo4j:         # Graph database
-  ollama:        # LLM inference
+  redis:         # Real-time notifications
+  postgres:      # Events, incidents, topology
   api:           # API Gateway (port 8000)
   collectors:    # Vendor API polling
   ingestion:     # Event normalization
@@ -488,17 +479,13 @@ services:
 ### 7.3 Data Volumes
 
 ```
-naxis_clickhouse_data:  # Event/incident storage (~1GB/day)
-naxis_neo4j_data:       # Topology graph (~100MB)
-naxis_redis_data:       # Stream buffers (~500MB)
-naxis_ollama_models:    # LLM models (~8GB for Llama 3.1 8B)
+naxis_postgres_data:    # Events, incidents, topology
+naxis_redis_data:       # Notification streams (~500MB)
 ```
 
 **Backup Strategy:**
-- ClickHouse: Daily snapshots to external storage
-- Neo4j: Weekly graph dumps
+- PostgreSQL: Daily snapshots to external storage
 - Redis: No backup needed (transient streams)
-- Ollama: Models re-downloaded if lost
 
 ---
 
@@ -519,13 +506,9 @@ make up     # docker compose up -d
 # View logs
 make logs   # docker compose logs -f
 
-# Pull LLM model
-make ollama # docker compose exec ollama ollama pull llama3.1:8b
-
 # Access applications
 # API:      http://localhost:8000
 # Frontend: http://localhost:3000
-# Neo4j:    http://localhost:7474
 ```
 
 ### 8.2 Development Commands
@@ -778,7 +761,6 @@ When scaling beyond Docker Compose:
 
 ### Phase 6: AI Foundation (Weeks 11-12)
 - [ ] RCA service implementation
-- [ ] Ollama integration
 - [ ] LangGraph workflow skeleton
 - [ ] Event summarization
 - [ ] Basic RCA suggestions
@@ -854,7 +836,6 @@ The platform is designed to grow from a 2-developer laptop deployment to enterpr
 | Time-series DB | ClickHouse | 23.8+ | Event/metric storage |
 | Graph DB | Neo4j Community | 5.15+ | Topology graph |
 | Event Bus | Redis | 7+ | Streams and caching |
-| LLM Runtime | Ollama | Latest | Local inference |
 | AI Framework | LangGraph | Latest | Multi-step workflows |
 | Orchestration | Docker Compose | 2.20+ | Local deployment |
 | Language (Backend) | Python | 3.11+ | Async/await support |

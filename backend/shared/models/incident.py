@@ -261,8 +261,6 @@ class IncidentQuery(BaseModel):
 # # Lifecycle transitions.
 # incident.set_status(IncidentStatus.INVESTIGATING)
 #
-# # Persist to ClickHouse.
-# row = incident.to_clickhouse_dict()
 #
 # ---------------------------------------------------------------------
 

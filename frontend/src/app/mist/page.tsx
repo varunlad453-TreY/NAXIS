@@ -1,7 +1,8 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { Suspense, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { useQueryState } from "@/hooks/use-query-state";
 import {
   AlertCircle,
   ChevronDown,
@@ -20,7 +21,12 @@ import {
 import { api } from "@/lib/api";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
+import { ApLifecycleModal } from "@/components/mist/ap-lifecycle-modal";
+import { ClientTimelinePanel } from "@/components/mist/client-timeline-panel";
+import { SleAnomalyPanel } from "@/components/mist/sle-anomaly-panel";
 import type { DeviceReachability, DeviceSummary } from "@/types/device";
+
+type MistView = "inventory" | "clients" | "sle";
 
 function formatUptime(seconds: number): string {
   if (!seconds) return "—";
@@ -41,9 +47,14 @@ function ReachabilityDot({ status }: { status: DeviceReachability }) {
   return <span className={`inline-block h-2 w-2 rounded-full ${colors[status]}`} title={status} />;
 }
 
-function DeviceRow({ device }: { device: DeviceSummary }) {
+function DeviceRow({ device, onOpen }: { device: DeviceSummary; onOpen: (d: DeviceSummary) => void }) {
   return (
-    <div className="group grid grid-cols-12 items-center gap-3 px-3 py-3 transition-colors hover:bg-surface text-sm">
+    <button
+      type="button"
+      onClick={() => onOpen(device)}
+      className="group grid w-full grid-cols-12 items-center gap-3 px-3 py-3 text-left transition-colors hover:bg-surface text-sm"
+      title="View lifecycle history"
+    >
       <div className="col-span-12 flex items-center gap-3 lg:col-span-4">
         <div className="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-surface-subtle/40 text-foreground-subtle">
           <Wifi className="h-4 w-4" />
@@ -109,11 +120,11 @@ function DeviceRow({ device }: { device: DeviceSummary }) {
           </div>
         )}
       </div>
-    </div>
+    </button>
   );
 }
 
-function SiteGroup({ siteName, devices }: { siteName: string; devices: DeviceSummary[] }) {
+function SiteGroup({ siteName, devices, onOpen }: { siteName: string; devices: DeviceSummary[]; onOpen: (d: DeviceSummary) => void }) {
   const [open, setOpen] = useState(true);
   const reachable = devices.filter((d) => d.reachability === "reachable").length;
   const unreachable = devices.filter((d) => d.reachability === "unreachable").length;
@@ -147,17 +158,21 @@ function SiteGroup({ siteName, devices }: { siteName: string; devices: DeviceSum
       </button>
       {open && (
         <div className="divide-y divide-border/40">
-          {devices.map((d) => <DeviceRow key={d.device_id} device={d} />)}
+          {devices.map((d) => <DeviceRow key={d.device_id} device={d} onOpen={onOpen} />)}
         </div>
       )}
     </div>
   );
 }
 
-export default function MistObserverPage() {
+const MIST_VIEWS = ["inventory", "clients", "sle"] as const;
+
+function MistObserverPageInner() {
   const [search, setSearch] = useState("");
   const [reachabilityFilter, setReachabilityFilter] = useState<DeviceReachability | "all">("all");
   const [groupBySite, setGroupBySite] = useState(true);
+  const [lifecycleFor, setLifecycleFor] = useState<DeviceSummary | null>(null);
+  const [view, setView] = useQueryState<MistView>("view", "inventory", MIST_VIEWS);
 
   const { data, isLoading, error } = useQuery({
     queryKey: ["mist-devices"],
@@ -238,6 +253,33 @@ export default function MistObserverPage() {
           </div>
         </div>
 
+        {/* View tabs */}
+        <div className="flex gap-1 border-b border-border/40">
+          {([
+            { id: "inventory", label: "Inventory" },
+            { id: "clients",   label: "Client lookup" },
+            { id: "sle",       label: "SLE Anomalies" },
+          ] as const).map((t) => (
+            <button
+              key={t.id}
+              onClick={() => setView(t.id)}
+              className={`px-3 py-2 text-sm font-medium transition-colors ${
+                view === t.id
+                  ? "border-b-2 border-primary text-foreground"
+                  : "text-foreground-subtle hover:text-foreground"
+              }`}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+
+        {view === "clients" && <ClientTimelinePanel />}
+
+        {view === "sle" && <SleAnomalyPanel />}
+
+        {view === "inventory" && (
+        <>
         {/* Filters */}
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
           <div className="relative flex-1">
@@ -317,7 +359,7 @@ export default function MistObserverPage() {
         ) : groupBySite ? (
           <div className="space-y-3">
             {siteGroups.map(([siteName, siteDevices]) => (
-              <SiteGroup key={siteName} siteName={siteName} devices={siteDevices} />
+              <SiteGroup key={siteName} siteName={siteName} devices={siteDevices} onOpen={setLifecycleFor} />
             ))}
           </div>
         ) : (
@@ -330,7 +372,7 @@ export default function MistObserverPage() {
               <div className="col-span-2 text-right">Status</div>
             </div>
             <div className="divide-y divide-border/40">
-              {filteredDevices.map((d) => <DeviceRow key={d.device_id} device={d} />)}
+              {filteredDevices.map((d) => <DeviceRow key={d.device_id} device={d} onOpen={setLifecycleFor} />)}
             </div>
           </div>
         )}
@@ -340,8 +382,26 @@ export default function MistObserverPage() {
             Showing {filteredDevices.length} of {data?.total ?? devices.length} devices
           </div>
         )}
+        </>
+        )}
 
       </div>
+
+      {lifecycleFor && (
+        <ApLifecycleModal
+          serial={lifecycleFor.serial || lifecycleFor.device_id}
+          hostname={lifecycleFor.hostname || lifecycleFor.mac || lifecycleFor.device_id}
+          onClose={() => setLifecycleFor(null)}
+        />
+      )}
     </div>
+  );
+}
+
+export default function MistObserverPage() {
+  return (
+    <Suspense>
+      <MistObserverPageInner />
+    </Suspense>
   );
 }

@@ -146,7 +146,7 @@ class UnifiedEvent(BaseModel):
     """
     Unified event schema that normalizes events from all vendors.
 
-    This is the core data model stored in ClickHouse and processed
+    This is the core data model stored in PostgreSQL and processed
     throughout the platform.
     """
 
