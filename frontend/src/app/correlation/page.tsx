@@ -79,15 +79,21 @@ export default function CorrelationEnginePage() {
           <div className="mt-8 flex flex-wrap gap-8">
             <div>
               <div className="text-3xl font-semibold text-critical">{stats.critical}</div>
-              <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-foreground-subtle mt-0.5">Critical</div>
+              <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-foreground-subtle mt-0.5">
+                <span className="text-critical">Outage</span>
+              </div>
             </div>
             <div>
               <div className="text-3xl font-semibold text-major">{stats.major}</div>
-              <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-foreground-subtle mt-0.5">Major</div>
+              <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-foreground-subtle mt-0.5">
+                <span className="text-major">Degraded</span>
+              </div>
             </div>
             <div>
               <div className="text-3xl font-semibold text-minor">{stats.minor}</div>
-              <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-foreground-subtle mt-0.5">Minor</div>
+              <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-foreground-subtle mt-0.5">
+                <span className="text-minor">Attention</span>
+              </div>
             </div>
             <div>
               <div className="text-3xl font-semibold text-foreground">{stats.active}</div>
@@ -152,21 +158,24 @@ export default function CorrelationEnginePage() {
                 />
               </div>
               <div className="flex items-center gap-2">
-                {(["all", "critical", "major", "minor"] as const).map((s) => (
-                  <button
-                    key={s}
-                    onClick={() => setSeverityFilter(s)}
-                    className={`px-2.5 py-1 rounded text-sm font-medium transition-colors capitalize ${
-                      severityFilter === s
-                        ? s === "all"
-                          ? "bg-surface text-foreground"
-                          : "bg-critical/10 text-critical border border-critical/30"
-                        : "text-foreground-muted hover:text-foreground"
-                    }`}
-                  >
-                    {s}
-                  </button>
-                ))}
+                {(["all", "critical", "major", "minor"] as const).map((s) => {
+                  const filterLabels: Record<string, string> = { critical: "Outage", major: "Degraded", minor: "Attention", all: "All" };
+                  return (
+                    <button
+                      key={s}
+                      onClick={() => setSeverityFilter(s)}
+                      className={`px-2.5 py-1 rounded text-sm font-medium transition-colors ${
+                        severityFilter === s
+                          ? s === "all"
+                            ? "bg-surface text-foreground"
+                            : "bg-critical/10 text-critical border border-critical/30"
+                          : "text-foreground-muted hover:text-foreground"
+                      }`}
+                    >
+                      {filterLabels[s]}
+                    </button>
+                  );
+                })}
                 {(search || severityFilter !== "all") && (
                   <button onClick={() => { setSearch(""); setSeverityFilter("all"); }} className="ml-1 inline-flex items-center gap-1 text-sm text-foreground-muted hover:text-foreground">
                     <X className="h-3.5 w-3.5" />

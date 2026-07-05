@@ -11,6 +11,7 @@ export interface IncidentSummary {
   incident_id: string;
   title: string;
   severity: IncidentSeverity;
+  severity_label: string;
   status: IncidentStatus;
   event_count: number;
   affected_sites_count: number;

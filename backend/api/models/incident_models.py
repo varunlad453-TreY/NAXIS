@@ -21,6 +21,7 @@ class IncidentSummary(BaseModel):
     incident_id: str = Field(..., description="Unique incident ID")
     title: str = Field(..., description="Human-readable incident title")
     severity: str = Field(..., description="Incident severity (critical, major, minor, etc.)")
+    severity_label: str = Field(..., description="Operator-friendly severity display name")
     status: str = Field(..., description="Lifecycle status (open, investigating, resolved, etc.)")
     event_count: int = Field(..., description="Number of related events")
     affected_sites_count: int = Field(..., description="Number of affected sites")
@@ -56,6 +57,7 @@ class IncidentDetail(BaseModel):
     incident_id: str = Field(..., description="Unique incident ID")
     title: str = Field(..., description="Human-readable incident title")
     severity: str = Field(..., description="Incident severity")
+    severity_label: str = Field(..., description="Operator-friendly severity display name")
     status: str = Field(..., description="Lifecycle status")
 
     # Blast radius

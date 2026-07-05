@@ -19,11 +19,24 @@ from pydantic import BaseModel, Field, field_validator
 
 class IncidentSeverity(str, Enum):
     """Incident severity (mirrors EventSeverity for cross-mapping)."""
+
     CRITICAL = "critical"
     MAJOR = "major"
     MINOR = "minor"
     WARNING = "warning"
     INFO = "info"
+
+    @property
+    def label(self) -> str:
+        """Operator-friendly display label that conveys business impact."""
+        labels: dict[str, str] = {
+            "critical": "Outage",
+            "major": "Degraded",
+            "minor": "Attention",
+            "warning": "Notice",
+            "info": "Info",
+        }
+        return labels.get(self.value, self.value.capitalize())
 
 
 class IncidentStatus(str, Enum):
@@ -212,6 +225,7 @@ class Incident(BaseModel):
             "incident_id": self.incident_id,
             "title": self.title,
             "severity": self.severity.value,
+            "severity_label": self.severity.label,
             "status": self.status.value,
             "event_count": self.event_count(),
             "affected_sites": len(self.affected_sites),

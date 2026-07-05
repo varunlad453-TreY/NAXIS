@@ -61,14 +61,23 @@ const sourceIcons: Record<string, React.ReactNode> = {
   arista_wlc: <Wifi className="h-3.5 w-3.5" />,
 };
 
+const EVENT_LABELS: Record<string, string> = {
+  critical: "Outage",
+  major: "Degraded",
+  minor: "Attention",
+  warning: "Notice",
+  info: "Info",
+};
+
 function SeverityBadge({ severity }: { severity: EventSeverity }) {
   const config = severityConfig[severity] ?? severityConfig.info;
+  const label = EVENT_LABELS[severity] ?? severity;
   return (
     <div
       className={`inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider ${config.color} ${config.bg} ${config.border}`}
     >
       {config.icon}
-      {severity}
+      {label}
     </div>
   );
 }

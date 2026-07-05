@@ -57,9 +57,9 @@ export function StatsPanel({ incidents, className }: StatsPanelProps) {
         </h3>
         <div className="space-y-3">
           {[
-            { label: "Critical", count: stats.critical, icon: <AlertCircle className="h-4 w-4 text-critical" />, tone: getSeverityColors("critical") },
-            { label: "Major", count: stats.major, icon: <AlertTriangle className="h-4 w-4 text-major" />, tone: getSeverityColors("major") },
-            { label: "Minor", count: stats.minor, icon: <AlertTriangle className="h-4 w-4 text-minor" />, tone: getSeverityColors("minor") },
+            { label: "Outage", count: stats.critical, icon: <AlertCircle className="h-4 w-4 text-critical" />, tone: getSeverityColors("critical") },
+            { label: "Degraded", count: stats.major, icon: <AlertTriangle className="h-4 w-4 text-major" />, tone: getSeverityColors("major") },
+            { label: "Attention", count: stats.minor, icon: <AlertTriangle className="h-4 w-4 text-minor" />, tone: getSeverityColors("minor") },
             { label: "Info", count: stats.info, icon: <Info className="h-4 w-4 text-info" />, tone: getSeverityColors("info") },
           ].map((item) => (
             <div key={item.label} className="space-y-2 rounded-2xl border border-border/50 bg-surface/50 p-3">
