@@ -10,7 +10,10 @@ Supports two storage backends selected via STORAGE_MODE:
 import logging
 from typing import Any, Dict, List, Optional
 
-from backend.config.settings import get_settings
+try:
+    from backend.config.settings import get_settings
+except ImportError:
+    from config.settings import get_settings
 from backend.db.base import init_db
 from backend.db.models import Incident as IncidentORM
 from backend.shared.models.incident import Incident, IncidentStatus

@@ -13,6 +13,7 @@ import type { DeviceListResponse, DeviceFilterParams } from "@/types/device";
 import type {
   IntegrationListResponse,
   IntegrationDetailResponse,
+  IntegrationConfigResponse,
   IntegrationActionResponse,
   TelemetryAlertsResponse,
 } from "@/types/integration";
@@ -64,14 +65,14 @@ function toCamelCase(str: string): string {
   return str.replace(/([-_][a-z])/g, (g) => g.toUpperCase().replace(/[-_]/g, ""));
 }
 
-function camelizeKeys<T>(obj: unknown): T {
-  if (Array.isArray(obj)) return obj.map((v) => camelizeKeys(v)) as T;
+function camelizeKeys<T>(obj: T): T {
+  if (Array.isArray(obj)) return obj.map((v) => camelizeKeys(v as unknown as Record<string, unknown>)) as unknown as T;
   if (obj !== null && typeof obj === "object") {
     return Object.fromEntries(
-      Object.entries(obj).map(([k, v]) => [toCamelCase(k), camelizeKeys(v)])
-    ) as T;
+      Object.entries(obj as Record<string, unknown>).map(([k, v]) => [toCamelCase(k), camelizeKeys(v)])
+    ) as unknown as T;
   }
-  return obj as T;
+  return obj;
 }
 
 export const api = {
@@ -240,7 +241,7 @@ export const api = {
     }).then((r) => camelizeKeys(r)),
 
   getIntegrationConfig: (id: string) =>
-    fetchAPI<IntegrationDetailResponse>(`/integrations/${encodeURIComponent(id)}/config`).then(
+    fetchAPI<IntegrationConfigResponse>(`/integrations/${encodeURIComponent(id)}/config`).then(
       (r) => camelizeKeys(r)
     ),
 

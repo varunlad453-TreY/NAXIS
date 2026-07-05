@@ -69,6 +69,17 @@ Thumbs.db
 
 # Temporary files
 tmp/
+
+# Tooling artifacts
+.codex/
+.graphify/
+graphify-out/
+
+# Screenshots / random
+*.png
+
+# Script executables (uv, pip shims)
+scripts/*.exe
 temp/
 *.tmp
 

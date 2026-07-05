@@ -11,7 +11,10 @@ from typing import Any, Dict, Optional
 
 import redis.asyncio as aioredis
 
-from backend.config.settings import get_settings
+try:
+    from backend.config.settings import get_settings
+except ImportError:
+    from config.settings import get_settings
 
 logger = logging.getLogger(__name__)
 

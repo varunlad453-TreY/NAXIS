@@ -430,4 +430,143 @@ curl http://localhost:8000/telemetry/alerts | python -m json.tool
 
 ---
 
-**End of handoff. The next session should start with Phase 8 (Mist topology collectors) and follow the patterns established in this session.**
+---
+
+## 11. Correlation Engine — Now Live
+
+### What Was Done
+
+**Goal:** Wire the existing `CorrelationEngine` into the production `WorkerDaemon` pipeline so that every collection cycle produces correlated incidents from raw telemetry.
+
+**Completed Work:**
+
+| # | What | Files | Verified |
+|---|------|-------|----------|
+| 1 | Wired `CorrelationEngine` into `WorkerDaemon.run_once()` | `backend/worker/main.py` — added import, engine init, `process_events()` call after event persistence, `upsert_incident()`, `link_events_to_incident()`, Redis publish | ✅ |
+| 2 | `CorrelationEngine` processes all collector events (Mist, VeloCloud, DNAC, Arista WLC) | `backend/worker/main.py` — runs on the combined `all_events` list | ✅ |
+| 3 | Incidents persisted to PostgreSQL via `upsert_incident()` | `backend/shared/database/incidents.py` — `ON CONFLICT DO UPDATE` | ✅ |
+| 4 | Events linked to incidents via `link_events_to_incident()` | `backend/shared/database/events.py` — sets `incident_id` on related events | ✅ |
+| 5 | Incidents published to Redis for real-time UI updates | `backend/worker/main.py` — `publish_incident()` called per incident | ✅ |
+| 6 | Comprehensive test suite (60 tests, all passing) | `backend/tests/test_correlation_engine.py` — covers engine, rules, model, pipeline, cross-vendor, edge cases | ✅ |
+| 7 | Test fixtures | `backend/tests/conftest.py` — reusuable event factories, site/multi-site/cross-vendor/out-of-window fixtures | ✅ |
+| 8 | Frontend correlation page shows real incidents from API | `frontend/src/app/correlation/page.tsx` — replaced client-side event grouping with server-generated incidents | ✅ |
+| 9 | "Why correlation engine" architecture document | `docs/why-correlation-engine.md` — comprehensive analysis with stages, benefits, data flow, confidence formula | ✅ |
+
+### Correlation Pipeline Flow
+
+```
+Collectors (Mist, VeloCloud, DNAC, Arista WLC)
+    │
+    ▼
+WorkerDaemon._collect_all()
+    │
+    ▼
+insert_events(all_events)            ← persists to Postgres
+    │
+    ▼
+CorrelationEngine.process_events()   ← groups by site + time + severity
+    │
+    ├── upsert_incident(incident)     ← persists to Postgres
+    ├── link_events_to_incident()     ← updates event.incident_id
+    └── redis.publish_incident()      ← real-time notification
+```
+
+### Correlation Engine Details
+
+**File:** `backend/shared/correlation/engine.py`
+
+**Algorithm (Stage 1):**
+1. Filter events by severity ≥ MAJOR (configurable)
+2. Group by `site_id` + time window (300s default)
+3. Apply rules: min 2 events OR single CRITICAL
+4. Generate incident title: `"{Site} — {Category} issues affecting {N} devices"`
+5. Compute blast radius: affected_sites, affected_devices, affected_clients
+6. Calculate confidence score: `event_count × 0.4 + severity × 0.4 + device_diversity × 0.2`
+
+**Configuration** (`CORRELATION_TIME_WINDOW`, `CORRELATION_MIN_EVENTS` in `.env`):
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `time_window_seconds` | 300 | Max seconds between events to group them |
+| `min_severity` | MAJOR | Minimum event severity for correlation |
+| `min_event_count` | 2 | Minimum events to form an incident |
+| `correlate_single_critical` | true | Single CRITICAL events become incidents |
+
+### Five-Stage Roadmap
+
+| Stage | Status | What It Does |
+|-------|--------|-------------|
+| **Stage 1:** Domain-Aware | ✅ LIVE | Site + time window + severity grouping (current) |
+| **Stage 2:** Infrastructure-Aware | 🔜 Next | Group by shared uplink/controller/topology |
+| **Stage 3:** Path-Aware | 📅 Future | Detect upstream WAN failure, suppress downstream symptoms |
+| **Stage 4:** Blast Radius | 📅 Future | Live-updating affected infra with typed lists |
+| **Stage 5:** Confidence RCA | 📅 Future | Deterministic rules with ranked hypotheses |
+
+### Testing
+
+```bash
+# Run all correlation engine tests
+cd backend && python -m pytest tests/test_correlation_engine.py -v
+
+# 60 tests covering:
+#   - CorrelationEngine.process_events() — 20 tests
+#   - Incident model — 12 tests
+#   - Group/site/time-window rules — 5 tests
+#   - SiteTimeWindowRule — 5 tests
+#   - Confidence score — 5 tests
+#   - Incident title generation — 4 tests
+#   - Event factory helpers — 4 tests
+#   - Pipeline integration — 3 tests
+```
+
+### Frontend
+
+The `/correlation` page now shows:
+- **KPI cards**: Critical, Major, Minor, Active, Total incidents, Avg confidence
+- **Incident list**: Sorted by severity then recency, with severity badge, status badge, blast radius (events/devices/sites), confidence score
+- **Empty state**: When no incidents exist, explains how the engine works
+- **Auto-refresh**: Every 15 seconds
+- **Search + filter**: By text and severity
+- **Deep links**: Each incident links to `/incidents/{id}` detail page
+
+### Next Steps
+
+1. **Stage 2 — Infrastructure-aware correlation**: Instead of just grouping by `site_id`, use topology relationships (e.g., "events on APs sharing the same controller" or "devices behind the same uplink")
+2. **Improve incident title generation**: Add more templates and domain-specific phrasing
+3. **Add SSE endpoint**: Push live incident updates to the frontend via Server-Sent Events instead of polling
+4. **Incident workspace**: Build the full incident detail page with event timeline, probable cause panel, blast radius visualization
+5. **Declarative correlation rules**: Load rules from PostgreSQL instead of hardcoded in Python
+
+---
+
+## 12. Infrastructure Fixes (July 6, 2026)
+
+### Resolved Issues
+
+| Issue | Root Cause | Fix | Files Changed |
+|-------|-----------|-----|---------------|
+| Dockerfile duplicate `development` stage | Two `FROM base AS development` definitions — first was dead code | Removed first duplicate stage | `frontend/Dockerfile` |
+| SWC version mismatch in Docker build | `npm ci` + `npm install --no-save @next/swc-linux-x64-musl` installed latest SWC (15.x) but lockfile pinned Next.js 14.x | Replaced `npm ci` + SWC hack with `npm install` (resolves correct platform binaries on Alpine/musl) | `frontend/Dockerfile` |
+| Corrupted `package-lock.json` | Had `@next/swc-*@15.5.19` but `node_modules/next` was 14.2.35 | Ran `npm install` → Next.js 15.5.19 across lockfile + node_modules | `package-lock.json`, `package.json` |
+| 22 pre-existing TS errors in `integrations/page.tsx` + `integration-config-panel.tsx` | `camelizeKeys<T>(obj: unknown): T` — TypeScript can't infer `T` from return-only position, collapses to `unknown` | Changed to `camelizeKeys<T>(obj: T): T` — `T` now inferred from argument | `frontend/src/lib/api.ts` |
+| Wrong return type on `getIntegrationConfig` | Typed as `IntegrationDetailResponse` but API returns `IntegrationConfigResponse` directly | Changed type to `IntegrationConfigResponse` | `frontend/src/lib/api.ts` |
+| Vitest module not found | `vitest` not in devDependencies despite `api.test.ts` importing it | `npm install -D vitest` | `package.json`, `package-lock.json` |
+| Vitest path alias `@/` not resolved | No vitest config mirroring `tsconfig.json` paths | Created `vitest.config.ts` with `resolve.alias` | `frontend/vitest.config.ts` (NEW) |
+| Worker crash: `ModuleNotFoundError: No module named 'backend'` | `shared/database/redis.py` had bare `from backend.config.settings` without try/except fallback | Added try/except to fall back to `from config.settings` | `backend/shared/database/redis.py`, `backend/db/base.py`, `backend/services/device_service.py`, `backend/services/event_service.py`, `backend/services/incident_service.py`, `backend/run_worker.py` |
+| Removed `ignoreBuildErrors` workaround | Was added as temporary bypass | Removed after fixing all underlying TS errors | `frontend/next.config.js` |
+
+### Test Results
+
+| Suite | Status |
+|-------|--------|
+| `npx tsc --noEmit` (frontend) | ✅ 0 errors |
+| `npx vitest run` (frontend, 7 tests) | ✅ 7 passed |
+| `docker compose up -d --build web` (production build) | ✅ Compiled, types checked, pages generated |
+| `docker compose up -d --build worker` | ✅ Worker starts, no import errors |
+
+### How Docker Changes Work Now
+
+- **Production build** (`docker compose up -d --build web`): Full Next.js production build with type checking. No workarounds.
+- **Development** (`docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d`): Volume mounts sync `frontend/src/` and `backend/*/` for hot-reload. Changes appear instantly.
+- **Port**: Frontend at `http://localhost:3000`, API at `http://localhost:8000`
+
+**End of handoff. The next session should continue with Stage 2 (infrastructure-aware correlation) or Phase 8 (Mist topology collectors).**

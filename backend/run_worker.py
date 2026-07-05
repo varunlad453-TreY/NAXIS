@@ -14,7 +14,10 @@ import sys
 from datetime import datetime, timezone
 from typing import List, Tuple
 
-from backend.config.settings import get_settings
+try:
+    from backend.config.settings import get_settings
+except ImportError:
+    from config.settings import get_settings
 from backend.db.base import init_db
 from backend.services.device_service import device_service
 from backend.services.event_service import event_service

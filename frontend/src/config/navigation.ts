@@ -1,5 +1,6 @@
 import {
   Activity,
+  Brain,
   HelpCircle,
   LayoutDashboard,
   Network,
@@ -40,6 +41,7 @@ export const mainNavigation: NavSection[] = [
   {
     title: "Insights",
     items: [
+      { href: "/correlation", label: "Alerts", icon: Brain, badge: "Live" },
       { href: "/performance", label: "Performance", icon: Activity },
       { href: "/connectivity", label: "Connectivity", icon: Wifi },
       { href: "/clients", label: "Clients", icon: Users },

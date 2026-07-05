@@ -23,13 +23,16 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 from config.settings import get_settings
+from shared.correlation import CorrelationEngine
 from shared.database.client import db
 from shared.database.collector_telemetry import (
     ensure_collector_telemetry_schema,
     record_collector_run,
     record_worker_heartbeat,
 )
-from shared.database.events import insert_events
+from shared.database.events import insert_events, link_events_to_incident
+from shared.database.incidents import upsert_incident
+from shared.database.redis import get_redis_client
 from shared.models.collector_outcome import CollectorOutcome
 from worker.collectors.mist import MistCollector
 from worker.collectors.mist_inventory import MistInventoryCollector
@@ -57,8 +60,9 @@ class WorkerDaemon:
       1. Writes a worker heartbeat (so the UI can show liveness)
       2. Runs each enabled collector and records the outcome in the ledger
       3. Persists normalised events to Postgres
-      4. (TODO) Runs correlation → incidents
-      5. (TODO) Syncs topology
+      4. Runs correlation engine → produces Incidents, persists to DB, links events
+      5. Publishes new incidents to Redis (if enabled)
+      6. (TODO) Syncs topology
     """
 
     def __init__(self):
@@ -71,6 +75,8 @@ class WorkerDaemon:
         self._velocloud = VeloCloudCollector()
         self._arista_wlc = AristaWlcCollector()
         self._last_collected: datetime = datetime.now(timezone.utc) - timedelta(hours=24)
+        self._correlation_engine = CorrelationEngine()
+        self._redis_client = get_redis_client() if _settings.redis_enabled else None
 
     # ------------------------------------------------------------------
     # Pipeline
@@ -103,7 +109,25 @@ class WorkerDaemon:
             await insert_events(all_events)
             logger.info("Persisted %d events to Postgres", len(all_events))
 
-        # TODO: correlate + create incidents
+        # Correlate events into incidents
+        if all_events:
+            incidents = self._correlation_engine.process_events(all_events)
+            if incidents:
+                logger.info(
+                    "Correlation produced %d incident(s) from %d event(s)",
+                    len(incidents),
+                    len(all_events),
+                )
+                for incident in incidents:
+                    await upsert_incident(incident)
+                    await link_events_to_incident(
+                        incident.related_event_ids, incident.incident_id
+                    )
+                    if self._redis_client:
+                        await self._redis_client.publish_incident(
+                            incident.to_db_dict()
+                        )
+
         # TODO: sync topology
 
         logger.debug("Worker pass complete")
