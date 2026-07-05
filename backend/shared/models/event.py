@@ -16,6 +16,7 @@ class EventSource(str, Enum):
     """Vendor sources for events"""
     DNAC = "dnac"
     MIST = "mist"
+    VELOCLOUD = "velocloud"
     ARISTA_SDWAN = "arista_sdwan"
     ARISTA_WLC = "arista_wlc"
     SYSTEM = "system"

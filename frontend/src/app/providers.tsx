@@ -97,7 +97,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     <ThemeContext.Provider
       value={{
         theme: mounted ? theme : "system",
-        resolvedTheme: mounted ? resolvedTheme : getInitialResolvedTheme(),
+        resolvedTheme: mounted ? resolvedTheme : "dark",
         setTheme,
       }}
     >

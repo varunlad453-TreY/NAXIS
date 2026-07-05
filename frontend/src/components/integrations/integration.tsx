@@ -1,30 +1,17 @@
-import { CheckCircle2, Cloud, Radio, Router, ShieldAlert, Wifi, XCircle } from "lucide-react";
+import { CheckCircle2, Cloud, Loader2, Radio, Router, ShieldAlert, Wifi, XCircle } from "lucide-react";
+import type { ComponentType, ReactNode } from "react";
 
-export type IntegrationStatus = "connected" | "disconnected" | "not_configured";
+import type { IntegrationDefinition, IntegrationStatus } from "@/types/integration";
 
-export interface Integration {
-  id: string;
-  name: string;
-  vendor: string;
-  description: string;
-  icon: string;
-  status: IntegrationStatus;
-  lastSync: string | null;
-  eventsLastHour: number;
-  healthScore: number | null;
-}
+export type { IntegrationStatus } from "@/types/integration";
 
-export const INTEGRATIONS: Integration[] = [
+export const INTEGRATION_DEFINITIONS: IntegrationDefinition[] = [
   {
     id: "mist",
     name: "Juniper Mist",
     vendor: "Juniper Networks",
     description: "Wireless APs, sites, clients, and alarms via the Mist REST API.",
     icon: "wifi",
-    status: "not_configured",
-    lastSync: null,
-    eventsLastHour: 0,
-    healthScore: null,
   },
   {
     id: "dnac",
@@ -32,10 +19,6 @@ export const INTEGRATIONS: Integration[] = [
     vendor: "Cisco",
     description: "Wired infrastructure, topology, and assurance events from DNAC.",
     icon: "router",
-    status: "not_configured",
-    lastSync: null,
-    eventsLastHour: 0,
-    healthScore: null,
   },
   {
     id: "velocloud",
@@ -43,10 +26,6 @@ export const INTEGRATIONS: Integration[] = [
     vendor: "Arista / VMware",
     description: "Edge status, link metrics, and tunnel health from VeloCloud Orchestrator.",
     icon: "cloud",
-    status: "not_configured",
-    lastSync: null,
-    eventsLastHour: 0,
-    healthScore: null,
   },
   {
     id: "arista-wlc",
@@ -54,10 +33,6 @@ export const INTEGRATIONS: Integration[] = [
     vendor: "Arista",
     description: "Controller-based wireless telemetry and client events.",
     icon: "radio",
-    status: "not_configured",
-    lastSync: null,
-    eventsLastHour: 0,
-    healthScore: null,
   },
 ];
 
@@ -65,7 +40,7 @@ export const statusConfig: Record<
   IntegrationStatus,
   {
     label: string;
-    icon: React.ComponentType<{ className?: string }>;
+    icon: ComponentType<{ className?: string }>;
     text: string;
     dot: string;
   }
@@ -88,9 +63,21 @@ export const statusConfig: Record<
     text: "text-foreground-subtle",
     dot: "bg-foreground-subtle",
   },
+  testing: {
+    label: "Testing",
+    icon: Loader2,
+    text: "text-info",
+    dot: "bg-info",
+  },
+  error: {
+    label: "Error",
+    icon: XCircle,
+    text: "text-critical",
+    dot: "bg-critical",
+  },
 };
 
-export function getIntegrationIcon(id: string): React.ReactNode {
+export function getIntegrationIcon(id: string): ReactNode {
   const className = "h-5 w-5";
   switch (id) {
     case "mist":
@@ -104,4 +91,8 @@ export function getIntegrationIcon(id: string): React.ReactNode {
     default:
       return <Cloud className={className} />;
   }
+}
+
+export function getIntegrationDefinition(id: string): IntegrationDefinition | undefined {
+  return INTEGRATION_DEFINITIONS.find((integration) => integration.id === id);
 }

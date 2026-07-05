@@ -2,13 +2,13 @@
 """
 Naxis Worker
 
-Background daemon that runs the full telemetry pipeline:
-  - REST API polling  (Mist inventory + events, VeloCloud inventory + metrics + events)
-  - SNMP polling      (interface counters + LLDP/CDP topology discovery)
-  - SNMP trap receiver (push-based, always-on UDP listener)
-  - Syslog receiver   (push-based, always-on UDP+TCP listener)
-  - Topology sync     (builds topology_nodes + topology_edges from all sources)
-  - Correlation       (TODO Phase 6)
+Background daemon that runs the collection, normalization, and correlation
+pipeline. Designed to run as a separate process from the same Docker image
+as the API service.
+
+Every collector run is recorded in the ``collector_run_ledger`` table so the
+UI can show live freshness, staleness, and failure counts.  A worker heartbeat
+is written every cycle.
 
 Entry point:
     python -m worker.main
@@ -19,20 +19,24 @@ import logging
 import os
 import signal
 import sys
-from datetime import datetime, timedelta
+import uuid
+from datetime import datetime, timedelta, timezone
 
 from config.settings import get_settings
 from shared.database.client import db
+from shared.database.collector_telemetry import (
+    ensure_collector_telemetry_schema,
+    record_collector_run,
+    record_worker_heartbeat,
+)
 from shared.database.events import insert_events
+from shared.models.collector_outcome import CollectorOutcome
 from worker.collectors.mist import MistCollector
 from worker.collectors.mist_inventory import MistInventoryCollector
-from worker.collectors.velocloud_inventory import VelocloudInventoryCollector
-from worker.collectors.velocloud_metrics import VelocloudMetricsCollector
-from worker.collectors.velocloud_events import VelocloudEventsCollector
-from worker.collectors.snmp_poller import SnmpPoller
-from worker.collectors.topology_sync import TopologySync
-from worker.receivers.snmp_trap_receiver import SnmpTrapReceiver
-from worker.receivers.syslog_receiver import SyslogReceiver
+from worker.collectors.dnac import DNACCollector
+from worker.collectors.mist_topology import MistTopologyCollector
+from worker.collectors.velocloud import VeloCloudCollector
+from worker.collectors.arista_wlc import AristaWlcCollector
 
 logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO").upper(),
@@ -49,118 +53,186 @@ class WorkerDaemon:
     """
     Main worker daemon.
 
-    Lifecycle:
-      start()        → connect DB, start push receivers, run poll loop
-      run_once()     → one full poll+normalize+topology pass
-      stop()         → signal graceful shutdown
+    Each collection cycle:
+      1. Writes a worker heartbeat (so the UI can show liveness)
+      2. Runs each enabled collector and records the outcome in the ledger
+      3. Persists normalised events to Postgres
+      4. (TODO) Runs correlation → incidents
+      5. (TODO) Syncs topology
     """
 
     def __init__(self):
         self._running = False
-
-        # REST API collectors
+        self._worker_id = f"worker-{uuid.uuid4().hex[:8]}"
         self._mist = MistCollector()
         self._mist_inventory = MistInventoryCollector()
-        self._velocloud_inventory = VelocloudInventoryCollector()
-        self._velocloud_metrics = VelocloudMetricsCollector()
-        self._velocloud_events = VelocloudEventsCollector()
+        self._dnac = DNACCollector()
+        self._mist_topology = MistTopologyCollector()
+        self._velocloud = VeloCloudCollector()
+        self._arista_wlc = AristaWlcCollector()
+        self._last_collected: datetime = datetime.now(timezone.utc) - timedelta(hours=24)
 
-        # SNMP poller (interface counters + LLDP/CDP topology)
-        self._snmp_poller = SnmpPoller()
-
-        # Topology sync (builds topology graph from all inventory sources)
-        self._topology_sync = TopologySync()
-
-        # Push receivers — started once, run permanently alongside the poll loop
-        self._snmp_trap_receiver = SnmpTrapReceiver()
-        self._syslog_receiver = SyslogReceiver()
-
-        self._last_collected: datetime = datetime.utcnow() - timedelta(hours=24)
+    # ------------------------------------------------------------------
+    # Pipeline
+    # ------------------------------------------------------------------
 
     async def run_once(self) -> None:
         """Execute one full pipeline pass."""
-        await self._collect_and_normalize()
-        await self._correlate()
-        await self._sync_topology()
+        logger.debug("Worker pass started")
 
-    async def _collect_and_normalize(self) -> None:
-        """Collect telemetry from all enabled vendors and persist normalized events."""
+        # Collectors
+        outcomes = await self._collect_all()
+
+        # Record heartbeat after collection
+        total_events = sum(o.event_count for o in outcomes)
+        failures = [o for o in outcomes if o.status == "error"]
+        cycle_status = "error" if failures else "success"
+        message = f"{len(outcomes)} collectors, {total_events} events"
+        if failures:
+            message += f", {len(failures)} failed"
+
+        await record_worker_heartbeat(self._worker_id, cycle_status, message)
+
+        # Persist events
+        all_events = []
+        for outcome in outcomes:
+            if outcome.events:
+                all_events.extend(outcome.events)
+
+        if all_events:
+            await insert_events(all_events)
+            logger.info("Persisted %d events to Postgres", len(all_events))
+
+        # TODO: correlate + create incidents
+        # TODO: sync topology
+
+        logger.debug("Worker pass complete")
+
+    async def _collect_all(self) -> list[CollectorOutcome]:
+        """Run each collector and record outcomes to the telemetry ledger."""
         since = self._last_collected
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
+        outcomes: list[CollectorOutcome] = []
 
-        # Mist events (alarms + audit logs)
-        mist_events = await self._mist.collect(since=since)
-        if mist_events:
-            await insert_events(mist_events)
-            logger.info("Mist events: persisted %d", len(mist_events))
+        # Mist events
+        mist_outcome = await self._run_collector(self._mist, since)
+        outcomes.append(mist_outcome)
 
-        # Mist inventory (APs, sites, live stats)
-        await self._mist_inventory.collect()
+        # Mist inventory
+        inv_outcome = await self._run_collector_inventory(self._mist_inventory)
+        outcomes.append(inv_outcome)
 
-        # VeloCloud inventory (edges + site info)
-        await self._velocloud_inventory.collect()
+        # DNAC sub-collectors (devices, alarms, topology, clients, interfaces)
+        if self._dnac.is_configured:
+            try:
+                dnac_outcomes = await self._dnac.collect_all()
+                for o in dnac_outcomes:
+                    try:
+                        await record_collector_run(o)
+                    except Exception:
+                        logger.exception("Failed to record DNAC run for %s", o.collector_id)
+                outcomes.extend(dnac_outcomes)
+            except Exception:
+                logger.exception("DNAC collection failed")
 
-        # VeloCloud link metrics (latency, jitter, loss, VeloBrain score)
-        await self._velocloud_metrics.collect()
+        # Mist topology sub-collectors (AP history, RF, client topology, wired uplinks, radio neighbors)
+        if self._mist_topology.is_configured:
+            try:
+                topo_outcomes = await self._mist_topology.collect_all()
+                for o in topo_outcomes:
+                    try:
+                        await record_collector_run(o)
+                    except Exception:
+                        logger.exception("Failed to record Mist topology run for %s", o.collector_id)
+                outcomes.extend(topo_outcomes)
+            except Exception:
+                logger.exception("Mist topology collection failed")
 
-        # VeloCloud events (edge state changes, HA failovers, config changes)
-        velo_events = await self._velocloud_events.collect(since=since)
-        if velo_events:
-            await insert_events(velo_events)
-            logger.info("VeloCloud events: persisted %d", len(velo_events))
+        # VeloCloud SD-WAN sub-collectors (edges, links, tunnels, events, apps)
+        if self._velocloud.is_configured:
+            try:
+                vc_outcomes = await self._velocloud.collect_all()
+                for o in vc_outcomes:
+                    try:
+                        await record_collector_run(o)
+                    except Exception:
+                        logger.exception("Failed to record VeloCloud run for %s", o.collector_id)
+                outcomes.extend(vc_outcomes)
+            except Exception:
+                logger.exception("VeloCloud collection failed")
 
-        # SNMP interface polls (generates events only on state transitions)
-        snmp_events = await self._snmp_poller.collect()
-        if snmp_events:
-            await insert_events(snmp_events)
-            logger.info("SNMP poll events: persisted %d", len(snmp_events))
+        # Arista WLC sub-collectors (clients, APs, radios, events)
+        if self._arista_wlc.is_configured:
+            try:
+                awlc_outcomes = await self._arista_wlc.collect_all()
+                for o in awlc_outcomes:
+                    try:
+                        await record_collector_run(o)
+                    except Exception:
+                        logger.exception("Failed to record Arista WLC run for %s", o.collector_id)
+                outcomes.extend(awlc_outcomes)
+            except Exception:
+                logger.exception("Arista WLC collection failed")
 
         self._last_collected = now
+        return outcomes
 
-    async def _correlate(self) -> None:
-        """Read recent unprocessed events, run correlation, write incidents."""
-        # TODO Phase 6: implement correlation against Postgres
-        pass
+    async def _run_collector(self, collector, since) -> CollectorOutcome:
+        """Run a single collector, record its outcome, and return it."""
+        outcome = await collector.collect(since=since)
+        try:
+            await record_collector_run(outcome)
+        except Exception:
+            logger.exception("Failed to record collector run for %s", outcome.collector_id)
+        return outcome
 
-    async def _sync_topology(self) -> None:
-        """Sync topology_nodes + topology_edges from all vendor data."""
-        await self._topology_sync.sync()
+    async def _run_collector_inventory(self, collector) -> CollectorOutcome:
+        """Run the inventory collector (different signature — no `since`)."""
+        outcome = await collector.collect()
+        try:
+            await record_collector_run(outcome)
+        except Exception:
+            logger.exception("Failed to record collector run for %s", outcome.collector_id)
+        return outcome
+
+    # ------------------------------------------------------------------
+    # Lifecycle
+    # ------------------------------------------------------------------
 
     async def start(self) -> None:
         self._running = True
-
         logger.info("=" * 60)
         logger.info("Naxis Worker starting")
-        logger.info("  Collector interval : %ds", COLLECTOR_INTERVAL)
-        logger.info("  Mist enabled       : %s", _settings.mist_enabled)
-        logger.info("  VeloCloud enabled  : %s", _settings.velocloud_enabled)
-        logger.info("  SNMP polling       : %s (targets: %d)",
-                    _settings.snmp_enabled, len(_settings.snmp_targets_list))
-        logger.info("  SNMP trap receiver : %s (port %d)",
-                    _settings.snmp_trap_enabled, _settings.snmp_trap_port)
-        logger.info("  Syslog receiver    : %s (UDP %d / TCP %d)",
-                    _settings.syslog_enabled, _settings.syslog_udp_port, _settings.syslog_tcp_port)
+        logger.info("  Worker ID:          %s", self._worker_id)
+        logger.info("  Collector interval: %ds", COLLECTOR_INTERVAL)
+        logger.info("  Mist enabled:       %s", _settings.mist_enabled)
+        logger.info("  DNAC enabled:       %s", _settings.dnac_enabled)
+        logger.info("  Mist topology:      %s", self._mist_topology.is_configured)
+        logger.info("  VeloCloud enabled:  %s", self._velocloud.is_configured)
+        logger.info("  Arista WLC enabled: %s", self._arista_wlc.is_configured)
         logger.info("=" * 60)
 
         await db.connect()
-
-        # Start push receivers (they run continuously in the background)
-        await self._snmp_trap_receiver.start()
-        await self._syslog_receiver.start()
-
         try:
+            await ensure_collector_telemetry_schema()
+            logger.info("Telemetry schema ensured")
+
             while self._running:
                 try:
                     await self.run_once()
                 except Exception:
                     logger.exception("Worker pass failed — will retry next interval")
+                    try:
+                        await record_worker_heartbeat(
+                            self._worker_id, "error", "Worker pass exception"
+                        )
+                    except Exception:
+                        logger.exception("Failed to record error heartbeat")
 
                 await asyncio.sleep(COLLECTOR_INTERVAL)
         finally:
-            await self._snmp_trap_receiver.stop()
-            await self._syslog_receiver.stop()
             await db.disconnect()
-            logger.info("Worker shut down cleanly")
+            logger.info("Worker DB pool closed")
 
     def stop(self) -> None:
         logger.info("Worker shutting down...")

@@ -7,6 +7,30 @@ WORKDIR /app
 
 COPY package.json package-lock.json* ./
 RUN npm ci
+# On Alpine (musl) the glibc SWC binary will crash. Remove it so Next.js
+# falls back to the musl variant that we install explicitly.
+RUN rm -rf node_modules/@next/swc-linux-x64-gnu && \
+    npm install --no-save @next/swc-linux-x64-musl
+
+# Development
+FROM base AS development
+RUN apk add --no-cache libc6-compat
+WORKDIR /app
+
+COPY package.json package-lock.json* ./
+RUN npm ci
+RUN rm -rf node_modules/@next/swc-linux-x64-gnu && \
+    npm install --no-save @next/swc-linux-x64-musl
+
+COPY . .
+
+ENV NODE_ENV=development
+ENV PORT=3000
+ENV HOSTNAME=0.0.0.0
+
+EXPOSE 3000
+
+CMD ["npm", "run", "dev"]
 
 # Development
 FROM base AS development

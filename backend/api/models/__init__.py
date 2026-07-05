@@ -10,10 +10,24 @@ from .incident_models import (
     IncidentListResponse,
     IncidentSummary,
 )
+from .integration_models import (
+    IntegrationActionResponse,
+    IntegrationCollectorSummary,
+    IntegrationConfigResponse,
+    IntegrationDetailResponse,
+    IntegrationListResponse,
+    IntegrationSummary,
+)
 
 __all__ = [
     "HealthResponse",
     "IncidentDetail",
     "IncidentListResponse",
     "IncidentSummary",
+    "IntegrationActionResponse",
+    "IntegrationCollectorSummary",
+    "IntegrationConfigResponse",
+    "IntegrationDetailResponse",
+    "IntegrationListResponse",
+    "IntegrationSummary",
 ]

@@ -1,14 +1,16 @@
-.PHONY: help setup build up down logs clean rebuild test init-db
+.PHONY: help setup build up dev down logs clean rebuild ollama test init-db
 
 help:
 	@echo "Naxis Development Commands:"
 	@echo "  make setup     - Create .env file from .env.example"
 	@echo "  make build     - Build the backend Docker image"
 	@echo "  make up        - Start all services"
+	@echo "  make dev       - Start the full dev stack with hot reload"
 	@echo "  make down      - Stop all services"
 	@echo "  make logs      - View logs (all services)"
 	@echo "  make clean     - Remove all containers and volumes"
 	@echo "  make rebuild   - Rebuild and restart services"
+	@echo "  make ollama    - Pull Llama 3.1 8B model"
 	@echo "  make test      - Run all tests"
 	@echo "  make init-db   - Manually re-run database schema (auto on first start)"
 
@@ -24,11 +26,14 @@ build:
 	docker compose build
 
 up:
-	docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+	docker compose --env-file config/.env -f docker-compose.yml -f docker-compose.dev.yml up -d
 	@echo "Services starting... Check logs with: make logs"
 	@echo "API:      http://localhost:8000"
 	@echo "Frontend: http://localhost:3000"
 	@echo "Adminer:  http://localhost:8080"
+
+dev:
+	docker compose --env-file config/.env -f docker-compose.yml -f docker-compose.dev.yml up --build
 
 down:
 	docker compose down
@@ -44,6 +49,11 @@ rebuild:
 	docker compose down
 	docker compose build --no-cache
 	docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+
+ollama:
+	@echo "Pulling Llama 3.1 8B model..."
+	docker compose exec ollama ollama pull llama3.1:8b
+	@echo "Model ready!"
 
 test:
 	@echo "Running backend tests..."

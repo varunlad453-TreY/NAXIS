@@ -39,7 +39,6 @@ class Settings(BaseSettings):
         default="http://localhost:3000,http://localhost:8000",
         description="Comma-separated allowed CORS origins",
     )
-    api_key: str = Field(default="", description="API key required in X-API-Key header")
 
     # PostgreSQL
     postgres_host: str = Field(default="localhost", description="PostgreSQL host")
@@ -53,42 +52,37 @@ class Settings(BaseSettings):
     redis_enabled: bool = Field(default=False, description="Enable Redis pub/sub")
     redis_max_connections: int = Field(default=10, description="Redis connection pool size")
 
+    # Ollama
+    ollama_base_url: str = Field(default="http://localhost:11434", description="Ollama API URL")
+    ollama_model: str = Field(default="llama3.1:8b", description="Ollama model name")
+
     # Juniper Mist
     mist_api_key: str = Field(default="", description="Mist API token")
     mist_org_id: str = Field(default="", description="Mist organization UUID")
     mist_base_url: str = Field(default="https://api.mist.com", description="Mist API base URL")
     mist_enabled: bool = Field(default=False, description="Enable Mist collector")
 
-    # VeloCloud (Arista SD-WAN)
-    velocloud_url: str = Field(default="", description="VeloCloud Orchestrator URL")
-    velocloud_api_key: str = Field(default="", description="VeloCloud API key / JWT token")
-    velocloud_enabled: bool = Field(default=False, description="Enable VeloCloud collector")
+    # Cisco DNA Center
+    dnac_host: str = Field(default="", description="DNAC base host")
+    dnac_username: str = Field(default="", description="DNAC username")
+    dnac_password: str = Field(default="", description="DNAC password")
+    dnac_enabled: bool = Field(default=False, description="Enable DNAC integration")
+    dnac_verify_ssl: bool = Field(default=True, description="Verify SSL for DNAC requests")
+
+    # VeloCloud
+    velocloud_url: str = Field(default="", description="VeloCloud orchestrator URL")
+    velocloud_api_key: str = Field(default="", description="VeloCloud API key")
+    velocloud_enabled: bool = Field(default=False, description="Enable VeloCloud integration")
+
+    # Arista WLC
+    arista_wlc_host: str = Field(default="", description="Arista WLC host")
+    arista_wlc_username: str = Field(default="", description="Arista WLC username")
+    arista_wlc_password: str = Field(default="", description="Arista WLC password")
+    arista_wlc_enabled: bool = Field(default=False, description="Enable Arista WLC integration")
+    arista_wlc_verify_ssl: bool = Field(default=True, description="Verify SSL for Arista WLC requests")
 
     # Collectors
     collector_interval: int = Field(default=60, description="Worker collection interval in seconds")
-
-    # SNMP polling
-    snmp_enabled: bool = Field(default=False, description="Enable SNMP poller")
-    snmp_community: str = Field(default="public", description="SNMPv2c community")
-    snmp_port: int = Field(default=161, description="SNMP UDP port")
-    snmp_timeout: int = Field(default=5, description="SNMP request timeout (s)")
-    snmp_retries: int = Field(default=1, description="SNMP request retries")
-    snmp_targets: str = Field(default="", description="Comma-separated SNMP target hosts")
-
-    # SNMP trap receiver
-    snmp_trap_enabled: bool = Field(default=False, description="Enable SNMP trap receiver")
-    snmp_trap_host: str = Field(default="0.0.0.0", description="SNMP trap bind host")
-    snmp_trap_port: int = Field(default=162, description="SNMP trap UDP port")
-
-    # Syslog receiver
-    syslog_enabled: bool = Field(default=False, description="Enable syslog receiver")
-    syslog_host: str = Field(default="0.0.0.0", description="Syslog bind host")
-    syslog_udp_port: int = Field(default=514, description="Syslog UDP port")
-    syslog_tcp_port: int = Field(default=1514, description="Syslog TCP port")
-
-    @property
-    def snmp_targets_list(self) -> List[str]:
-        return [t.strip() for t in self.snmp_targets.split(",") if t.strip()]
 
     # Correlation
     correlation_time_window: int = Field(default=300, description="Correlation time window in seconds")

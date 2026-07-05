@@ -10,6 +10,12 @@ import type {
 } from "@/types/incident";
 import type { EventListResponse, EventFilterParams } from "@/types/event";
 import type { DeviceListResponse, DeviceFilterParams } from "@/types/device";
+import type {
+  IntegrationListResponse,
+  IntegrationDetailResponse,
+  IntegrationActionResponse,
+  TelemetryAlertsResponse,
+} from "@/types/integration";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 const API_KEY = process.env.NEXT_PUBLIC_API_KEY || "";
@@ -52,6 +58,20 @@ async function fetchAPI<T>(endpoint: string, options?: RequestInit): Promise<T> 
     if (error instanceof APIError) throw error;
     throw new APIError("Network error", 0, error);
   }
+}
+
+function toCamelCase(str: string): string {
+  return str.replace(/([-_][a-z])/g, (g) => g.toUpperCase().replace(/[-_]/g, ""));
+}
+
+function camelizeKeys<T>(obj: unknown): T {
+  if (Array.isArray(obj)) return obj.map((v) => camelizeKeys(v)) as T;
+  if (obj !== null && typeof obj === "object") {
+    return Object.fromEntries(
+      Object.entries(obj).map(([k, v]) => [toCamelCase(k), camelizeKeys(v)])
+    ) as T;
+  }
+  return obj as T;
 }
 
 export const api = {
@@ -200,6 +220,32 @@ export const api = {
     q.set("limit", "1000");
     return `${API_BASE}/mist/sle/anomalies.csv?${q.toString()}`;
   },
+
+  listIntegrations: () =>
+    fetchAPI<IntegrationListResponse>("/integrations").then((r) => camelizeKeys(r)),
+
+  getIntegration: (id: string) =>
+    fetchAPI<IntegrationDetailResponse>(`/integrations/${encodeURIComponent(id)}`).then((r) =>
+      camelizeKeys(r)
+    ),
+
+  testIntegration: (id: string) =>
+    fetchAPI<IntegrationActionResponse>(`/integrations/${encodeURIComponent(id)}/test`, {
+      method: "POST",
+    }).then((r) => camelizeKeys(r)),
+
+  syncIntegration: (id: string) =>
+    fetchAPI<IntegrationActionResponse>(`/integrations/${encodeURIComponent(id)}/sync`, {
+      method: "POST",
+    }).then((r) => camelizeKeys(r)),
+
+  getIntegrationConfig: (id: string) =>
+    fetchAPI<IntegrationDetailResponse>(`/integrations/${encodeURIComponent(id)}/config`).then(
+      (r) => camelizeKeys(r)
+    ),
+
+  listTelemetryAlerts: () =>
+    fetchAPI<TelemetryAlertsResponse>("/telemetry/alerts").then((r) => camelizeKeys(r)),
 };
 
 export type MistLifecycleEvent =

@@ -15,7 +15,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy entire backend monolith
 COPY backend /app/backend
 
-CMD ["python", "-u", "backend/worker.py"]
+CMD ["python", "-u", "backend/run_worker.py"]
 
 # Production stage
 FROM python:3.11-slim AS production
@@ -33,4 +33,4 @@ COPY backend /app/backend
 RUN useradd -m -u 1000 naxis && chown -R naxis:naxis /app
 USER naxis
 
-CMD ["python", "-u", "backend/worker.py"]
+CMD ["python", "-u", "backend/run_worker.py"]

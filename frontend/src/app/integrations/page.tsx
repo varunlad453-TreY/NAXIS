@@ -1,92 +1,150 @@
 "use client";
 
 import { useState } from "react";
-import { ExternalLink, Settings2 } from "lucide-react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { AlertCircle, RefreshCw } from "lucide-react";
+
+import { api } from "@/lib/api";
 import {
-  INTEGRATIONS,
-  IntegrationStats,
+  AlertBannerGroup,
+  CollectorSection,
+  IntegrationConfigPanel,
   IntegrationRow,
-  type Integration,
+  IntegrationStats,
+  type IntegrationActionResponse,
 } from "@/components/integrations";
 
 export default function IntegrationsPage() {
-  const [integrations, setIntegrations] = useState<Integration[]>(INTEGRATIONS);
-  const [isTesting, setIsTesting] = useState<string | null>(null);
+  const queryClient = useQueryClient();
+  const [openConfigId, setOpenConfigId] = useState<string | null>(null);
+  const [expandedCollectorsId, setExpandedCollectorsId] = useState<string | null>(null);
+  const [testingId, setTestingId] = useState<string | null>(null);
+  const [syncingId, setSyncingId] = useState<string | null>(null);
 
-  const handleTest = async (id: string) => {
-    setIsTesting(id);
-    await new Promise((resolve) => setTimeout(resolve, 1200));
-    setIntegrations((prev) =>
-      prev.map((item) =>
-        item.id === id
-          ? {
-              ...item,
-              status: item.status === "connected" ? "disconnected" : "connected",
-              lastSync: item.status !== "connected" ? new Date().toISOString() : null,
-              eventsLastHour: item.status !== "connected" ? 12 : 0,
-              healthScore: item.status !== "connected" ? 92 : null,
-            }
-          : item
-      )
-    );
-    setIsTesting(null);
+  const { data, isLoading, error, isFetching } = useQuery({
+    queryKey: ["integrations"],
+    queryFn: () => api.listIntegrations(),
+    refetchInterval: 30000,
+    retry: false,
+  });
+
+  const { data: telemetryAlerts } = useQuery({
+    queryKey: ["telemetry-alerts"],
+    queryFn: () => api.listTelemetryAlerts(),
+    refetchInterval: 30000,
+    retry: false,
+  });
+
+  const integrations = data?.integrations ?? [];
+
+  const refreshIntegrations = async () => {
+    await queryClient.invalidateQueries({ queryKey: ["integrations"] });
+  };
+
+  const handleTest = async (id: string): Promise<IntegrationActionResponse> => {
+    setTestingId(id);
+    try {
+      const result = await api.testIntegration(id);
+      await refreshIntegrations();
+      return result;
+    } finally {
+      setTestingId(null);
+    }
+  };
+
+  const handleSync = async (id: string): Promise<IntegrationActionResponse> => {
+    setSyncingId(id);
+    try {
+      const result = await api.syncIntegration(id);
+      await refreshIntegrations();
+      return result;
+    } finally {
+      setSyncingId(null);
+    }
   };
 
   return (
-    <div className="mx-auto max-w-5xl space-y-8">
-      {/* Header */}
-      <div className="flex flex-col gap-4 border-b border-border/60 pb-6 sm:flex-row sm:items-start sm:justify-between">
-        <div>
-          <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-foreground-subtle">
-            Platform connections
+    <div className="mx-auto max-w-7xl space-y-8">
+      <header className="space-y-4 border-b border-border/50 pb-6">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+          <div className="space-y-2">
+            <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-foreground-subtle">
+              Platform connections
+            </div>
+            <h1 className="text-4xl font-semibold tracking-tight text-foreground">
+              Integrations
+            </h1>
+            <p className="max-w-3xl text-sm leading-6 text-foreground-muted">
+              Live status for each vendor collector, with real connectivity tests, sync actions,
+              and masked configuration details for operators.
+            </p>
           </div>
-          <h1 className="mt-1 text-3xl font-semibold tracking-tight text-foreground">
-            Integrations
-          </h1>
-          <p className="mt-1 text-sm text-foreground-muted">
-            Manage vendor collectors, credentials, and ingestion health.
-          </p>
-        </div>
-        <button className="inline-flex items-center gap-2 text-sm font-medium text-foreground-subtle transition-colors hover:text-foreground">
-          <Settings2 className="h-4 w-4" />
-          Global settings
-        </button>
-      </div>
 
-      {/* Stats */}
-      <IntegrationStats integrations={integrations} />
-
-      {/* Integration list */}
-      <section>
-        <div className="mb-3 hidden text-[10px] font-semibold uppercase tracking-[0.14em] text-foreground-subtle lg:grid lg:grid-cols-12 lg:gap-6">
-          <div className="col-span-4">Source</div>
-          <div className="col-span-2">Status</div>
-          <div className="col-span-2">Last sync</div>
-          <div className="col-span-2">Health</div>
-          <div className="col-span-2 text-right">Actions</div>
+          <div className="flex items-center gap-3 text-sm text-foreground-muted">
+            {isFetching && (
+              <span className="inline-flex items-center gap-2 rounded-full border border-border/60 px-3 py-1.5">
+                <RefreshCw className="h-4 w-4 animate-spin" />
+                Refreshing live status
+              </span>
+            )}
+          </div>
         </div>
 
-        <div className="divide-y divide-border/30">
-          {integrations.map((item) => (
+        <IntegrationStats integrations={integrations} />
+      </header>
+
+      {telemetryAlerts && telemetryAlerts.count > 0 && (
+        <AlertBannerGroup alerts={telemetryAlerts.alerts} />
+      )}
+
+      {isLoading && !data && (
+        <div className="flex items-center gap-2 text-sm text-foreground-muted">
+          <RefreshCw className="h-4 w-4 animate-spin" />
+          Loading integrations...
+        </div>
+      )}
+
+      {error && (
+        <div className="flex items-center gap-2 rounded-2xl border border-critical/30 bg-critical/5 px-4 py-3 text-sm text-critical">
+          <AlertCircle className="h-4 w-4" />
+          {(error as Error).message}
+        </div>
+      )}
+
+      <section className="space-y-0">
+        {integrations.map((item) => (
+          <div key={item.id} className="scroll-mt-24">
             <IntegrationRow
-              key={item.id}
               item={item}
-              isTesting={isTesting === item.id}
+              isTesting={testingId === item.id}
+              isSyncing={syncingId === item.id}
+              isOpen={openConfigId === item.id}
+              isCollectorsOpen={expandedCollectorsId === item.id}
+              onToggleConfigure={(id) => setOpenConfigId((current) => (current === id ? null : id))}
+              onToggleCollectors={(id) => setExpandedCollectorsId((current) => (current === id ? null : id))}
+              onTest={(id) => handleTest(id)}
+              onSync={(id) => handleSync(id)}
+            />
+            <CollectorSection
+              collectors={item.collectors}
+              isOpen={expandedCollectorsId === item.id}
+              integrationId={item.id}
+            />
+            <IntegrationConfigPanel
+              item={item}
+              isOpen={openConfigId === item.id}
+              isTesting={testingId === item.id}
               onTest={handleTest}
             />
-          ))}
-        </div>
+          </div>
+        ))}
       </section>
 
-      {/* Help link */}
-      <div className="flex items-start gap-3 text-sm">
-        <ExternalLink className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
-        <p className="text-foreground-muted">
-          <span className="font-medium text-foreground">Need a custom collector?</span>{" "}
-          New vendor integrations can be added via the worker configuration. See the
-          integration guide for details.
-        </p>
-      </div>
+      {!integrations.length && !isLoading && !error && (
+        <div className="rounded-2xl border border-dashed border-border/60 px-6 py-10 text-sm text-foreground-muted">
+          No integrations are available.
+        </div>
+      )}
     </div>
   );
 }

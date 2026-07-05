@@ -12,32 +12,23 @@ import logging
 from contextlib import asynccontextmanager
 from datetime import datetime
 
-from fastapi import Depends, FastAPI, Security
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.security import APIKeyHeader
-from fastapi.exceptions import HTTPException
 
 from api.routes.devices import router as devices_router
+from api.routes.integrations import router as integrations_router
 from api.routes.events import router as events_router
 from api.routes.incidents import health_router, router as incidents_router
+from api.routes.telemetry import router as telemetry_router
 from api.routes.mist import router as mist_router
 from api.routes.mist_clients import router as mist_clients_router
 from api.routes.mist_sle import router as mist_sle_router
 from api.routes.sdwan_chat import router as sdwan_router
 from config.settings import get_settings
 from shared.database.client import db
+from shared.database.collector_telemetry import ensure_collector_telemetry_schema
 
 _settings = get_settings()
-
-_api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
-
-
-async def _require_api_key(api_key: str = Security(_api_key_header)) -> None:
-    if not _settings.api_key:
-        return
-    if api_key != _settings.api_key:
-        raise HTTPException(status_code=403, detail="Forbidden")
-
 
 logging.basicConfig(
     level=getattr(logging, _settings.log_level.upper(), logging.INFO),
@@ -52,6 +43,11 @@ async def lifespan(app: FastAPI):
     logger.info("=" * 60)
     logger.info("Naxis API starting...")
     await db.connect()
+    try:
+        await ensure_collector_telemetry_schema()
+        logger.info("Telemetry schema ensured")
+    except Exception:
+        logger.warning("Could not ensure telemetry schema (Postgres may be unavailable)")
     logger.info("API Documentation: http://localhost:8000/docs")
     logger.info("=" * 60)
     yield
@@ -72,8 +68,8 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=_settings.api_cors_origins_list,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["Content-Type", "X-API-Key", "Authorization"],
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 
@@ -87,16 +83,16 @@ async def add_process_time_header(request, call_next):
     return response
 
 
-_auth = [Depends(_require_api_key)]
-
 app.include_router(health_router)
-app.include_router(incidents_router, dependencies=_auth)
-app.include_router(events_router, dependencies=_auth)
-app.include_router(devices_router, dependencies=_auth)
-app.include_router(mist_router, dependencies=_auth)
-app.include_router(mist_clients_router, dependencies=_auth)
-app.include_router(mist_sle_router, dependencies=_auth)
-app.include_router(sdwan_router, dependencies=_auth)
+app.include_router(incidents_router)
+app.include_router(events_router)
+app.include_router(devices_router)
+app.include_router(integrations_router)
+app.include_router(telemetry_router)
+app.include_router(mist_router)
+app.include_router(mist_clients_router)
+app.include_router(mist_sle_router)
+app.include_router(sdwan_router)
 
 
 @app.get("/", include_in_schema=False)

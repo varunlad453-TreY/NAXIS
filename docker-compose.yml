@@ -2,6 +2,8 @@ services:
   postgres:
     image: postgres:16-alpine
     container_name: naxis-postgres
+    ports:
+      - "${POSTGRES_HOST_PORT:-5432}:5432"
     environment:
       POSTGRES_DB: naxis
       POSTGRES_USER: naxis
@@ -21,11 +23,12 @@ services:
   redis:
     image: redis:7-alpine
     container_name: naxis-redis
-    command: redis-server --requirepass "${REDIS_PASSWORD}"
+    ports:
+      - "${REDIS_HOST_PORT:-6379}:6379"
     volumes:
       - redis_data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      test: ["CMD", "redis-cli", "ping"]
       interval: 10s
       timeout: 5s
       retries: 3
@@ -38,10 +41,10 @@ services:
       context: .
       dockerfile: backend/Dockerfile
       target: production
-    image: naxis-backend
+    image: naxis-worker
     container_name: naxis-worker
     command: python -u -m worker.main
-    env_file: .env
+    env_file: config/.env
     environment:
       SERVICE_NAME: naxis-worker
       LOG_LEVEL: INFO
@@ -60,12 +63,12 @@ services:
           memory: 1G
 
   api:
-    image: naxis-backend
+    image: naxis-api
     container_name: naxis-api
     command: uvicorn main:app --host 0.0.0.0 --port 8000 --workers 2
     ports:
-      - "8000:8000"
-    env_file: .env
+      - "${API_HOST_PORT:-8000}:8000"
+    env_file: config/.env
     environment:
       SERVICE_NAME: naxis-api
       LOG_LEVEL: INFO
@@ -92,15 +95,11 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
-      args:
-        NEXT_PUBLIC_API_URL: http://localhost:8000
-        NEXT_PUBLIC_API_KEY: 14fc7a8b6c6b608652192b2f68cc1dfa12a3bfe559651c0fe9092843c3c9573f
     container_name: naxis-web
     ports:
-      - "3000:3000"
+      - "${WEB_HOST_PORT:-3000}:3000"
     environment:
-      NEXT_PUBLIC_API_URL: http://localhost:8000
-      NEXT_PUBLIC_API_KEY: 14fc7a8b6c6b608652192b2f68cc1dfa12a3bfe559651c0fe9092843c3c9573f
+      NEXT_PUBLIC_API_URL: http://localhost:${API_HOST_PORT:-8000}
     depends_on:
       api:
         condition: service_healthy

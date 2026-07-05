@@ -23,6 +23,7 @@ from .incident import (
     IncidentStatus,
     IncidentQuery,
 )
+from .collector_outcome import CollectorOutcome
 
 __all__ = [
     # Event enums
@@ -44,4 +45,6 @@ __all__ = [
     # Incident models
     "Incident",
     "IncidentQuery",
+    # Collector outcome
+    "CollectorOutcome",
 ]

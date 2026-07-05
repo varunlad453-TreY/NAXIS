@@ -1,5 +1,3 @@
-version: '3.8'
-
 # Development overrides for hot-reload and debugging
 services:
   worker:
@@ -21,7 +19,7 @@ services:
       context: .
       dockerfile: backend/Dockerfile
       target: development
-    image: naxis-backend
+    image: naxis-api
     volumes:
       - ./backend/shared:/app/shared:ro
       - ./backend/api:/app/api:ro
@@ -29,7 +27,7 @@ services:
     environment:
       LOG_LEVEL: DEBUG
       PYTHONUNBUFFERED: "1"
-    command: uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/api
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app
 
   web:
     build:
