@@ -13,6 +13,9 @@ from fastapi.exceptions import HTTPException
 from api.routes.devices import router as devices_router
 from api.routes.events import router as events_router
 from api.routes.incidents import health_router, router as incidents_router
+from api.routes.mist import router as mist_router
+from api.routes.mist_clients import router as mist_clients_router
+from api.routes.mist_sle import router as mist_sle_router
 from api.routes.sdwan_chat import router as sdwan_router
 from config.settings import get_settings
 from shared.database.client import db
@@ -82,6 +85,9 @@ app.include_router(health_router)
 app.include_router(incidents_router, dependencies=_auth)
 app.include_router(events_router, dependencies=_auth)
 app.include_router(devices_router, dependencies=_auth)
+app.include_router(mist_router, dependencies=_auth)
+app.include_router(mist_clients_router, dependencies=_auth)
+app.include_router(mist_sle_router, dependencies=_auth)
 app.include_router(sdwan_router, dependencies=_auth)
 
 

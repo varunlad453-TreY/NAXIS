@@ -12,6 +12,7 @@ import type { EventListResponse, EventFilterParams } from "@/types/event";
 import type { DeviceListResponse, DeviceFilterParams } from "@/types/device";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API_KEY = process.env.NEXT_PUBLIC_API_KEY || "";
 
 class APIError extends Error {
   constructor(
@@ -32,6 +33,7 @@ async function fetchAPI<T>(endpoint: string, options?: RequestInit): Promise<T> 
       ...options,
       headers: {
         "Content-Type": "application/json",
+        ...(API_KEY ? { "X-API-Key": API_KEY } : {}),
         ...options?.headers,
       },
     });

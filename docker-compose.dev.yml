@@ -41,6 +41,8 @@ services:
       - ./frontend/public:/app/public:ro
     environment:
       NODE_ENV: development
+      NEXT_PUBLIC_API_URL: http://localhost:8000
+      NEXT_PUBLIC_API_KEY: 14fc7a8b6c6b608652192b2f68cc1dfa12a3bfe559651c0fe9092843c3c9573f
     command: npm run dev
 
   # Adminer for browsing Postgres
