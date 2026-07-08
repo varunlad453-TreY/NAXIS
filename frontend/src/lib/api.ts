@@ -17,6 +17,12 @@ import type {
   IntegrationActionResponse,
   TelemetryAlertsResponse,
 } from "@/types/integration";
+import type {
+  TopologyGraphResponse,
+  TopologySummaryResponse,
+  TopologyNodeDetail,
+  BlastRadiusResponse,
+} from "@/types/topology";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 const API_KEY = process.env.NEXT_PUBLIC_API_KEY || "";
@@ -247,6 +253,34 @@ export const api = {
 
   listTelemetryAlerts: () =>
     fetchAPI<TelemetryAlertsResponse>("/telemetry/alerts").then((r) => camelizeKeys(r)),
+
+  /**
+   * Get full topology graph
+   */
+  getTopology: (params?: { site_id?: string; node_type?: string }) => {
+    const searchParams = new URLSearchParams();
+    if (params?.site_id) searchParams.set("site_id", params.site_id);
+    if (params?.node_type) searchParams.set("node_type", params.node_type);
+    const query = searchParams.toString();
+    return fetchAPI<TopologyGraphResponse>(`/topology${query ? `?${query}` : ""}`);
+  },
+
+  /**
+   * Get topology summary
+   */
+  getTopologySummary: () => fetchAPI<TopologySummaryResponse>("/topology/summary"),
+
+  /**
+   * Get single topology node with neighbours
+   */
+  getTopologyNode: (nodeId: string) =>
+    fetchAPI<TopologyNodeDetail>(`/topology/nodes/${encodeURIComponent(nodeId)}`),
+
+  /**
+   * Get blast radius subgraph for an incident
+   */
+  getBlastRadius: (incidentId: string) =>
+    fetchAPI<BlastRadiusResponse>(`/topology/blast-radius/${encodeURIComponent(incidentId)}`),
 };
 
 export type MistLifecycleEvent =

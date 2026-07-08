@@ -33,6 +33,7 @@ class Settings(BaseSettings):
     )
 
     # API
+    api_key: str = Field(default="", description="API key for authentication (empty = no auth)")
     api_host: str = Field(default="0.0.0.0", description="API bind host")
     api_port: int = Field(default=8000, description="API bind port")
     api_cors_origins: str = Field(
@@ -87,6 +88,9 @@ class Settings(BaseSettings):
     # Correlation
     correlation_time_window: int = Field(default=300, description="Correlation time window in seconds")
     correlation_min_events: int = Field(default=2, description="Minimum events to form an incident")
+    correlation_topology_cascade: bool = Field(
+        default=True, description="Enable Stage 2 infrastructure-aware topology cascade"
+    )
 
     @property
     def postgres_url(self) -> str:

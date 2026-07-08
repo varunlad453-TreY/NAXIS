@@ -9,6 +9,7 @@ services:
       - ./backend/shared:/app/shared:ro
       - ./backend/worker:/app/worker:ro
       - ./backend/api:/app/api:ro
+      - ./backend/config:/app/config:ro
     environment:
       LOG_LEVEL: DEBUG
       PYTHONUNBUFFERED: "1"
@@ -24,6 +25,8 @@ services:
       - ./backend/shared:/app/shared:ro
       - ./backend/api:/app/api:ro
       - ./backend/worker:/app/worker:ro
+      - ./backend/main.py:/app/main.py:ro
+      - ./backend/config:/app/config:ro
     environment:
       LOG_LEVEL: DEBUG
       PYTHONUNBUFFERED: "1"

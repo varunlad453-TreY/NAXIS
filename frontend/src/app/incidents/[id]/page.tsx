@@ -1,8 +1,8 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import {
   ArrowLeft,
   Clock,
@@ -16,6 +16,7 @@ import {
   Shield,
   HelpCircle,
   AlertTriangle,
+  Network,
 } from "lucide-react";
 import Link from "next/link";
 import { api } from "@/lib/api";
@@ -99,6 +100,7 @@ function buildImpactNarrative(incident: {
 
 export default function IncidentDetailPage() {
   const params = useParams();
+  const router = useRouter();
   const incidentId = params.id as string;
 
   const { data: incident, isLoading, error } = useQuery({
@@ -115,6 +117,13 @@ export default function IncidentDetailPage() {
 
   const impact = useMemo(() => incident ? buildImpactNarrative(incident) : null, [incident]);
   const severityInfo = incident ? SEVERITY_SEVERITY_DESC[incident.severity] ?? null : null;
+
+  const onViewInTopology = useCallback(() => {
+    if (incident?.topology_node_ids && incident.topology_node_ids.length > 0) {
+      const ids = incident.topology_node_ids.join(",");
+      router.push(`/topology?highlight=${encodeURIComponent(ids)}`);
+    }
+  }, [incident, router]);
 
   if (isLoading) {
     return <IncidentDetailSkeleton />;
@@ -329,6 +338,15 @@ export default function IncidentDetailPage() {
                   <ImpactStat icon={<Users className="h-4 w-4" />} label="Clients" value={incident.affected_clients.length} />
                 )}
               </div>
+              {incident.topology_node_ids && incident.topology_node_ids.length > 0 && (
+                <button
+                  onClick={onViewInTopology}
+                  className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-lg border border-primary/30 bg-primary/5 px-4 py-2.5 text-sm font-medium text-primary transition-colors hover:bg-primary/10"
+                >
+                  <Network className="h-4 w-4" />
+                  View in Topology
+                </button>
+              )}
             </section>
 
             {/* Affected Sites */}

@@ -23,7 +23,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 from config.settings import get_settings
-from shared.correlation import CorrelationEngine
+from shared.correlation import CorrelationConfig, CorrelationEngine
 from shared.database.client import db
 from shared.database.collector_telemetry import (
     ensure_collector_telemetry_schema,
@@ -33,6 +33,7 @@ from shared.database.collector_telemetry import (
 from shared.database.events import insert_events, link_events_to_incident
 from shared.database.incidents import upsert_incident
 from shared.database.redis import get_redis_client
+from shared.database.topology import DatabaseTopologyProvider
 from shared.models.collector_outcome import CollectorOutcome
 from worker.collectors.mist import MistCollector
 from worker.collectors.mist_inventory import MistInventoryCollector
@@ -40,6 +41,7 @@ from worker.collectors.dnac import DNACCollector
 from worker.collectors.mist_topology import MistTopologyCollector
 from worker.collectors.velocloud import VeloCloudCollector
 from worker.collectors.arista_wlc import AristaWlcCollector
+from worker.collectors.topology_sync import TopologySync
 
 logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO").upper(),
@@ -74,8 +76,24 @@ class WorkerDaemon:
         self._mist_topology = MistTopologyCollector()
         self._velocloud = VeloCloudCollector()
         self._arista_wlc = AristaWlcCollector()
+        self._topology_sync = TopologySync()
         self._last_collected: datetime = datetime.now(timezone.utc) - timedelta(hours=24)
-        self._correlation_engine = CorrelationEngine()
+
+        # Correlation engine with Stage 2 topology cascade
+        correlation_config = CorrelationConfig(
+            time_window_seconds=_settings.correlation_time_window,
+            min_event_count=_settings.correlation_min_events,
+            topology_cascade_enabled=_settings.correlation_topology_cascade,
+        )
+        topology_provider = (
+            DatabaseTopologyProvider()
+            if _settings.correlation_topology_cascade
+            else None
+        )
+        self._correlation_engine = CorrelationEngine(
+            config=correlation_config,
+            topology_provider=topology_provider,
+        )
         self._redis_client = get_redis_client() if _settings.redis_enabled else None
 
     # ------------------------------------------------------------------
@@ -128,7 +146,11 @@ class WorkerDaemon:
                             incident.to_db_dict()
                         )
 
-        # TODO: sync topology
+        # Sync topology after collection
+        try:
+            await self._topology_sync.sync()
+        except Exception:
+            logger.exception("Topology sync failed — continuing")
 
         logger.debug("Worker pass complete")
 

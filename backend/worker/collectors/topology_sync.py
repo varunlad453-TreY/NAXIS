@@ -72,6 +72,7 @@ class TopologySync:
           - One 'site' node per distinct site_id
           - One 'ap' node per AP device
           - 'site_membership' edge from each AP to its site
+          - 'physical_link' edges from Mist wired uplink data (AP → switch)
         """
         rows = await db.fetch(
             "SELECT device_id, hostname, ip_address, model, site_id, site_name, "
@@ -82,7 +83,7 @@ class TopologySync:
             return
 
         # Collect unique sites
-        sites: Dict[str, str] = {}  # site_id → site_name
+        sites: Dict[str, str] = {}
         for row in rows:
             if row["site_id"]:
                 sites[row["site_id"]] = row["site_name"] or row["site_id"]
@@ -99,8 +100,10 @@ class TopologySync:
             )
 
         # Upsert AP nodes + site_membership edges
+        ap_node_ids: Dict[str, str] = {}
         for row in rows:
             ap_node_id = f"mist-ap-{row['device_id']}"
+            ap_node_ids[row["device_id"]] = ap_node_id
             await _upsert_node(
                 node_id=ap_node_id,
                 node_type="ap",
@@ -126,9 +129,96 @@ class TopologySync:
                     props={"platform": "mist"},
                 )
 
+        # Stage 2: Build physical_link edges from Mist wired uplink data
+        # stored in the events table by MistWiredUplinkCollector.
+        await self._sync_mist_physical_links(ap_node_ids)
+
         logger.info(
             "Mist topology: %d APs, %d sites upserted", len(rows), len(sites)
         )
+
+    async def _sync_mist_physical_links(
+        self, ap_node_ids: Dict[str, str]
+    ) -> None:
+        """
+        Read the most recent Mist wired uplink events from Postgres and
+        create physical_link edges (AP → switch) in topology_edges.
+
+        The MistWiredUplinkCollector writes events with AP MAC and switch
+        MAC in the metadata.  This method queries those events and builds
+        edges so the correlation engine's TopologyCascadeRule can identify
+        parent-child relationships.
+        """
+        try:
+            rows = await db.fetch(
+                """
+                SELECT DISTINCT ON (e.device_id)
+                    e.device_id,
+                    e.metadata->>'mist_switch_mac' AS switch_mac,
+                    e.metadata->>'mist_port_id' AS port_id,
+                    e.site_id
+                FROM events e
+                WHERE e.source = 'mist'
+                  AND e.event_type = 'link_up'
+                  AND e.metadata->>'mist_switch_mac' IS NOT NULL
+                  AND e.metadata->>'mist_switch_mac' != ''
+                ORDER BY e.device_id, e.timestamp DESC
+                """
+            )
+        except Exception:
+            logger.debug("Mist wired uplink events not available (table may be empty)")
+            return
+
+        if not rows:
+            logger.debug("No Mist wired uplink data found in events table")
+            return
+
+        edge_count = 0
+        for row in rows:
+            ap_dev_id = row["device_id"]
+            switch_mac = row["switch_mac"]
+            port_id = row.get("port_id") or ""
+            site_id = row.get("site_id") or ""
+
+            if not ap_dev_id or not switch_mac:
+                continue
+
+            # AP node ID (from inventory)
+            ap_node_id = ap_node_ids.get(ap_dev_id)
+            if not ap_node_id:
+                ap_node_id = f"mist-ap-{ap_dev_id}"
+
+            # Switch node ID (use LLDP-discovered MAC)
+            switch_node_id = f"switch-{switch_mac}"
+            await _upsert_node(
+                node_id=switch_node_id,
+                node_type="switch",
+                name=f"Switch {switch_mac[:8]}...",
+                vendor="mist",
+                site_id=site_id,
+                props={
+                    "discovered_by": "mist_wired_uplink",
+                    "lldp_mac": switch_mac,
+                },
+            )
+
+            await _upsert_edge(
+                src_id=ap_node_id,
+                dst_id=switch_node_id,
+                edge_type="physical_link",
+                props={
+                    "port_id": port_id,
+                    "discovered_by": "mist_wired_uplink",
+                    "platform": "mist",
+                },
+            )
+            edge_count += 1
+
+        if edge_count:
+            logger.info(
+                "Mist physical links: %d AP→switch edges from wired uplink data",
+                edge_count,
+            )
 
     # ── VeloCloud topology ────────────────────────────────────────────────────
 

@@ -64,6 +64,7 @@ class IncidentDetail(BaseModel):
     affected_sites: List[str] = Field(default_factory=list, description="Affected site IDs")
     affected_devices: List[str] = Field(default_factory=list, description="Affected device IDs")
     affected_clients: List[str] = Field(default_factory=list, description="Affected client IDs")
+    topology_node_ids: List[str] = Field(default_factory=list, description="Resolved topology node IDs for affected devices")
 
     # Related events
     related_event_ids: List[str] = Field(default_factory=list, description="Related event IDs")

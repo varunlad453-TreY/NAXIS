@@ -2,12 +2,13 @@
 Correlation Rules
 
 Deterministic rules for grouping UnifiedEvents into Incidents.
-MVP implementation uses simple site+time-window grouping.
+MVP implementation uses simple site+time-window grouping, extended
+with Stage 2 infrastructure-aware topology cascading.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Dict, List, Protocol
+from typing import Dict, List, Optional, Protocol, Set
 
 from ..models.event import EventSeverity, UnifiedEvent
 
@@ -27,6 +28,32 @@ class CorrelationConfig:
 
     # Whether to correlate single high-severity events
     correlate_single_critical: bool = True
+
+    # Stage 2: Infrastructure-aware topology cascade
+    topology_cascade_enabled: bool = True
+
+    # When topology edges aren't available, fall back to device-type heuristics
+    topology_fallback_to_device_type: bool = True
+
+    # Infrastructure device types (potential root causes)
+    infrastructure_device_types: Set[str] = field(
+        default_factory=lambda: {
+            "switch", "router", "wan_edge", "gateway",
+            "controller", "firewall", "core_switch",
+            "distribution_switch", "access_switch",
+        }
+    )
+
+    # Leaf device types (potential symptoms)
+    leaf_device_types: Set[str] = field(
+        default_factory=lambda: {
+            "ap", "access_point", "client", "endpoint",
+            "sensor", "camera", "iot",
+        }
+    )
+
+    # Severity to assign to symptom incidents
+    symptom_severity: str = "info"
 
 
 class CorrelationRule(Protocol):
@@ -248,3 +275,311 @@ def generate_incident_title(events: List[UnifiedEvent]) -> str:
         return f"{location} - {primary_category} issues affecting {device_count} devices"
     else:
         return f"{location} - {primary_category} issue"
+
+
+# ==============================================================================
+# Stage 2: Infrastructure-Aware Topology Cascade
+# ==============================================================================
+
+
+class TopologyProvider(Protocol):
+    """
+    Protocol for topology queries used by TopologyCascadeRule.
+
+    In production this is backed by PostgreSQL (topology_nodes / topology_edges).
+    In tests a mock provider is injected directly.
+    """
+
+    async def get_parent_child_map(
+        self, device_ids: Set[str]
+    ) -> Dict[str, List[str]]:
+        """
+        Given a set of device_ids (from events), return a dict mapping
+        each device_id to its direct children in the topology.
+
+        Example:
+            {"core-switch-01": ["ap-101", "ap-102", "ap-103"]}
+        """
+        ...
+
+    async def get_all_descendants(
+        self, device_id: str, max_depth: int = 5
+    ) -> List[str]:
+        """
+        Return all descendant device_ids reachable from device_id
+        via topology edges (cascade blast radius).
+        """
+        ...
+
+
+@dataclass
+class CascadeGroup:
+    """
+    A topology-aware group of events restructured by TopologyCascadeRule.
+
+    One cascade group represents a single root-cause incident:
+      - root_events: events on the infrastructure device that failed
+      - symptom_events: events on leaf devices that failed as a consequence
+      - root_device_id: the infrastructure device causing the cascade
+    """
+
+    root_events: List[UnifiedEvent]
+    symptom_events: List[UnifiedEvent]
+    root_device_id: str
+
+    @property
+    def total_events(self) -> int:
+        return len(self.root_events) + len(self.symptom_events)
+
+    def all_event_ids(self) -> List[str]:
+        return [e.event_id for e in self.root_events] + [
+            e.event_id for e in self.symptom_events
+        ]
+
+    def all_device_ids(self) -> Set[str]:
+        devices: Set[str] = set()
+        for e in self.root_events:
+            if e.device and e.device.device_id:
+                devices.add(e.device.device_id)
+        for e in self.symptom_events:
+            if e.device and e.device.device_id:
+                devices.add(e.device.device_id)
+        return devices
+
+
+class TopologyCascadeRule:
+    """
+    Infrastructure-aware topology cascade rule (Stage 2).
+
+    Takes events already grouped by site+time (Stage 1) and reorganises
+    them into root-cause + symptom groups based on infrastructure topology.
+
+    Two modes:
+      1. Topology-aware (production): uses TopologyProvider to query the
+         topology graph from PostgreSQL.
+      2. Device-type heuristic (fallback): when topology is unavailable,
+         uses device_type to infer parent-child relationships.
+
+    Flow:
+      For each site+time group:
+        1. Separate events by device_type into "infrastructure" and "leaf"
+        2. If a TopologyProvider is available, query for parent-child edges
+        3. For each infrastructure device with children in the group,
+           create a CascadeGroup (root = infrastructure, symptoms = leaves)
+        4. Leaf devices without an identified parent in the group stay
+           in their original incident
+    """
+
+    def __init__(
+        self,
+        provider: Optional[TopologyProvider] = None,
+        config: Optional[CorrelationConfig] = None,
+    ):
+        self._provider = provider
+        self._config = config or CorrelationConfig()
+
+    async def evaluate(
+        self, group_events: List[UnifiedEvent]
+    ) -> List[CascadeGroup]:
+        """
+        Evaluate a single site+time group and return topology-aware cascade groups.
+
+        Args:
+            group_events: Events already grouped by site+time (Stage 1)
+
+        Returns:
+            List of CascadeGroups. If no topology relationships are found,
+            returns an empty list, and the caller should keep the original group.
+        """
+        if not group_events:
+            return []
+
+        # Separate infrastructure vs leaf events
+        infra_events, leaf_events = self._separate_by_device_type(group_events)
+
+        if not infra_events:
+            return []
+
+        # Try topology-aware mode first
+        if self._provider:
+            cascade_groups = await self._evaluate_with_topology(
+                infra_events, leaf_events, group_events
+            )
+            if cascade_groups:
+                return cascade_groups
+
+        # Fallback: device-type heuristic
+        if self._config.topology_fallback_to_device_type:
+            return self._evaluate_by_device_type(infra_events, leaf_events)
+
+        return []
+
+    async def _evaluate_with_topology(
+        self,
+        infra_events: List[UnifiedEvent],
+        leaf_events: List[UnifiedEvent],
+        all_group_events: List[UnifiedEvent],
+    ) -> List[CascadeGroup]:
+        """Use the topology provider to find parent-child relationships."""
+        if not self._provider:
+            return []
+
+        all_device_ids: Set[str] = set()
+        for e in all_group_events:
+            if e.device and e.device.device_id:
+                all_device_ids.add(e.device.device_id)
+
+        if not all_device_ids:
+            return []
+
+        parent_child_map = await self._provider.get_parent_child_map(
+            all_device_ids
+        )
+
+        if not parent_child_map:
+            return []
+
+        # Group infra events by device_id so all events on the same device
+        # become root_events together
+        from collections import defaultdict
+
+        infra_by_device: Dict[str, List[UnifiedEvent]] = defaultdict(list)
+        for e in infra_events:
+            dev_id = e.device.device_id if e.device else None
+            if dev_id:
+                infra_by_device[dev_id].append(e)
+
+        cascade_groups: List[CascadeGroup] = []
+        used_event_ids: Set[str] = set()
+
+        for infra_dev_id, dev_events in infra_by_device.items():
+            child_device_ids = parent_child_map.get(infra_dev_id, [])
+            if not child_device_ids:
+                continue
+
+            # Build symptom events from leaf events whose device_id
+            # is a child of this infrastructure device
+            symptom_events = []
+            for leaf_event in leaf_events:
+                leaf_dev_id = (
+                    leaf_event.device.device_id if leaf_event.device else None
+                )
+                if leaf_dev_id in child_device_ids:
+                    if leaf_event.event_id not in used_event_ids:
+                        symptom_events.append(leaf_event)
+                        used_event_ids.add(leaf_event.event_id)
+
+            # Also check infra events that might be children
+            for other_infra in infra_events:
+                other_dev_id = (
+                    other_infra.device.device_id if other_infra.device else None
+                )
+                if other_dev_id in child_device_ids:
+                    if other_infra.event_id not in used_event_ids:
+                        symptom_events.append(other_infra)
+                        used_event_ids.add(other_infra.event_id)
+
+            if symptom_events:
+                cascade_groups.append(
+                    CascadeGroup(
+                        root_events=dev_events,
+                        symptom_events=symptom_events,
+                        root_device_id=infra_dev_id,
+                    )
+                )
+                # Mark ALL events on this device as used
+                for e in dev_events:
+                    used_event_ids.add(e.event_id)
+
+        return cascade_groups
+
+    def _evaluate_by_device_type(
+        self,
+        infra_events: List[UnifiedEvent],
+        leaf_events: List[UnifiedEvent],
+    ) -> List[CascadeGroup]:
+        """
+        Fallback: infer parent-child from device_type when topology
+        edges are not available.
+
+        Without topology data, conservatively merge ALL infrastructure events
+        at the same site as root_events and ALL leaf events at that site as
+        symptom_events. This avoids losing events and prevents creating
+        spurious separate incidents for co-located infrastructure failures.
+        """
+        if not infra_events:
+            return []
+
+        from collections import defaultdict
+
+        # Group infra events by site and leaf events by site
+        infra_by_site: Dict[str, List[UnifiedEvent]] = defaultdict(list)
+        for e in infra_events:
+            s = e.device.site_id if e.device and e.device.site_id else ""
+            infra_by_site[s].append(e)
+
+        leaf_by_site: Dict[str, List[UnifiedEvent]] = defaultdict(list)
+        for e in leaf_events:
+            s = e.device.site_id if e.device and e.device.site_id else ""
+            leaf_by_site[s].append(e)
+
+        cascade_groups: List[CascadeGroup] = []
+        used_leaf_ids: Set[str] = set()
+
+        for site_id, site_infra in infra_by_site.items():
+            site_leaves = [
+                e
+                for e in leaf_by_site.get(site_id, [])
+                if e.event_id not in used_leaf_ids
+            ]
+
+            # Collect all unique root device IDs for this site
+            root_device_ids = list(
+                {
+                    e.device.device_id
+                    for e in site_infra
+                    if e.device and e.device.device_id
+                }
+            )
+            if not root_device_ids:
+                continue
+
+            # If there are leaf symptoms at the same site, create a cascade group.
+            # If there are no leaves but we have infra events, also create a group
+            # so the infra events aren't lost.
+            if site_leaves or not leaf_by_site.get(site_id):
+                cascade_groups.append(
+                    CascadeGroup(
+                        root_events=site_infra,
+                        symptom_events=site_leaves,
+                        root_device_id=root_device_ids[0],
+                    )
+                )
+                for e in site_leaves:
+                    used_leaf_ids.add(e.event_id)
+
+        return cascade_groups
+
+    def _separate_by_device_type(
+        self, events: List[UnifiedEvent]
+    ) -> tuple[List[UnifiedEvent], List[UnifiedEvent]]:
+        """
+        Separate events into infrastructure (potential root cause) and
+        leaf (potential symptom) categories based on device_type.
+        """
+        infra: List[UnifiedEvent] = []
+        leaf: List[UnifiedEvent] = []
+
+        for event in events:
+            device_type = (
+                event.device.device_type.lower() if event.device and event.device.device_type else ""
+            )
+            if device_type in self._config.infrastructure_device_types:
+                infra.append(event)
+            elif device_type in self._config.leaf_device_types:
+                leaf.append(event)
+            else:
+                # Unknown type — put in leaf as safe default
+                leaf.append(event)
+
+        return infra, leaf

@@ -3,12 +3,17 @@ Test fixtures for the correlation engine and worker pipeline.
 """
 
 from datetime import datetime, timedelta
-from typing import List
+from typing import Dict, List, Optional, Set
 from uuid import uuid4
 
 import pytest
 
-from backend.shared.correlation import CorrelationConfig
+from backend.shared.correlation import (
+    CascadeGroup,
+    CorrelationConfig,
+    TopologyCascadeRule,
+    TopologyProvider,
+)
 from backend.shared.models.event import (
     ClientInfo,
     DeviceInfo,
@@ -70,8 +75,13 @@ def make_event(
 
 @pytest.fixture
 def default_config() -> CorrelationConfig:
-    """Default correlation configuration for tests."""
-    return CorrelationConfig()
+    """Default correlation configuration for tests.
+    
+    Note: topology_cascade_enabled is False by default in tests so
+    existing Stage 1 tests are not affected. Tests that exercise
+    Stage 2 should use topology_aware_config or set cascade explicitly.
+    """
+    return CorrelationConfig(topology_cascade_enabled=False)
 
 
 @pytest.fixture
@@ -270,6 +280,226 @@ def out_of_window_events(default_config) -> List[UnifiedEvent]:
 
 
 @pytest.fixture
+def topology_aware_config() -> CorrelationConfig:
+    """Configuration with topology cascade enabled but no DB (uses heuristics)."""
+    return CorrelationConfig(
+        topology_cascade_enabled=True,
+        topology_fallback_to_device_type=True,
+    )
+
+
+@pytest.fixture
+def cascade_events_same_site() -> List[UnifiedEvent]:
+    """
+    Fixture: simulate a cascading failure.
+    One infrastructure device (core switch) fails, 3 APs downstream go down.
+
+    Expected: topology cascade should identify core-switch-01 as root cause
+    and the 3 APs as symptoms.
+    """
+    now = datetime.utcnow()
+    return [
+        make_event(
+            event_id="cascade-root-1",
+            severity=EventSeverity.CRITICAL,
+            event_type=EventType.LINK_DOWN,
+            title="Core switch uplink down",
+            device_id="core-switch-01",
+            device_name="naxis-core-01",
+            device_type="switch",
+            site_id="site-sfo-01",
+            site_name="SFO-01",
+            timestamp=now,
+        ),
+        make_event(
+            event_id="cascade-leaf-1",
+            severity=EventSeverity.MAJOR,
+            event_type=EventType.DEVICE_UNREACHABLE,
+            title="AP-101 unreachable",
+            device_id="ap-sfo-101",
+            device_name="ap-101",
+            device_type="ap",
+            site_id="site-sfo-01",
+            site_name="SFO-01",
+            timestamp=now + timedelta(seconds=10),
+        ),
+        make_event(
+            event_id="cascade-leaf-2",
+            severity=EventSeverity.MAJOR,
+            event_type=EventType.DEVICE_UNREACHABLE,
+            title="AP-102 unreachable",
+            device_id="ap-sfo-102",
+            device_name="ap-102",
+            device_type="ap",
+            site_id="site-sfo-01",
+            site_name="SFO-01",
+            timestamp=now + timedelta(seconds=15),
+        ),
+        make_event(
+            event_id="cascade-leaf-3",
+            severity=EventSeverity.MAJOR,
+            event_type=EventType.DEVICE_UNREACHABLE,
+            title="AP-103 unreachable",
+            device_id="ap-sfo-103",
+            device_name="ap-103",
+            device_type="ap",
+            site_id="site-sfo-01",
+            site_name="SFO-01",
+            timestamp=now + timedelta(seconds=20),
+        ),
+    ]
+
+
+@pytest.fixture
+def cascade_events_multi_infra() -> List[UnifiedEvent]:
+    """
+    Fixture: two infrastructure devices at the same site with
+    cascading effects — tests that each infra device gets its own incident.
+    """
+    now = datetime.utcnow()
+    return [
+        make_event(
+            event_id="multi-root-1",
+            severity=EventSeverity.CRITICAL,
+            title="Core switch A down",
+            device_id="core-switch-A",
+            device_name="naxis-core-A",
+            device_type="switch",
+            site_id="site-nyc-01",
+            site_name="NYC-01",
+            timestamp=now,
+        ),
+        make_event(
+            event_id="multi-leaf-a1",
+            severity=EventSeverity.MAJOR,
+            title="AP under switch A unreachable",
+            device_id="ap-nyc-A1",
+            device_name="ap-nyc-A1",
+            device_type="ap",
+            site_id="site-nyc-01",
+            site_name="NYC-01",
+            timestamp=now + timedelta(seconds=5),
+        ),
+        make_event(
+            event_id="multi-leaf-a2",
+            severity=EventSeverity.MAJOR,
+            title="AP under switch A unreachable",
+            device_id="ap-nyc-A2",
+            device_name="ap-nyc-A2",
+            device_type="ap",
+            site_id="site-nyc-01",
+            site_name="NYC-01",
+            timestamp=now + timedelta(seconds=10),
+        ),
+        make_event(
+            event_id="multi-root-2",
+            severity=EventSeverity.CRITICAL,
+            title="WAN edge B down",
+            device_id="edge-nyc-B",
+            device_name="edge-nyc-B",
+            device_type="wan_edge",
+            site_id="site-nyc-01",
+            site_name="NYC-01",
+            timestamp=now + timedelta(seconds=30),
+        ),
+        make_event(
+            event_id="multi-leaf-b1",
+            severity=EventSeverity.MAJOR,
+            title="Site behind WAN edge unreachable",
+            device_id="ap-nyc-B1",
+            device_name="ap-nyc-B1",
+            device_type="ap",
+            site_id="site-nyc-01",
+            site_name="NYC-01",
+            timestamp=now + timedelta(seconds=35),
+        ),
+    ]
+
+
+@pytest.fixture
+def cascade_events_no_infra() -> List[UnifiedEvent]:
+    """
+    Fixture: only leaf devices with events — no infrastructure device.
+    Topology cascade should not trigger and falls back to Stage 1.
+    """
+    now = datetime.utcnow()
+    return [
+        make_event(
+            event_id="leaf-only-1",
+            severity=EventSeverity.CRITICAL,
+            title="AP-1 unreachable",
+            device_id="ap-site-01",
+            device_name="ap-1",
+            device_type="ap",
+            site_id="site-lax-01",
+            site_name="LAX-01",
+            timestamp=now,
+        ),
+        make_event(
+            event_id="leaf-only-2",
+            severity=EventSeverity.MAJOR,
+            title="AP-2 unreachable",
+            device_id="ap-site-02",
+            device_name="ap-2",
+            device_type="ap",
+            site_id="site-lax-01",
+            site_name="LAX-01",
+            timestamp=now + timedelta(seconds=60),
+        ),
+    ]
+
+
+# ==============================================================================
+# Mock Topology Provider for Stage 2 tests
+# ==============================================================================
+
+
+class MockTopologyProvider:
+    """
+    A TopologyProvider seeded with known parent-child relationships
+    for testing the TopologyCascadeRule without a database.
+
+    Example:
+        provider = MockTopologyProvider({
+            "core-switch-01": ["ap-sfo-101", "ap-sfo-102", "ap-sfo-103"],
+            "core-switch-A": ["ap-nyc-A1", "ap-nyc-A2"],
+            "edge-nyc-B": ["ap-nyc-B1"],
+        })
+    """
+
+    def __init__(self, parent_child_map: Dict[str, List[str]] = None):
+        self._map: Dict[str, List[str]] = dict(parent_child_map or {})
+
+    async def get_parent_child_map(
+        self, device_ids: Set[str]
+    ) -> Dict[str, List[str]]:
+        """Return parent→children entries where both parent and at least
+        one child are in the given device_ids."""
+        result: Dict[str, List[str]] = {}
+        for parent, children in self._map.items():
+            matched_children = [c for c in children if c in device_ids]
+            if parent in device_ids and matched_children:
+                result[parent] = matched_children
+        return result
+
+    async def get_all_descendants(
+        self, device_id: str, max_depth: int = 5
+    ) -> List[str]:
+        return list(self._map.get(device_id, []))
+
+
+@pytest.fixture
+def mock_topology_provider() -> MockTopologyProvider:
+    """Mock topology with known infrastructure→leaf relationships."""
+    return MockTopologyProvider({
+        "core-switch-01": ["ap-sfo-101", "ap-sfo-102", "ap-sfo-103"],
+        "core-switch-A": ["ap-nyc-A1", "ap-nyc-A2"],
+        "edge-nyc-B": ["ap-nyc-B1"],
+    })
+
+
+
+@ pytest.fixture
 def events_with_clients(default_config) -> List[UnifiedEvent]:
     """Fixture: events with client information for blast radius testing."""
     now = datetime.utcnow()

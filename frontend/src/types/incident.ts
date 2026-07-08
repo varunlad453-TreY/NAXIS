@@ -27,6 +27,7 @@ export interface IncidentDetail extends IncidentSummary {
   affected_clients: string[];
   related_event_ids: string[];
   probable_cause: string | null;
+  topology_node_ids: string[];
 }
 
 export interface IncidentListResponse {

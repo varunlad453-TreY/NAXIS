@@ -85,3 +85,8 @@ temp/
 
 # Claude Code local settings
 .claude/
+
+# Windows reserved device names
+nul
+NUL
+Nul

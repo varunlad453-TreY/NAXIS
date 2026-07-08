@@ -17,6 +17,7 @@ from api.routes.mist import router as mist_router
 from api.routes.mist_clients import router as mist_clients_router
 from api.routes.mist_sle import router as mist_sle_router
 from api.routes.sdwan_chat import router as sdwan_router
+from api.routes.topology import router as topology_router
 from config.settings import get_settings
 from shared.database.client import db
 
@@ -89,6 +90,7 @@ app.include_router(mist_router, dependencies=_auth)
 app.include_router(mist_clients_router, dependencies=_auth)
 app.include_router(mist_sle_router, dependencies=_auth)
 app.include_router(sdwan_router, dependencies=_auth)
+app.include_router(topology_router, dependencies=_auth)
 
 
 @app.get("/", include_in_schema=False)
