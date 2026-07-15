@@ -1,2 +1,10 @@
 export { TopologyGraph } from "./topology-graph";
-export { buildLayout, NODE_WIDTH, NODE_HEIGHT } from "./layout";
+export { buildLayout, buildGroupedLayout, NODE_WIDTH, NODE_HEIGHT } from "./layout";
+export type { LayoutResult, GroupedLayoutResult } from "./layout";
+export { useTopologyLayout } from "./use-topology-layout";
+export type { UseTopologyLayoutInput, UseTopologyLayoutResult } from "./use-topology-layout";
+export { TopologySidePanel } from "./topology-side-panel";
+export { BlastRadiusPanel } from "./blast-radius-panel";
+export { NodeDetailPanel } from "./node-detail-panel";
+export { HealthHistoryChart } from "./health-history-chart";
+export type { PanelMode } from "./topology-side-panel";

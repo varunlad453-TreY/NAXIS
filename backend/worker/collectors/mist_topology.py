@@ -108,18 +108,19 @@ class MistApHistoryCollector:
         wait=wait_exponential(multiplier=1, min=2, max=10),
         reraise=True,
     )
-    async def collect(self, site_ids: Optional[List[str]] = None) -> CollectorOutcome:
+    async def collect(
+        self,
+        site_ids: List[str],
+        site_devices: Dict[str, List[Dict]],
+    ) -> CollectorOutcome:
         outcome = CollectorOutcome(
             collector_id=self.COLLECTOR_ID,
             source_system=self.SOURCE_SYSTEM,
         )
         try:
-            if site_ids is None:
-                site_ids = await self._fetch_site_ids()
-
             events: List[UnifiedEvent] = []
             for site_id in site_ids:
-                devices = await self._fetch_site_devices(site_id)
+                devices = site_devices.get(site_id, [])
                 for dev in devices:
                     try:
                         event = self._normalize(site_id, dev)
@@ -139,29 +140,6 @@ class MistApHistoryCollector:
             outcome.mark_error(str(exc))
             logger.exception("Mist AP history collection failed")
         return outcome
-
-    async def _fetch_site_ids(self) -> List[str]:
-        try:
-            resp = await self._client.get(
-                f"{self._base_url}/api/v1/orgs/{self._org_id}/sites"
-            )
-            _raise_for_status(resp)
-            return [s["id"] for s in resp.json() if s.get("id")]
-        except Exception:
-            logger.exception("Failed to fetch Mist sites for AP history")
-            return []
-
-    async def _fetch_site_devices(self, site_id: str) -> List[Dict]:
-        try:
-            resp = await self._client.get(
-                f"{self._base_url}/api/v1/sites/{site_id}/stats/devices",
-                params={"limit": _PAGE_LIMIT},
-            )
-            if resp.status_code == 200:
-                return resp.json() if isinstance(resp.json(), list) else []
-        except Exception:
-            logger.debug("Failed to fetch devices for site %s", site_id)
-        return []
 
     def _normalize(self, site_id: str, raw: Dict[str, Any]) -> Optional[UnifiedEvent]:
         """Normalize a device stats entry into an AP lifecycle event."""
@@ -247,18 +225,19 @@ class MistApRfCollector:
         wait=wait_exponential(multiplier=1, min=2, max=10),
         reraise=True,
     )
-    async def collect(self, site_ids: Optional[List[str]] = None) -> CollectorOutcome:
+    async def collect(
+        self,
+        site_ids: List[str],
+        site_devices: Dict[str, List[Dict]],
+    ) -> CollectorOutcome:
         outcome = CollectorOutcome(
             collector_id=self.COLLECTOR_ID,
             source_system=self.SOURCE_SYSTEM,
         )
         try:
-            if site_ids is None:
-                site_ids = await self._fetch_site_ids()
-
             events: List[UnifiedEvent] = []
             for site_id in site_ids:
-                devices = await self._fetch_site_devices(site_id)
+                devices = site_devices.get(site_id, [])
                 for dev in devices:
                     try:
                         rf_events = self._normalize_rf(site_id, dev)
@@ -277,29 +256,6 @@ class MistApRfCollector:
             outcome.mark_error(str(exc))
             logger.exception("Mist AP RF collection failed")
         return outcome
-
-    async def _fetch_site_ids(self) -> List[str]:
-        try:
-            resp = await self._client.get(
-                f"{self._base_url}/api/v1/orgs/{self._org_id}/sites"
-            )
-            _raise_for_status(resp)
-            return [s["id"] for s in resp.json() if s.get("id")]
-        except Exception:
-            logger.exception("Failed to fetch Mist sites for AP RF")
-            return []
-
-    async def _fetch_site_devices(self, site_id: str) -> List[Dict]:
-        try:
-            resp = await self._client.get(
-                f"{self._base_url}/api/v1/sites/{site_id}/stats/devices",
-                params={"limit": _PAGE_LIMIT},
-            )
-            if resp.status_code == 200:
-                return resp.json() if isinstance(resp.json(), list) else []
-        except Exception:
-            logger.debug("Failed to fetch devices for site %s", site_id)
-        return []
 
     def _normalize_rf(self, site_id: str, raw: Dict[str, Any]) -> List[UnifiedEvent]:
         """
@@ -571,11 +527,12 @@ class MistClientTopologyCollector:
 
 class MistWiredUplinkCollector:
     """
-    Collects wired uplink data from
-    ``/api/v1/orgs/{org_id}/wired/uplinks``.
+    Collects wired uplink data mapping AP-to-switch physical connectivity.
 
-    Maps AP-to-switch physical connectivity including LLDP/CDP neighbor
-    information, link speed, and port details.
+    Extracts ``lldp_stat`` / ``lldp_stats`` from the per-site device stats
+    endpoint (``/api/v1/sites/{site_id}/stats/devices``).  This works
+    without a Wired Assurance licence because the LLDP neighbour info is
+    included in the standard device stats response.
     """
 
     COLLECTOR_ID = "mist-wired-uplink"
@@ -592,13 +549,20 @@ class MistWiredUplinkCollector:
         wait=wait_exponential(multiplier=1, min=2, max=10),
         reraise=True,
     )
-    async def collect(self) -> CollectorOutcome:
+    async def collect(
+        self,
+        site_ids: List[str],
+        site_devices: Dict[str, List[Dict]],
+    ) -> CollectorOutcome:
         outcome = CollectorOutcome(
             collector_id=self.COLLECTOR_ID,
             source_system=self.SOURCE_SYSTEM,
         )
         try:
-            uplinks = await self._fetch_uplinks()
+            uplinks = []
+            for site_id in site_ids:
+                devices = site_devices.get(site_id, [])
+                uplinks.extend(self._extract_uplinks(site_id, devices))
 
             events: List[UnifiedEvent] = []
             for uplink in uplinks:
@@ -621,17 +585,52 @@ class MistWiredUplinkCollector:
             logger.exception("Mist wired uplink collection failed")
         return outcome
 
-    async def _fetch_uplinks(self) -> List[Dict]:
-        """Fetch wired uplink topology from the org endpoint."""
-        url = f"{self._base_url}/api/v1/orgs/{self._org_id}/wired/uplinks"
-        try:
-            resp = await self._client.get(url, params={"limit": _PAGE_LIMIT})
-            _raise_for_status(resp)
-            body = resp.json()
-            return body if isinstance(body, list) else body.get("results", [])
-        except (MistTopologyApiError, httpx.TransportError) as exc:
-            logger.error("Mist wired uplinks fetch failed: %s", exc)
-            return []
+    @staticmethod
+    def _extract_uplinks(site_id: str, devices: List[Dict]) -> List[Dict]:
+        """Extract LLDP uplink entries from a list of device stats."""
+        uplinks: List[Dict] = []
+        for dev in devices:
+            ap_mac = dev.get("mac", "")
+            if not ap_mac:
+                continue
+
+            lldp_stats = dev.get("lldp_stats", {})
+            has_lldp_stats = (
+                isinstance(lldp_stats, dict) and len(lldp_stats) > 0
+            )
+
+            if has_lldp_stats:
+                for port_name, lldp_entry in lldp_stats.items():
+                    if not lldp_entry.get("system_name"):
+                        continue
+                    uplinks.append({
+                        "uplink_mac": ap_mac,
+                        "switch_mac": lldp_entry.get("chassis_id", ""),
+                        "lldp_system_name": lldp_entry.get("system_name", ""),
+                        "port_id": lldp_entry.get("port_id", port_name),
+                        "port_desc": lldp_entry.get("port_desc", ""),
+                        "site_id": site_id,
+                        "up": dev.get("connected", True),
+                        "speed": "",
+                        "duplex": "",
+                        "uplink_id": f"{ap_mac}-{port_name}",
+                    })
+            else:
+                lldp = dev.get("lldp_stat")
+                if lldp and lldp.get("system_name"):
+                    uplinks.append({
+                        "uplink_mac": ap_mac,
+                        "switch_mac": lldp.get("chassis_id", ""),
+                        "lldp_system_name": lldp.get("system_name", ""),
+                        "port_id": lldp.get("port_id", ""),
+                        "port_desc": lldp.get("port_desc", ""),
+                        "site_id": site_id,
+                        "up": dev.get("connected", True),
+                        "speed": "",
+                        "duplex": "",
+                        "uplink_id": f"{ap_mac}-{lldp.get('port_id', 'uplink')}",
+                    })
+        return uplinks
 
     def _normalize(self, raw: Dict[str, Any]) -> Optional[UnifiedEvent]:
         """Normalize a wired uplink entry into a topology edge event."""
@@ -725,15 +724,12 @@ class MistRadioNeighborsCollector:
         wait=wait_exponential(multiplier=1, min=2, max=10),
         reraise=True,
     )
-    async def collect(self, site_ids: Optional[List[str]] = None) -> CollectorOutcome:
+    async def collect(self, site_ids: List[str]) -> CollectorOutcome:
         outcome = CollectorOutcome(
             collector_id=self.COLLECTOR_ID,
             source_system=self.SOURCE_SYSTEM,
         )
         try:
-            if site_ids is None:
-                site_ids = await self._fetch_site_ids()
-
             events: List[UnifiedEvent] = []
             for site_id in site_ids:
                 neighbors = await self._fetch_neighbors(site_id)
@@ -759,17 +755,6 @@ class MistRadioNeighborsCollector:
             outcome.mark_error(str(exc))
             logger.exception("Mist radio neighbors collection failed")
         return outcome
-
-    async def _fetch_site_ids(self) -> List[str]:
-        try:
-            resp = await self._client.get(
-                f"{self._base_url}/api/v1/orgs/{self._org_id}/sites"
-            )
-            _raise_for_status(resp)
-            return [s["id"] for s in resp.json() if s.get("id")]
-        except Exception:
-            logger.exception("Failed to fetch Mist sites for radio neighbors")
-            return []
 
     async def _fetch_neighbors(self, site_id: str) -> List[Dict]:
         """Fetch radio neighbors for a site."""
@@ -912,14 +897,41 @@ class MistTopologyCollector:
             # Fetch site list once, share across site-scoped collectors
             site_ids = await self._fetch_site_ids(client)
 
-            # Run each sub-collector
-            outcomes.append(await ap_history.collect(site_ids))
-            outcomes.append(await ap_rf.collect(site_ids))
+            # Fetch device stats ONCE for all sites — shared by AP history,
+            # AP RF, and wired uplink collectors (was 3 separate fetches).
+            site_devices = await self._fetch_all_site_devices(client, site_ids)
+
+            # Run each sub-collector, passing pre-fetched device stats
+            outcomes.append(await ap_history.collect(site_ids, site_devices))
+            outcomes.append(await ap_rf.collect(site_ids, site_devices))
             outcomes.append(await client_topology.collect())
-            outcomes.append(await wired_uplink.collect())
+            outcomes.append(await wired_uplink.collect(site_ids, site_devices))
             outcomes.append(await radio_neighbors.collect(site_ids))
 
         return outcomes
+
+    async def _fetch_all_site_devices(
+        self, client: httpx.AsyncClient, site_ids: List[str],
+    ) -> Dict[str, List[Dict]]:
+        """Fetch device stats for all sites in a single batch.
+
+        Returns ``{site_id: [device_dict, ...]}`` so sub-collectors can
+        iterate without re-calling the API.
+        """
+        result: Dict[str, List[Dict]] = {}
+        for site_id in site_ids:
+            try:
+                resp = await client.get(
+                    f"{self._base_url}/api/v1/sites/{site_id}/stats/devices",
+                    params={"limit": _PAGE_LIMIT},
+                )
+                if resp.status_code == 200:
+                    devices = resp.json()
+                    if isinstance(devices, list):
+                        result[site_id] = devices
+            except Exception:
+                logger.debug("Failed to fetch devices for site %s", site_id)
+        return result
 
     async def _fetch_site_ids(self, client: httpx.AsyncClient) -> List[str]:
         """Fetch all site IDs for the org (shared across sub-collectors)."""

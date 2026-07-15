@@ -18,8 +18,12 @@ from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_ex
 
 from config.settings import get_settings
 from shared.database.client import db
+from shared.models.collector_outcome import CollectorOutcome
 
 logger = logging.getLogger(__name__)
+
+COLLECTOR_ID = "velocloud-inventory"
+SOURCE_SYSTEM = "velocloud"
 
 
 class VelocloudInventoryCollector:
@@ -33,26 +37,36 @@ class VelocloudInventoryCollector:
             "Content-Type": "application/json",
         }
 
-    async def collect(self) -> int:
-        """Fetch all edges and upsert into DB. Returns number of devices upserted."""
+    async def collect(self) -> CollectorOutcome:
+        """Fetch all edges and upsert into DB. Returns CollectorOutcome."""
+        outcome = CollectorOutcome(
+            collector_id=COLLECTOR_ID,
+            source_system=SOURCE_SYSTEM,
+        )
         if not self._enabled or not self._api_key or not self._base_url:
-            return 0
+            outcome.mark_skipped("VeloCloud inventory not configured")
+            return outcome
 
-        async with httpx.AsyncClient(
-            headers=self._headers,
-            timeout=httpx.Timeout(60.0),
-            follow_redirects=True,
-            verify=False,  # VCO often uses self-signed certs in enterprise environments
-        ) as client:
-            enterprise = await self._fetch_enterprise(client)
-            enterprise_id = enterprise.get("id") if enterprise else None
-            edges = await self._fetch_edges(client, enterprise_id)
+        try:
+            async with httpx.AsyncClient(
+                headers=self._headers,
+                timeout=httpx.Timeout(60.0),
+                follow_redirects=True,
+                verify=False,
+            ) as client:
+                enterprise = await self._fetch_enterprise(client)
+                enterprise_id = enterprise.get("id") if enterprise else None
+                edges = await self._fetch_edges(client, enterprise_id)
 
-        rows = _build_rows(edges)
-        if rows:
-            await _upsert_inventory(rows)
-        logger.info("VeloCloud inventory: upserted %d edges", len(rows))
-        return len(rows)
+            rows = _build_rows(edges)
+            if rows:
+                await _upsert_inventory(rows)
+            outcome.mark_success(rows_written=len(rows))
+            logger.info("VeloCloud inventory: upserted %d edges", len(rows))
+        except Exception as exc:
+            outcome.mark_error(str(exc))
+            logger.exception("VeloCloud inventory collection failed")
+        return outcome
 
     async def _fetch_enterprise(self, client: httpx.AsyncClient) -> Dict:
         try:

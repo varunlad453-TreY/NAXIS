@@ -53,10 +53,6 @@ class Settings(BaseSettings):
     redis_enabled: bool = Field(default=False, description="Enable Redis pub/sub")
     redis_max_connections: int = Field(default=10, description="Redis connection pool size")
 
-    # Ollama
-    ollama_base_url: str = Field(default="http://localhost:11434", description="Ollama API URL")
-    ollama_model: str = Field(default="llama3.1:8b", description="Ollama model name")
-
     # Juniper Mist
     mist_api_key: str = Field(default="", description="Mist API token")
     mist_org_id: str = Field(default="", description="Mist organization UUID")
@@ -81,6 +77,19 @@ class Settings(BaseSettings):
     arista_wlc_password: str = Field(default="", description="Arista WLC password")
     arista_wlc_enabled: bool = Field(default=False, description="Enable Arista WLC integration")
     arista_wlc_verify_ssl: bool = Field(default=True, description="Verify SSL for Arista WLC requests")
+
+    # SNMP
+    snmp_enabled: bool = Field(default=False, description="Enable SNMP polling of switch/AP topology")
+    snmp_community: str = Field(default="public", description="SNMP v2c read-only community string")
+    snmp_port: int = Field(default=161, description="SNMP agent UDP port")
+    snmp_timeout: int = Field(default=10, description="SNMP poll timeout in seconds")
+    snmp_retries: int = Field(default=2, description="SNMP poll retry count")
+    snmp_targets: str = Field(default="", description="Comma-separated switch IPs to poll via SNMP")
+
+    @property
+    def snmp_targets_list(self) -> List[str]:
+        """Parse comma-separated SNMP target IPs from env var."""
+        return [ip.strip() for ip in self.snmp_targets.split(",") if ip.strip()]
 
     # Collectors
     collector_interval: int = Field(default=60, description="Worker collection interval in seconds")

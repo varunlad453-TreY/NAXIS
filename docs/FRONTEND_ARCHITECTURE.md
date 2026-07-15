@@ -46,7 +46,7 @@ Current primary routes:
 |--------------|------------------|------------------------------------------|
 | Operational  | `/`              | Dashboard with platform HUD + inventory  |
 | Operational  | `/integrations`  | Data-source control plane                |
-| Operational  | `/topology`      | Network topology (placeholder)           |
+| Operational  | `/topology`      | Network topology graph (drill-down)      |
 | Insights     | `/performance`   | Performance analytics (placeholder)      |
 | Insights     | `/connectivity`  | Link/tunnel monitoring (placeholder)     |
 | Insights     | `/clients`       | Client health (placeholder)              |
@@ -95,12 +95,69 @@ The device inventory delegates to:
 - Default refresh intervals:
   - Dashboard counters: 10–15 seconds
   - Device inventory: 60 seconds
+  - Topology backbone: 60 seconds (lightweight ~50 KB)
+  - Topology site internal: 30 seconds (on demand after drill-down)
+
+## Drill-Down Pattern
+
+The topology page uses a **drill-down architecture** to handle large datasets (2651 devices) that would be unusable in a single ReactFlow canvas:
+
+1. **Backbone mode** (default): Fetch `api.getTopologyBackbone()` → render **`SiteBrowser`** — a searchable, filterable card grid of 153 sites. No dagre, no ReactFlow at this level — just CSS grid cards with vendor icon, device count, and health dot.
+
+2. **Internal mode** (after click): Fetch `api.getSiteTopology(id)` → render **`TopologyGraph`** with ReactFlow + dagre Web Worker for the ~20-50 devices in that site.
+
+3. **Deep-link** (`?site_id=XXX`): Skip backbone, directly render `TopologyGraph` for the target site.
+
+**Key files:** `src/app/topology/page.tsx` (SiteBrowser, state machine), `src/components/topology/topology-graph.tsx` (ReactFlow), `src/components/topology/layout.ts` (dagre), `src/lib/api.ts` (backbone + site endpoints).
+
+## Web Workers
+
+Heavy synchronous computations (graph layout, data transformation) should run in a **Web Worker** to avoid blocking the main thread.
+
+### Pattern
+
+1. Create `<name>.worker.ts` — receives messages, imports pure functions, posts results back.
+2. Create `use-<name>.ts` hook — manages worker lifecycle (create, message, terminate) with:
+   - **Stale message filtering** — incrementing `_requestId` per message, discard responses for old IDs
+   - **Synchronous fallback** — if `Worker` is unavailable or crashes, run the computation on the main thread
+   - **Loading state** — expose `isComputing` for the component to show spinners
+   - **Cleanup** — terminate worker on unmount
+
+### Current usage
+
+| Hook | Worker | Purpose |
+|---|---|---|
+| `useTopologyLayout` | `layout.worker.ts` | Offloads `dagre.layout()` from the main thread |
+
+### Testing
+
+Mock `Worker` with a real class (not `vi.fn()` arrow functions, since `Worker` must be a constructor):
+
+```typescript
+class MockWorker {
+  postMessage = vi.fn();
+  terminate = vi.fn();
+  onmessage: ((e: any) => void) | null = null;
+  onerror: ((e: any) => void) | null = null;
+  constructor(_url: string, _opts?: any) { /* store ref */ }
+  simulateResult(payload: any, requestId: number) { /* trigger onmessage */ }
+  simulateError(message: string) { /* trigger onerror */ }
+}
+
+beforeEach(() => {
+  vi.stubGlobal("Worker", MockWorker);
+});
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+```
 
 ## Testing
 
 - Unit tests live next to components: `*.test.tsx`.
 - Use Vitest + React Testing Library.
 - Mock `matchMedia` in test setup if components read the theme or motion preferences.
+- Mock `Worker` with a real class (not arrow functions) when testing Worker-backed hooks.
 
 ## Adding a New Page
 

@@ -107,7 +107,7 @@ Built for small teams with enterprise-grade requirements, Naxis leverages modern
 - **Technology**: Next.js 14 with App Router
 - **State Management**: TanStack Query for server state
 - **UI Components**: shadcn/ui + Tailwind CSS
-- **Visualization**: React Flow for topology graphs
+- **Visualization**: React Flow for per-site topology graphs; CSS grid site browser for backbone
 - **API Communication**: Axios-based ApiClient with retry logic
 
 #### API Gateway Layer
@@ -724,58 +724,55 @@ When scaling beyond Docker Compose:
 
 ## 14. Implementation Roadmap
 
-### Phase 1: Foundation (Weeks 1-2) ✅
+### Phase 1: Foundation ✅
 - [x] Monorepo structure
 - [x] Docker Compose setup
 - [x] Shared libraries and models
 - [x] Health check infrastructure
 - [x] Development workflow
 
-### Phase 2: Telemetry Collection (Weeks 3-4)
-- [ ] Cisco DNAC collector
-- [ ] Juniper Mist collector
-- [ ] Arista SD-WAN collector
-- [ ] Arista WLC collector
-- [ ] Vendor API authentication
-- [ ] Polling scheduler
+### Phase 2: Telemetry Collection ✅
+- [x] Juniper Mist collector (AP topology + events)
+- [x] VeloCloud collector (SD-WAN edges)
+- [x] SNMP poller (switches, routers)
+- [x] Vendor API authentication
 
-### Phase 3: Event Normalization (Weeks 5-6)
-- [ ] Ingestion service implementation
-- [ ] Vendor-to-UnifiedEvent transformers
-- [ ] ClickHouse event persistence
-- [ ] Redis Streams publishing
-- [ ] Event deduplication
+### Phase 3: Event Normalization ✅
+- [x] Unified event schema
+- [x] Vendor-to-UnifiedEvent transformers
+- [x] PostgreSQL event persistence
+- [x] Redis event streaming
+- [x] Event deduplication
 
-### Phase 4: Topology Sync (Weeks 7-8)
-- [ ] Topology service implementation
-- [ ] Neo4j graph model creation
-- [ ] Topology change detection
-- [ ] Graph query API endpoints
+### Phase 4: Topology Sync ✅
+- [x] Topology collector workers
+- [x] PostgreSQL topology tables
+- [x] Health status computation
+- [x] Topology API endpoints (backbone, site internal, blast radius)
 
-### Phase 5: Correlation Engine (Weeks 9-10)
-- [ ] Correlation service implementation
-- [ ] Time-window correlation logic
-- [ ] Proximity-based correlation
-- [ ] Incident creation and aggregation
-- [ ] Pattern learning
+### Phase 5: Correlation Engine ✅
+- [x] Rule-based correlation engine
+- [x] Infrastructure-aware grouping
+- [x] Incident creation and aggregation
+- [x] Blast radius computation
 
-### Phase 6: AI Foundation (Weeks 11-12)
+### Phase 6: AI Foundation (Pending)
 - [ ] RCA service implementation
 - [ ] LangGraph workflow skeleton
 - [ ] Event summarization
 - [ ] Basic RCA suggestions
 
-### Phase 7: Frontend (Weeks 13-14)
-- [ ] Event list and filtering
-- [ ] Incident timeline view
-- [ ] Topology graph visualization
-- [ ] RCA results display
+### Phase 7: Frontend ✅
+- [x] Dashboard overview
+- [x] Device inventory
+- [x] Incident list + detail (with blast radius)
+- [x] Drill-down topology visualization (SiteBrowser + ReactFlow)
+- [x] Health history charts
+- [x] Dark mode
 
-### Phase 8: Polish (Weeks 15-16)
-- [ ] Error handling improvements
-- [ ] Performance optimization
+### Phase 8: Polish (In Progress)
+- [ ] Performance optimization for large-scale topology
 - [ ] Documentation completion
-- [ ] Demo environment
 
 ---
 
@@ -821,9 +818,11 @@ Naxis represents a modern approach to network operational intelligence, combinin
 
 The platform is designed to grow from a 2-developer laptop deployment to enterprise-scale Kubernetes clusters, while maintaining clean architecture and developer ergonomics.
 
-**Current Status**: Foundation phase complete, ready for Phase 2 implementation.
+**Current Status**: Foundation + telemetry + topology + frontend phases complete. The platform ingests telemetry from Mist and VeloCloud, builds topology nodes/edges, computes device health, correlates incidents, and displays a drill-down topology visualization (site browser → per-site ReactFlow graph).
 
-**Next Steps**: Begin implementing vendor collectors (Cisco DNAC, Juniper Mist) and establish end-to-end event flow through ingestion service.
+**Next Steps**: Correlation engine improvements, AI-assisted RCA, and performance optimization.
+
+> **Note:** This document was written during the Foundation phase and describes the aspirational architecture (Neo4j graph DB, ClickHouse event store, separate processing services). The current implementation uses **PostgreSQL** for all persistence (topology, events, incidents, inventory) and **Redis** for caching/streaming. See `docs/TOPOLOGY_VISUALIZATION.md` for the current topology architecture.
 
 ---
 

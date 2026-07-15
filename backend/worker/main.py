@@ -40,6 +40,7 @@ from worker.collectors.mist_inventory import MistInventoryCollector
 from worker.collectors.dnac import DNACCollector
 from worker.collectors.mist_topology import MistTopologyCollector
 from worker.collectors.velocloud import VeloCloudCollector
+from worker.collectors.velocloud_inventory import VelocloudInventoryCollector
 from worker.collectors.arista_wlc import AristaWlcCollector
 from worker.collectors.topology_sync import TopologySync
 
@@ -75,6 +76,7 @@ class WorkerDaemon:
         self._dnac = DNACCollector()
         self._mist_topology = MistTopologyCollector()
         self._velocloud = VeloCloudCollector()
+        self._velocloud_inventory = VelocloudInventoryCollector()
         self._arista_wlc = AristaWlcCollector()
         self._topology_sync = TopologySync()
         self._last_collected: datetime = datetime.now(timezone.utc) - timedelta(hours=24)
@@ -129,7 +131,7 @@ class WorkerDaemon:
 
         # Correlate events into incidents
         if all_events:
-            incidents = self._correlation_engine.process_events(all_events)
+            incidents = await self._correlation_engine.process_events(all_events)
             if incidents:
                 logger.info(
                     "Correlation produced %d incident(s) from %d event(s)",
@@ -206,6 +208,13 @@ class WorkerDaemon:
                 outcomes.extend(vc_outcomes)
             except Exception:
                 logger.exception("VeloCloud collection failed")
+
+            # VeloCloud inventory → populates inventory table for topology sync
+            try:
+                inv_outcome = await self._run_collector_inventory(self._velocloud_inventory)
+                outcomes.append(inv_outcome)
+            except Exception:
+                logger.exception("VeloCloud inventory collection failed")
 
         # Arista WLC sub-collectors (clients, APs, radios, events)
         if self._arista_wlc.is_configured:

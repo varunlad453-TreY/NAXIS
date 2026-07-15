@@ -121,7 +121,7 @@ export default function IncidentDetailPage() {
   const onViewInTopology = useCallback(() => {
     if (incident?.topology_node_ids && incident.topology_node_ids.length > 0) {
       const ids = incident.topology_node_ids.join(",");
-      router.push(`/topology?highlight=${encodeURIComponent(ids)}`);
+      router.push(`/topology?highlight=${encodeURIComponent(ids)}&incident=${encodeURIComponent(incidentId)}`);
     }
   }, [incident, router]);
 

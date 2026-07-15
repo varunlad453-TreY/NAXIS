@@ -55,6 +55,9 @@ services:
       redis:
         condition: service_healthy
     restart: unless-stopped
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
     networks:
       - naxis-net
     deploy:
@@ -73,6 +76,9 @@ services:
       SERVICE_NAME: naxis-api
       LOG_LEVEL: INFO
       PYTHONPATH: /app
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
     depends_on:
       postgres:
         condition: service_healthy
@@ -100,6 +106,9 @@ services:
       - "${WEB_HOST_PORT:-3000}:3000"
     environment:
       NEXT_PUBLIC_API_URL: http://localhost:${API_HOST_PORT:-8000}
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
     depends_on:
       api:
         condition: service_healthy
@@ -109,7 +118,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 512M
+          memory: 2G
 
 volumes:
   postgres_data:

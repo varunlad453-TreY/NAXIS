@@ -67,16 +67,25 @@ def _mock_edge_row(
     return MockRow()
 
 
-def _default_fetch_sequence(node_rows, edge_rows):
-    """Build the fetch side_effect sequence with health enrichment mocks."""
-    return [
+def _default_fetch_sequence(node_rows, edge_rows, filtered=False):
+    """Build the fetch side_effect sequence with health enrichment mocks.
+
+    When *filtered* is True (site_id or node_type provided), the endpoint
+    makes two edge queries (src_ids + dst_ids) instead of one full scan.
+    """
+    seq = [
         node_rows,          # _NODES_QUERY (or filtered query)
         [],                 # _enrich_site_names (empty site name lookup)
         [],                 # _HEALTH_EVENTS_QUERY (empty events)
         [],                 # _HEALTH_INVENTORY_QUERY (empty inventory)
         [],                 # _HEALTH_NODE_PROPS_QUERY (empty props)
-        edge_rows,          # _EDGES_QUERY
     ]
+    if filtered:
+        seq.append(edge_rows)  # _EDGES_FROM_SRC_IDS
+        seq.append(edge_rows)  # _EDGES_TO_DST_IDS
+    else:
+        seq.append(edge_rows)  # _EDGES_QUERY
+    return seq
 
 
 # ==============================================================================
@@ -128,7 +137,7 @@ class TestGetTopology:
             sfo_node = _mock_node_row(site_id="site-sfo-01")
 
             mock_db.fetch = AsyncMock(side_effect=_default_fetch_sequence(
-                [sfo_node], []
+                [sfo_node], [], filtered=True
             ))
 
             response = client.get("/topology?site_id=site-sfo-01")
@@ -144,7 +153,7 @@ class TestGetTopology:
             switch_node = _mock_node_row("sw-01", "switch", "sw-01")
 
             mock_db.fetch = AsyncMock(side_effect=_default_fetch_sequence(
-                [switch_node], []
+                [switch_node], [], filtered=True
             ))
 
             response = client.get("/topology?node_type=switch")
@@ -467,6 +476,13 @@ class TestBlastRadius:
 
             mock_incident = AsyncMock()
             mock_incident.affected_devices = ["core-switch-01", "ap-sfo-101", "ap-sfo-102"]
+            mock_incident.incident_id = "inc-001"
+            mock_incident.title = "Test incident"
+            mock_incident.severity.value = "critical"
+            mock_incident.status.value = "open"
+            mock_incident.confidence_score = 0.95
+            mock_incident.created_at = datetime.utcnow()
+            mock_incident.updated_at = datetime.utcnow()
 
             switch_node = _mock_node_row("core-switch-01", "switch", "naxis-core-01")
             ap1_node = _mock_node_row("ap-sfo-101", "ap", "ap-101")
@@ -507,3 +523,204 @@ class TestBlastRadius:
                     assert "core-switch-01" in data["root_cause_node_ids"]
                     assert "ap-sfo-101" in data["symptom_node_ids"]
                     assert "ap-sfo-102" in data["symptom_node_ids"]
+
+
+# ==============================================================================
+# GET /topology/backbone
+# ==============================================================================
+
+
+class TestGetTopologyBackbone:
+    def test_empty_when_no_db_pool(self, client):
+        with patch("api.routes.topology.db") as mock_db:
+            mock_db.pool = None
+            response = client.get("/topology/backbone")
+            assert response.status_code == 200
+            data = response.json()
+            assert data["nodes"] == []
+            assert data["edges"] == []
+            assert data["total_nodes"] == 0
+
+    def test_returns_sites_and_inter_site_edges(self, client):
+        with patch("api.routes.topology.db") as mock_db:
+            mock_db.pool = AsyncMock()
+            mock_db.fetch = AsyncMock()
+
+            site_rows = [
+                _mock_node_row("mist-site-sfo", "site", "San Francisco", site_id="site-sfo"),
+                _mock_node_row("mist-site-nyc", "site", "New York", site_id="site-nyc"),
+            ]
+            count_rows = [
+                {"site_id": "site-sfo", "device_count": 42},
+                {"site_id": "site-nyc", "device_count": 17},
+            ]
+            edge_rows = [
+                _mock_edge_row("mist-site-sfo", "mist-site-nyc", edge_type="logical_link"),
+            ]
+            mock_db.fetch.side_effect = [
+                site_rows,        # 1: _SITE_NODES_QUERY
+                count_rows,       # 2: _SITE_DEVICE_COUNTS_QUERY
+                [],               # 3: _SITE_NAME_QUERY (enrich_site_names)
+                [],               # 4: _HEALTH_EVENTS_QUERY
+                [],               # 5: _HEALTH_INVENTORY_QUERY
+                [],               # 6: _HEALTH_NODE_PROPS_QUERY
+                edge_rows,        # 7: _INTER_SITE_EDGES_QUERY
+            ]
+
+            response = client.get("/topology/backbone")
+            assert response.status_code == 200
+            data = response.json()
+            assert data["total_nodes"] == 2
+            assert data["total_edges"] == 1
+            node_ids = {n["node_id"] for n in data["nodes"]}
+            assert "mist-site-sfo" in node_ids
+            assert "mist-site-nyc" in node_ids
+            node_map = {n["node_id"]: n for n in data["nodes"]}
+            assert node_map["mist-site-sfo"]["device_count"] == 42
+            assert node_map["mist-site-nyc"]["device_count"] == 17
+
+    def test_excludes_internal_edges(self, client):
+        with patch("api.routes.topology.db") as mock_db:
+            mock_db.pool = AsyncMock()
+            mock_db.fetch = AsyncMock()
+
+            site_rows = [
+                _mock_node_row("mist-site-sfo", "site", "San Francisco", site_id="site-sfo"),
+            ]
+            mock_db.fetch.side_effect = [
+                site_rows,        # 1: _SITE_NODES_QUERY
+                [{"site_id": "site-sfo", "device_count": 5}],  # 2: counts
+                [],               # 3: _SITE_NAME_QUERY
+                [],               # 4: _HEALTH_EVENTS_QUERY
+                [],               # 5: _HEALTH_INVENTORY_QUERY
+                [],               # 6: _HEALTH_NODE_PROPS_QUERY
+                [],               # 7: _INTER_SITE_EDGES_QUERY (no inter-site edges)
+            ]
+
+            response = client.get("/topology/backbone")
+            assert response.status_code == 200
+            data = response.json()
+            assert data["total_nodes"] == 1
+            assert data["total_edges"] == 0
+
+    def test_device_count_zero_when_no_child_nodes(self, client):
+        with patch("api.routes.topology.db") as mock_db:
+            mock_db.pool = AsyncMock()
+            mock_db.fetch = AsyncMock()
+
+            site_rows = [
+                _mock_node_row("mist-site-empty", "site", "Empty Site", site_id="site-empty"),
+            ]
+            mock_db.fetch.side_effect = [
+                site_rows,   # 1: _SITE_NODES_QUERY
+                [],          # 2: _SITE_DEVICE_COUNTS_QUERY (no counts found)
+                [],          # 3: _SITE_NAME_QUERY
+                [],          # 4: _HEALTH_EVENTS_QUERY
+                [],          # 5: _HEALTH_INVENTORY_QUERY
+                [],          # 6: _HEALTH_NODE_PROPS_QUERY
+                [],          # 7: _INTER_SITE_EDGES_QUERY
+            ]
+
+            response = client.get("/topology/backbone")
+            assert response.status_code == 200
+            data = response.json()
+            assert data["total_nodes"] == 1
+            assert data["nodes"][0]["device_count"] == 0
+
+
+# ==============================================================================
+# GET /topology/sites/{site_id}/internal
+# ==============================================================================
+
+
+class TestGetSiteInternalTopology:
+    def test_empty_when_no_db_pool(self, client):
+        with patch("api.routes.topology.db") as mock_db:
+            mock_db.pool = None
+            response = client.get("/topology/sites/site-sfo/internal")
+            assert response.status_code == 200
+            data = response.json()
+            assert data["nodes"] == []
+            assert data["edges"] == []
+
+    def test_returns_nodes_and_edges_for_site(self, client):
+        with patch("api.routes.topology.db") as mock_db:
+            mock_db.pool = AsyncMock()
+            mock_db.fetch = AsyncMock()
+
+            node_rows = [
+                _mock_node_row("sw-01", "switch", "core-switch", site_id="site-sfo"),
+                _mock_node_row("ap-01", "ap", "ap-one", site_id="site-sfo"),
+            ]
+            edge_rows = [
+                _mock_edge_row("ap-01", "sw-01"),
+            ]
+            mock_db.fetch.side_effect = [
+                node_rows,        # 1: _NODES_BY_SITE_QUERY
+                [],               # 2: _SITE_NAME_QUERY (enrich_site_names)
+                [],               # 3: _HEALTH_EVENTS_QUERY
+                [],               # 4: _HEALTH_INVENTORY_QUERY
+                [],               # 5: _HEALTH_NODE_PROPS_QUERY
+                [],               # 6: _NODE_BY_ID_QUERY (site_id as node_id — not found)
+                [],               # 7: _NODE_BY_ID_QUERY (mist-site- prefix — not found)
+                edge_rows,        # 8: _EDGES_FOR_SITE_IDS
+            ]
+
+            response = client.get("/topology/sites/site-sfo/internal")
+            assert response.status_code == 200
+            data = response.json()
+            assert data["total_nodes"] == 2
+            assert data["total_edges"] == 1
+            node_ids = {n["node_id"] for n in data["nodes"]}
+            assert "sw-01" in node_ids
+            assert "ap-01" in node_ids
+
+    def test_appends_site_node_if_exists(self, client):
+        with patch("api.routes.topology.db") as mock_db:
+            mock_db.pool = AsyncMock()
+            mock_db.fetch = AsyncMock()
+
+            # First batch: 1 switch node
+            node_rows = [
+                _mock_node_row("sw-01", "switch", "core-switch", site_id="site-sfo"),
+            ]
+            # Site node found by direct node_id lookup
+            site_node_row = [_mock_node_row("site-sfo", "site", "San Francisco", site_id="site-sfo")]
+            edge_rows = []
+            mock_db.fetch.side_effect = [
+                node_rows,        # 1: _NODES_BY_SITE_QUERY
+                [],               # 2: _SITE_NAME_QUERY (enrich_site_names for first batch)
+                [],               # 3: _HEALTH_EVENTS_QUERY (enrich_health)
+                [],               # 4: _HEALTH_INVENTORY_QUERY
+                [],               # 5: _HEALTH_NODE_PROPS_QUERY
+                site_node_row,    # 6: _NODE_BY_ID_QUERY (site_id as node_id — found!)
+                [],               # 7: _SITE_NAME_QUERY (enrich_site_names for site node)
+                [],               # 8: _HEALTH_EVENTS_QUERY (enrich_health for site node)
+                [],               # 9: _HEALTH_INVENTORY_QUERY
+                [],               # 10: _HEALTH_NODE_PROPS_QUERY
+                [],               # 11: _NODE_BY_ID_QUERY (mist-site- prefix — not found)
+                edge_rows,        # 12: _EDGES_FOR_SITE_IDS
+            ]
+
+            response = client.get("/topology/sites/site-sfo/internal")
+            assert response.status_code == 200
+            data = response.json()
+            assert data["total_nodes"] == 2
+            node_ids = {n["node_id"] for n in data["nodes"]}
+            assert "sw-01" in node_ids
+            assert "site-sfo" in node_ids
+
+    def test_not_found_returns_empty(self, client):
+        with patch("api.routes.topology.db") as mock_db:
+            mock_db.pool = AsyncMock()
+            mock_db.fetch = AsyncMock()
+
+            mock_db.fetch.side_effect = [
+                [],               # 1: _NODES_BY_SITE_QUERY — no nodes for this site
+            ]
+
+            response = client.get("/topology/sites/non-existent/internal")
+            assert response.status_code == 200
+            data = response.json()
+            assert data["total_nodes"] == 0
+            assert data["total_edges"] == 0

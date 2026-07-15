@@ -15,6 +15,9 @@ export interface TopologyNode {
   site_name: string | null;
   health_status: string;
   health_label: string;
+  device_count?: number;
+  critical_count?: number;
+  warning_count?: number;
   props?: Record<string, unknown> | null;
 }
 
@@ -58,6 +61,26 @@ export interface BlastRadiusResponse {
   total_edges: number;
   root_cause_node_ids: string[];
   symptom_node_ids: string[];
+  incident_id?: string;
+  incident_title?: string;
+  incident_severity?: string;
+  incident_status?: string;
+  incident_confidence?: number;
+  incident_created_at?: string;
+  incident_updated_at?: string;
+}
+
+export interface HealthSnapshot {
+  snapshot_at: string;
+  health_status: string;
+  health_label: string;
+  derived_from: string;
+}
+
+export interface NodeHealthHistoryResponse {
+  node_id: string;
+  history: HealthSnapshot[];
+  summary: Record<string, number>;
 }
 
 export type HealthStatus = "healthy" | "warning" | "critical" | "unknown";
