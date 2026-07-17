@@ -8,3 +8,7 @@ export { BlastRadiusPanel } from "./blast-radius-panel";
 export { NodeDetailPanel } from "./node-detail-panel";
 export { HealthHistoryChart } from "./health-history-chart";
 export type { PanelMode } from "./topology-side-panel";
+export { AggregatedView } from "./aggregated-view";
+export { DeviceBrowser } from "./device-browser";
+export { ContextGraph } from "./context-graph";
+export { TypeClusterNode } from "./type-cluster-node";

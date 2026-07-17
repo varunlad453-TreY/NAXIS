@@ -23,6 +23,7 @@ import type {
   TopologyNodeDetail,
   BlastRadiusResponse,
   NodeHealthHistoryResponse,
+  SiteSummaryResponse,
 } from "@/types/topology";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -278,6 +279,9 @@ export const api = {
    */
   getSiteTopology: (siteId: string) =>
     fetchAPI<TopologyGraphResponse>(`/topology/sites/${encodeURIComponent(siteId)}/internal`),
+
+  getSiteSummary: (siteId: string) =>
+    fetchAPI<SiteSummaryResponse>(`/topology/sites/${encodeURIComponent(siteId)}/summary`),
 
   /**
    * Get topology summary

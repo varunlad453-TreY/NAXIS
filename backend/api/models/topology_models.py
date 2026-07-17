@@ -65,6 +65,27 @@ class TopologySummaryResponse(BaseModel):
     last_updated: Optional[datetime] = Field(None, description="Most recent update timestamp")
 
 
+class SiteHealthCounts(BaseModel):
+    healthy_count: int = Field(0, description="Number of devices in healthy state")
+    warning_count: int = Field(0, description="Number of devices in warning state")
+    critical_count: int = Field(0, description="Number of devices in critical state")
+    unknown_count: int = Field(0, description="Number of devices in unknown state")
+
+
+class SiteDeviceTypeBreakdown(BaseModel):
+    type: str = Field(..., description="Device type (switch, ap, router, etc.)")
+    count: int = Field(..., description="Number of devices of this type")
+
+
+class SiteSummaryResponse(BaseModel):
+    site_id: str = Field(..., description="Site ID")
+    site_name: Optional[str] = Field(None, description="Site name")
+    total_devices: int = Field(0, description="Total number of non-site devices")
+    health: SiteHealthCounts = Field(default_factory=SiteHealthCounts, description="Health breakdown")
+    by_type: List[SiteDeviceTypeBreakdown] = Field(default_factory=list, description="Device counts by type")
+    by_vendor: List[SiteDeviceTypeBreakdown] = Field(default_factory=list, description="Device counts by vendor")
+
+
 class BlastRadiusResponse(BaseModel):
     nodes: List[TopologyNode] = Field(default_factory=list, description="Topology nodes in the blast radius subgraph")
     edges: List[TopologyEdge] = Field(default_factory=list, description="Edges connecting blast radius nodes")

@@ -2,9 +2,13 @@
 
 import { Suspense, useCallback, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { useSearchParams } from "next/navigation";
-import { ArrowLeft, Server, Activity, Search, Wifi, Globe } from "lucide-react";
+import { useRouter, useSearchParams } from "next/navigation";
+import {
+  ArrowLeft, ArrowUpDown, Server, Activity, Search, Wifi, Globe,
+  Layers, AlertTriangle, CheckCircle, HelpCircle,
+} from "lucide-react";
 import { api } from "@/lib/api";
+import { deriveAggregatedHealth } from "@/lib/topology-utils";
 import { TopologyGraph } from "@/components/topology";
 import type { TopologyNode } from "@/types/topology";
 import { NODE_TYPE_META, HEALTH_STATUS_META } from "@/types/topology";
@@ -100,9 +104,11 @@ function SiteBrowser({
 }
 
 function SiteCard({ site, onClick }: { site: TopologyNode; onClick: () => void }) {
-  const hMeta = HEALTH_STATUS_META[site.health_status] ?? HEALTH_STATUS_META.unknown;
+  const aggHealth = deriveAggregatedHealth(site);
   const isMist = site.vendor === "mist";
   const dc = site.device_count ?? 0;
+  const cc = site.critical_count ?? 0;
+  const wc = site.warning_count ?? 0;
 
   return (
     <button
@@ -126,11 +132,23 @@ function SiteCard({ site, onClick }: { site: TopologyNode; onClick: () => void }
             </div>
           </div>
         </div>
-        <span
-          className="relative mt-1 inline-block h-2.5 w-2.5 shrink-0 rounded-full"
-          style={{ backgroundColor: hMeta.color }}
-          title={hMeta.label}
-        />
+        <div className="flex items-center gap-1.5 shrink-0">
+          {cc > 0 && (
+            <span className="flex items-center gap-0.5 rounded-full bg-critical/10 px-1.5 py-0.5 text-[10px] font-semibold text-critical">
+              {cc}
+            </span>
+          )}
+          {wc > 0 && cc === 0 && (
+            <span className="flex items-center gap-0.5 rounded-full bg-warning/10 px-1.5 py-0.5 text-[10px] font-semibold text-warning">
+              {wc}
+            </span>
+          )}
+          <span
+            className="inline-block h-2.5 w-2.5 shrink-0 rounded-full"
+            style={{ backgroundColor: aggHealth.color }}
+            title={aggHealth.label}
+          />
+        </div>
       </div>
       <div className="flex items-center gap-3 text-xs text-foreground-muted">
         <span className="font-medium text-foreground">{dc}</span>
@@ -140,7 +158,56 @@ function SiteCard({ site, onClick }: { site: TopologyNode; onClick: () => void }
   );
 }
 
+function Breadcrumbs({ siteName }: { siteName?: string }) {
+  return (
+    <nav className="flex items-center gap-1.5 text-xs text-foreground-muted">
+      <a href="/topology" className="transition-colors hover:text-foreground">
+        Topology
+      </a>
+      {siteName && (
+        <>
+          <span className="text-border">/</span>
+          <span className="text-foreground font-medium truncate max-w-[200px]">
+            {siteName}
+          </span>
+        </>
+      )}
+    </nav>
+  );
+}
+
+function SiteHealthSummary({
+  health,
+  total,
+}: {
+  health: { critical_count: number; warning_count: number; healthy_count: number; unknown_count: number };
+  total: number;
+}) {
+  const items = [
+    { count: health.critical_count, label: "Critical", color: "#ef4444", Icon: AlertTriangle },
+    { count: health.warning_count, label: "Warning", color: "#eab308", Icon: AlertTriangle },
+    { count: health.healthy_count, label: "Healthy", color: "#22c55e", Icon: CheckCircle },
+    { count: health.unknown_count, label: "Unknown", color: "#6b7280", Icon: HelpCircle },
+  ];
+  return (
+    <div className="flex flex-wrap items-center gap-3 rounded-lg border border-border/40 bg-surface/30 px-4 py-2.5 text-xs">
+      <span className="font-medium text-foreground">{total} devices</span>
+      <span className="h-3 w-px bg-border/40" />
+      {items.map(({ count, label, color, Icon }) =>
+        count > 0 ? (
+          <div key={label} className="flex items-center gap-1">
+            <Icon className="h-3 w-3" style={{ color }} />
+            <span className="font-medium text-foreground">{count}</span>
+            <span className="text-foreground-muted">{label}</span>
+          </div>
+        ) : null
+      )}
+    </div>
+  );
+}
+
 function TopologyPageContent() {
+  const router = useRouter();
   const searchParams = useSearchParams();
   const highlightParam = searchParams.get("highlight");
   const incidentParam = searchParams.get("incident");
@@ -155,28 +222,26 @@ function TopologyPageContent() {
     return incidentParam?.trim() || null;
   }, [incidentParam]);
 
-  const urlSiteId = useMemo(() => {
+  const activeSiteId = useMemo(() => {
     return siteParam?.trim() || undefined;
   }, [siteParam]);
 
-  const [drillDownSiteId, setDrillDownSiteId] = useState<string | null>(null);
-  const activeSiteId = urlSiteId ?? drillDownSiteId;
+  const isBackboneMode = !activeSiteId;
 
   const handleSiteSelect = useCallback((siteId: string) => {
-    setDrillDownSiteId(siteId);
-  }, []);
+    router.push(`/topology?site_id=${encodeURIComponent(siteId)}`);
+  }, [router]);
 
   const handleBackToAll = useCallback(() => {
-    setDrillDownSiteId(null);
-  }, []);
-
-  const isBackboneMode = !activeSiteId;
+    router.push("/topology");
+  }, [router]);
 
   const backboneQuery = useQuery({
     queryKey: ["topology-backbone"],
     queryFn: () => api.getTopologyBackbone(),
     refetchInterval: highlightedNodeIds ? undefined : 60000,
     enabled: isBackboneMode,
+    staleTime: 30000,
   });
 
   const siteInternalQuery = useQuery({
@@ -184,6 +249,16 @@ function TopologyPageContent() {
     queryFn: () => api.getSiteTopology(activeSiteId!),
     refetchInterval: highlightedNodeIds ? undefined : 30000,
     enabled: !isBackboneMode,
+    staleTime: 15000,
+    gcTime: 300000,
+  });
+
+  const siteSummaryQuery = useQuery({
+    queryKey: ["topology-site-summary", activeSiteId],
+    queryFn: () => api.getSiteSummary(activeSiteId!),
+    enabled: !isBackboneMode,
+    staleTime: 30000,
+    gcTime: 300000,
   });
 
   const graphData = isBackboneMode ? backboneQuery.data : siteInternalQuery.data;
@@ -194,6 +269,7 @@ function TopologyPageContent() {
     queryKey: ["topology-summary"],
     queryFn: () => api.getTopologySummary(),
     refetchInterval: 30000,
+    staleTime: 15000,
   });
 
   const nodes = graphData?.nodes ?? [];
@@ -220,9 +296,22 @@ function TopologyPageContent() {
       .slice(0, 6);
   }, [nodes]);
 
+  const siteName = useMemo(() => {
+    if (!isBackboneMode) {
+      const siteNode = nodes.find((n) => n.node_type === "site");
+      if (siteNode) return siteNode.name || siteNode.site_id || activeSiteId;
+      if (siteSummaryQuery.data?.site_name) return siteSummaryQuery.data.site_name;
+      return activeSiteId;
+    }
+    return undefined;
+  }, [isBackboneMode, nodes, activeSiteId, siteSummaryQuery.data?.site_name]);
+
   return (
     <div className="min-h-screen px-4 py-10 sm:px-6 lg:px-8">
       <div className="mx-auto max-w-7xl space-y-6">
+        {/* Breadcrumbs */}
+        <Breadcrumbs siteName={siteName} />
+
         {/* Header */}
         <div className="flex flex-col gap-4 border-b border-border/60 pb-8 sm:flex-row sm:items-end sm:justify-between">
           <div>
@@ -241,16 +330,14 @@ function TopologyPageContent() {
                   Network topology
                 </div>
                 <h1 className="mt-1 text-3xl font-semibold tracking-tight text-foreground">
-                  {isBackboneMode ? "All sites" : urlSiteId ? "Site topology" : "Site topology"}
+                  {isBackboneMode ? "All sites" : (siteName || "Site topology")}
                 </h1>
               </div>
             </div>
             <p className="mt-1 text-sm text-foreground-muted">
-              {urlSiteId
-                ? <>Filtered to site — <a href="/topology" className="text-primary underline-offset-2 hover:underline">clear filter</a></>
-                : isBackboneMode
-                  ? `${nodes.length} sites — click a site to see its internal topology`
-                  : "Showing devices in this site — click a device for details"}
+              {isBackboneMode
+                ? `${nodes.length} sites — click a site to see its internal topology`
+                : "Showing devices in this site — click a device for details"}
             </p>
           </div>
           <div className="flex gap-8">
@@ -287,6 +374,20 @@ function TopologyPageContent() {
           )
         ) : (
           <>
+            {/* Site health summary bar */}
+            {siteSummaryQuery.data && (
+              <SiteHealthSummary
+                health={{
+                  critical_count: siteSummaryQuery.data.health.critical_count,
+                  warning_count: siteSummaryQuery.data.health.warning_count,
+                  healthy_count: siteSummaryQuery.data.health.healthy_count,
+                  unknown_count: siteSummaryQuery.data.health.unknown_count,
+                }}
+                total={siteSummaryQuery.data.total_devices}
+              />
+            )}
+
+            {/* Device type filter chips */}
             {typeStats.length > 0 && (
               <div className="flex flex-wrap gap-2">
                 {typeStats.map(([type, count]) => {
@@ -308,6 +409,23 @@ function TopologyPageContent() {
                 })}
               </div>
             )}
+
+            {/* Vendor breakdown chips */}
+            {siteSummaryQuery.data && siteSummaryQuery.data.by_vendor.length > 1 && (
+              <div className="flex flex-wrap gap-2">
+                {siteSummaryQuery.data.by_vendor.map(({ type, count }) => (
+                  <div
+                    key={type}
+                    className="inline-flex items-center gap-1.5 rounded-md border border-border/40 bg-surface/50 px-3 py-1 text-xs text-foreground-muted"
+                  >
+                    <Layers className="h-3 w-3" />
+                    <span className="font-medium text-foreground">{count}</span>
+                    <span>{type}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
             <TopologyGraph
               data={allData}
               isLoading={graphLoading}

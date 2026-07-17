@@ -19,6 +19,7 @@ frontend/src/
 ├── components/          # Domain + shared React components
 │   ├── dashboard/       # Dashboard-only building blocks
 │   ├── devices/         # Device inventory building blocks
+│   ├── topology/        # Topology graph components (three-mode system, dagre layout, ReactFlow nodes)
 │   ├── layout/          # Shell components (sidebar, header, placeholder)
 │   └── ui/              # shadcn/ui primitives and theme toggle
 ├── config/              # Navigation config and other global constants
@@ -104,11 +105,13 @@ The topology page uses a **drill-down architecture** to handle large datasets (2
 
 1. **Backbone mode** (default): Fetch `api.getTopologyBackbone()` → render **`SiteBrowser`** — a searchable, filterable card grid of 153 sites. No dagre, no ReactFlow at this level — just CSS grid cards with vendor icon, device count, and health dot.
 
-2. **Internal mode** (after click): Fetch `api.getSiteTopology(id)` → render **`TopologyGraph`** with ReactFlow + dagre Web Worker for the ~20-50 devices in that site.
+2. **Internal mode** (after click): Fetch `api.getSiteTopology(id)` → render **`TopologyGraph`** with one of two sub-modes:
+   - **Flat graph** (<50 devices): ReactFlow + dagre Web Worker for ~20-50 devices in the site. Devices appear as individual `TopologyNodeComponent` nodes.
+   - **Three-mode system** (≥50 devices): Auto-switches to `AggregatedView` with category cluster nodes, then `DeviceBrowser` side panel, then `ContextGraph` for focused 1-hop neighborhood views. No dagre needed.
 
 3. **Deep-link** (`?site_id=XXX`): Skip backbone, directly render `TopologyGraph` for the target site.
 
-**Key files:** `src/app/topology/page.tsx` (SiteBrowser, state machine), `src/components/topology/topology-graph.tsx` (ReactFlow), `src/components/topology/layout.ts` (dagre), `src/lib/api.ts` (backbone + site endpoints).
+**Key files:** `src/app/topology/page.tsx` (state machine, breadcrumbs, health summary), `src/components/topology/topology-graph.tsx` (mode switching), `src/components/topology/aggregated-view.tsx` (clusters + toolbar), `src/components/topology/type-cluster-node.tsx` (cluster node), `src/components/topology/device-browser.tsx` (filterable list), `src/components/topology/context-graph.tsx` (1-hop graph), `src/components/topology/layout.ts` (dagre for flat mode), `src/lib/api.ts` (endpoints).
 
 ## Web Workers
 
@@ -125,9 +128,11 @@ Heavy synchronous computations (graph layout, data transformation) should run in
 
 ### Current usage
 
-| Hook | Worker | Purpose |
+| Hook / Component | Worker | Purpose |
 |---|---|---|
-| `useTopologyLayout` | `layout.worker.ts` | Offloads `dagre.layout()` from the main thread |
+| `useTopologyLayout` | `layout.worker.ts` | Offloads `dagre.layout()` from the main thread (flat graph mode) |
+| `AggregatedView` | none | Category cluster layout uses simple math (no dagre), runs on main thread |
+| `ContextGraph` | none | 3-level hierarchy layout uses simple math (positional), runs on main thread |
 
 ### Testing
 

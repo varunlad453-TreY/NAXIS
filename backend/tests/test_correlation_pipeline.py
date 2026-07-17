@@ -19,6 +19,7 @@ import pytest
 from backend.shared.models.collector_outcome import CollectorOutcome
 from backend.shared.models.event import (
     EventSeverity,
+    EventSource,
     EventType,
     UnifiedEvent,
 )
@@ -331,3 +332,159 @@ async def test_pipeline_does_not_publish_when_redis_disabled():
     assert daemon._redis_client is None
     # No Redis client should be created — no side effects to check beyond
     # the reference being None, which proves the guard works.
+
+
+# ======================================================================
+# VeloCloud-enabled pipeline tests
+# ======================================================================
+
+def _build_worker_with_velo(events, cascade_map=None):
+    """Create a WorkerDaemon with VeloCloud collectors enabled."""
+    import worker.main as wm
+
+    async def _collect(since=None):
+        return CollectorOutcome(
+            collector_id="mist-events", source_system="mist",
+            status="success", events=events)
+
+    wm.MistCollector = MagicMock()
+    wm.MistCollector.return_value.collect = _collect
+
+    wm.MistInventoryCollector = MagicMock()
+    wm.MistInventoryCollector.return_value.collect = AsyncMock(
+        return_value=CollectorOutcome(
+            collector_id="mist-inventory", source_system="mist", events=[]))
+
+    for name in ["DNACCollector", "MistTopologyCollector",
+                 "AristaWlcCollector"]:
+        c = MagicMock()
+        c.return_value.is_configured = False
+        setattr(wm, name, c)
+
+    # VeloCloud enabled with mock outcomes
+    vc_outcomes = [
+        CollectorOutcome(
+            collector_id="velocloud-edges", source_system="velocloud",
+            status="success", events=[], rows_written=1),
+        CollectorOutcome(
+            collector_id="velocloud-events", source_system="velocloud",
+            status="success", events=[], rows_written=0),
+        CollectorOutcome(
+            collector_id="velocloud-links", source_system="velocloud",
+            status="skipped"),
+        CollectorOutcome(
+            collector_id="velocloud-tunnels", source_system="velocloud",
+            status="skipped"),
+        CollectorOutcome(
+            collector_id="velocloud-apps", source_system="velocloud",
+            status="skipped"),
+    ]
+
+    vc_collector = MagicMock()
+    vc_collector.return_value.is_configured = True
+    vc_collector.return_value.collect_all = AsyncMock(return_value=vc_outcomes)
+    wm.VeloCloudCollector = vc_collector
+
+    wm.VelocloudInventoryCollector = MagicMock()
+    wm.VelocloudInventoryCollector.return_value.collect = AsyncMock(
+        return_value=CollectorOutcome(
+            collector_id="velo-inventory", source_system="velocloud",
+            status="success", events=[], rows_written=2))
+
+    wm.TopologySync = MagicMock()
+    wm.TopologySync.return_value.sync = AsyncMock()
+
+    if cascade_map is not None:
+        tp = MagicMock()
+        tp.return_value = MockTopologyProvider(cascade_map)
+        wm.DatabaseTopologyProvider = tp
+    else:
+        tp = MagicMock()
+        tp.return_value.get_parent_child_map = AsyncMock(return_value={})
+        wm.DatabaseTopologyProvider = tp
+
+    wm.insert_events = AsyncMock()
+    wm.upsert_incident = AsyncMock()
+    wm.link_events_to_incident = AsyncMock()
+    wm.record_worker_heartbeat = AsyncMock()
+    wm.record_collector_run = AsyncMock()
+
+    return wm.WorkerDaemon()
+
+
+@pytest.mark.asyncio
+async def test_pipeline_velocloud_enabled_collects_outcomes():
+    """Worker produces outcomes when VeloCloud is enabled."""
+    daemon = _build_worker_with_velo([])
+    import worker.main as wm
+    wm.record_collector_run.reset_mock()
+    await daemon.run_once()
+    # VeloCloud outcomes should have been recorded
+    velo_calls = [
+        c for c in wm.record_collector_run.call_args_list
+        if c[0][0].source_system == "velocloud"
+    ]
+    assert len(velo_calls) >= 1
+
+
+@pytest.mark.asyncio
+async def test_pipeline_velocloud_api_failure_nonfatal():
+    """VeloCloud failure does not crash the pipeline."""
+    import worker.main as wm
+
+    async def _collect(since=None):
+        return CollectorOutcome(
+            collector_id="mist-events", source_system="mist",
+            status="success", events=_make_events_for_cascade())
+
+    wm.MistCollector = MagicMock()
+    wm.MistCollector.return_value.collect = _collect
+
+    wm.MistInventoryCollector = MagicMock()
+    wm.MistInventoryCollector.return_value.collect = AsyncMock(
+        return_value=CollectorOutcome(
+            collector_id="mist-inventory", source_system="mist", events=[]))
+
+    for name in ["DNACCollector", "MistTopologyCollector",
+                 "AristaWlcCollector"]:
+        c = MagicMock()
+        c.return_value.is_configured = False
+        setattr(wm, name, c)
+
+    vc_collector = MagicMock()
+    vc_collector.return_value.is_configured = True
+    vc_collector.return_value.collect_all = AsyncMock(
+        side_effect=Exception("VCO API unreachable"))
+    wm.VeloCloudCollector = vc_collector
+
+    wm.VelocloudInventoryCollector = MagicMock()
+    wm.VelocloudInventoryCollector.return_value.collect = AsyncMock(
+        return_value=CollectorOutcome(
+            collector_id="velo-inventory", source_system="velocloud",
+            events=[]))
+
+    wm.TopologySync = MagicMock()
+    wm.TopologySync.return_value.sync = AsyncMock()
+
+    tp = MagicMock()
+    tp.return_value.get_parent_child_map = AsyncMock(return_value={})
+    wm.DatabaseTopologyProvider = tp
+
+    wm.insert_events = AsyncMock()
+    wm.upsert_incident = AsyncMock()
+    wm.link_events_to_incident = AsyncMock()
+    wm.record_worker_heartbeat = AsyncMock()
+    wm.record_collector_run = AsyncMock()
+
+    daemon = wm.WorkerDaemon()
+    wm.upsert_incident.reset_mock()
+
+    try:
+        await daemon.run_once()
+    except Exception:
+        pytest.fail("VeloCloud failure should not propagate")
+
+    # Mist events should still produce incidents
+    assert wm.upsert_incident.called, (
+        "Incidents should still be created despite VeloCloud failure"
+    )

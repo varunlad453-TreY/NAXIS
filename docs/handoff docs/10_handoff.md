@@ -2,7 +2,6 @@
 
 **Date:** 2026-07-11
 **Project:** Network Resilient Platform (Naxis)
-**AI Agent:** opencode (deepseek-v4-flash-free)
 
 ---
 

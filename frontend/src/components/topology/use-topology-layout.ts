@@ -1,7 +1,7 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { Node, Edge } from "reactflow";
 import type { TopologyNode, TopologyEdge } from "@/types/topology";
-import { buildGroupedLayout } from "./layout";
+import { buildGroupedLayout, buildLayout } from "./layout";
 import type { GroupedLayoutResult } from "./layout";
 
 export interface UseTopologyLayoutInput {
@@ -10,6 +10,7 @@ export interface UseTopologyLayoutInput {
   highlightSet: Set<string>;
   expandedSites: Set<string>;
   activeTypeFilters: Set<string>;
+  grouped?: boolean;
 }
 
 export interface UseTopologyLayoutResult {
@@ -19,7 +20,12 @@ export interface UseTopologyLayoutResult {
 }
 
 export function useTopologyLayout(input: UseTopologyLayoutInput): UseTopologyLayoutResult {
-  const { nodes, edges, highlightSet, expandedSites, activeTypeFilters } = input;
+  const { nodes, edges, highlightSet, expandedSites, activeTypeFilters, grouped = true } = input;
+
+  const flatResult = useMemo(
+    () => grouped ? null : buildLayout(nodes, edges, highlightSet),
+    [grouped, nodes, edges, highlightSet],
+  );
 
   const [result, setResult] = useState<GroupedLayoutResult>({
     nodes: [],
@@ -85,10 +91,19 @@ export function useTopologyLayout(input: UseTopologyLayoutInput): UseTopologyLay
         highlightNodeIds: Array.from(highlightSet),
         expandedSiteIds: Array.from(expandedSites),
         activeTypeFilterTypes: Array.from(activeTypeFilters),
+        grouped: true,
       },
       _requestId: id,
     });
   }, [nodes, edges, highlightSet, expandedSites, activeTypeFilters]);
+
+  if (!grouped && flatResult) {
+    return {
+      layoutNodes: flatResult.nodes,
+      layoutEdges: flatResult.edges,
+      isComputing: false,
+    };
+  }
 
   return {
     layoutNodes: result.nodes,

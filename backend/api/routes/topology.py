@@ -15,6 +15,9 @@ from api.models.topology_models import (
     BlastRadiusResponse,
     HealthSnapshot,
     NodeHealthHistoryResponse,
+    SiteDeviceTypeBreakdown,
+    SiteHealthCounts,
+    SiteSummaryResponse,
     TopologyBackboneNode,
     TopologyBackboneResponse,
     TopologyEdge,
@@ -146,13 +149,11 @@ _SITE_DEVICE_COUNTS_QUERY = """
     GROUP BY site_id
 """
 
-_SITE_DEVICE_HEALTH_QUERY = """
-    SELECT n.site_id,
-           COUNT(*) FILTER (WHERE n.health_status = 'critical') AS critical_count,
-           COUNT(*) FILTER (WHERE n.health_status = 'warning') AS warning_count
-    FROM topology_nodes n
-    WHERE n.node_type != 'site' AND n.site_id IS NOT NULL AND n.site_id != ''
-    GROUP BY n.site_id
+_CHILD_NODES_BY_SITE = """
+    SELECT node_id, site_id, node_type, name, ip_address, vendor, model, props, updated_at
+    FROM topology_nodes
+    WHERE node_type != 'site' AND site_id IS NOT NULL AND site_id != ''
+    ORDER BY site_id
 """
 
 _INTER_SITE_EDGES_QUERY = """
@@ -180,9 +181,26 @@ _EDGES_FOR_SITE_IDS = """
     JOIN topology_nodes n1 ON e.src_id = n1.node_id
     JOIN topology_nodes n2 ON e.dst_id = n2.node_id
     WHERE (n1.site_id = $1 OR n2.site_id = $1)
-      AND e.edge_type != 'site_membership'
     ORDER BY e.src_id ASC, e.dst_id ASC
 """
+
+_SITE_DEVICE_TYPE_BREAKDOWN = """
+    SELECT node_type, COUNT(*) AS cnt
+    FROM topology_nodes
+    WHERE site_id = $1 AND node_type != 'site'
+    GROUP BY node_type
+    ORDER BY cnt DESC
+"""
+
+_SITE_DEVICE_VENDOR_BREAKDOWN = """
+    SELECT COALESCE(NULLIF(vendor, ''), 'unknown') AS vendor, COUNT(*) AS cnt
+    FROM topology_nodes
+    WHERE site_id = $1 AND node_type != 'site'
+    GROUP BY vendor
+    ORDER BY cnt DESC
+"""
+
+
 
 async def _enrich_health(nodes: List[TopologyNode]) -> None:
     """Derive live health status for each node from recent events and inventory."""
@@ -358,9 +376,34 @@ async def get_topology_backbone() -> TopologyBackboneResponse:
         count_rows = await db.fetch(_SITE_DEVICE_COUNTS_QUERY) if site_ids_list else []
         device_counts = {r["site_id"]: int(r["device_count"]) for r in count_rows}
 
+        child_rows = await db.fetch(_CHILD_NODES_BY_SITE) if site_ids_list else []
+        child_nodes_by_site: dict = {}
+        for cr in child_rows:
+            sid = cr["site_id"] or ""
+            if sid not in child_nodes_by_site:
+                child_nodes_by_site[sid] = []
+            child_nodes_by_site[sid].append(_row_to_node(cr))
+
+        # Compute health for child devices once, then count per site
+        all_child_nodes = []
+        for sid in child_nodes_by_site:
+            all_child_nodes.extend(child_nodes_by_site[sid])
+        await _enrich_health(all_child_nodes)
+
+        health_counts: dict = {}
+        for node in all_child_nodes:
+            sid = node.site_id
+            if sid not in health_counts:
+                health_counts[sid] = {"critical_count": 0, "warning_count": 0}
+            if node.health_status == "critical":
+                health_counts[sid]["critical_count"] += 1
+            elif node.health_status == "warning":
+                health_counts[sid]["warning_count"] += 1
+
         nodes = []
         for r in site_rows:
             sid = r["site_id"] or ""
+            hc = health_counts.get(sid, {"critical_count": 0, "warning_count": 0})
             bn = TopologyBackboneNode(
                 node_id=r["node_id"],
                 node_type=r["node_type"],
@@ -371,6 +414,8 @@ async def get_topology_backbone() -> TopologyBackboneResponse:
                 site_id=sid,
                 site_name=None,
                 device_count=device_counts.get(sid, 0),
+                critical_count=hc["critical_count"],
+                warning_count=hc["warning_count"],
             )
             nodes.append(bn)
 
@@ -446,6 +491,67 @@ async def get_site_internal_topology(site_id: str) -> TopologyGraphResponse:
         )
     except Exception as exc:
         logger.error("Error fetching site internal topology for %s: %s", site_id, exc, exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@router.get(
+    "/sites/{site_id}/summary",
+    response_model=SiteSummaryResponse,
+    summary="Get summary for a single site — device counts by type, vendor, and health",
+)
+async def get_site_summary(site_id: str) -> SiteSummaryResponse:
+    """Return a summary of devices within a site: type breakdown, vendor breakdown, health breakdown."""
+    try:
+        if not db.pool:
+            return SiteSummaryResponse(site_id=site_id)
+
+        type_rows = await db.fetch(_SITE_DEVICE_TYPE_BREAKDOWN, site_id)
+        vendor_rows = await db.fetch(_SITE_DEVICE_VENDOR_BREAKDOWN, site_id)
+
+        # Fetch child nodes and compute health in Python (health_status is not a DB column)
+        child_node_rows = await db.fetch(_NODES_BY_SITE_QUERY, site_id)
+        child_nodes = [_row_to_node(r) for r in child_node_rows if r["node_type"] != "site"]
+        await _enrich_health(child_nodes)
+
+        # Resolve site name
+        site_name = None
+        try:
+            name_rows = await db.fetch(_SITE_NAME_QUERY, [site_id])
+            if name_rows:
+                site_name = name_rows[0]["site_name"] or site_id
+        except Exception:
+            pass
+
+        by_type = [
+            SiteDeviceTypeBreakdown(type=r["node_type"], count=int(r["cnt"]))
+            for r in type_rows
+        ]
+        by_vendor = [
+            SiteDeviceTypeBreakdown(type=r["vendor"], count=int(r["cnt"]))
+            for r in vendor_rows
+        ]
+
+        health_map: dict = {"healthy": 0, "warning": 0, "critical": 0, "unknown": 0}
+        for node in child_nodes:
+            status = node.health_status or "unknown"
+            health_map[status] = health_map.get(status, 0) + 1
+        total_devices = sum(health_map.values())
+
+        return SiteSummaryResponse(
+            site_id=site_id,
+            site_name=site_name,
+            total_devices=total_devices,
+            health=SiteHealthCounts(
+                healthy_count=health_map.get("healthy", 0),
+                warning_count=health_map.get("warning", 0),
+                critical_count=health_map.get("critical", 0),
+                unknown_count=health_map.get("unknown", 0),
+            ),
+            by_type=by_type,
+            by_vendor=by_vendor,
+        )
+    except Exception as exc:
+        logger.error("Error fetching site summary for %s: %s", site_id, exc, exc_info=True)
         raise HTTPException(status_code=500, detail="Internal server error")
 
 

@@ -1,4 +1,4 @@
-import { buildGroupedLayout } from "./layout";
+import { buildGroupedLayout, buildLayout } from "./layout";
 import type { TopologyNode, TopologyEdge } from "@/types/topology";
 
 export interface WorkerComputeRequest {
@@ -9,6 +9,7 @@ export interface WorkerComputeRequest {
     highlightNodeIds: string[];
     expandedSiteIds: string[];
     activeTypeFilterTypes: string[];
+    grouped: boolean;
   };
   _requestId: number;
 }
@@ -26,13 +27,31 @@ export interface WorkerResultResponse {
 self.onmessage = (e: MessageEvent<WorkerComputeRequest>) => {
   if (e.data.type !== "COMPUTE") return;
 
-  const { nodes, edges, highlightNodeIds, expandedSiteIds, activeTypeFilterTypes } = e.data.payload;
+  const { nodes, edges, highlightNodeIds, grouped } = e.data.payload;
   const _requestId = e.data._requestId;
+  const highlightSet = new Set(highlightNodeIds);
+
+  if (!grouped) {
+    const result = buildLayout(nodes, edges, highlightSet);
+    const response: WorkerResultResponse = {
+      type: "RESULT",
+      payload: {
+        nodes: result.nodes,
+        edges: result.edges,
+        crossSiteEdgeCounts: {},
+      },
+      _requestId,
+    };
+    self.postMessage(response);
+    return;
+  }
+
+  const { expandedSiteIds, activeTypeFilterTypes } = e.data.payload;
 
   const result = buildGroupedLayout(
     nodes,
     edges,
-    new Set(highlightNodeIds),
+    highlightSet,
     new Set(expandedSiteIds),
     new Set(activeTypeFilterTypes),
   );

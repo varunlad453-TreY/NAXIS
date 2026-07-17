@@ -17,14 +17,16 @@ import {
   NodeProps,
 } from "reactflow";
 import "reactflow/dist/style.css";
-import { Search, X } from "lucide-react";
+import { Search, X, Layers } from "lucide-react";
 
-import type { TopologyGraphResponse } from "@/types/topology";
-import { NODE_TYPE_META, HEALTH_STATUS_META } from "@/types/topology";
+import type { TopologyGraphResponse, DeviceCategory } from "@/types/topology";
+import { NODE_TYPE_META, HEALTH_STATUS_META, AGGREGATED_VIEW_THRESHOLD } from "@/types/topology";
 import { NODE_WIDTH, NODE_HEIGHT } from "./layout";
 import { useTopologyLayout } from "./use-topology-layout";
 import { api } from "@/lib/api";
 import { TopologySidePanel, type PanelMode } from "./topology-side-panel";
+import { AggregatedView } from "./aggregated-view";
+import { ContextGraph } from "./context-graph";
 
 interface TopologyGraphProps {
   data: TopologyGraphResponse;
@@ -242,10 +244,44 @@ export function TopologyGraph({
   const [fitViewKey, setFitViewKey] = useState(0);
   const [panelMode, setPanelMode] = useState<PanelMode>(incidentId ? "incident" : null);
   const [expandedSites, setExpandedSites] = useState<Set<string>>(new Set());
-  const [activeTypeFilters, setActiveTypeFilters] = useState<Set<string>>(new Set(["switch", "site"]));
+  const [activeTypeFilters, setActiveTypeFilters] = useState<Set<string>>(
+    () => new Set(Object.keys(NODE_TYPE_META)),
+  );
   const [searchQuery, setSearchQuery] = useState("");
   const [showSearch, setShowSearch] = useState(false);
   const searchRef = useRef<HTMLDivElement>(null);
+  const firstFitDone = useRef(false);
+
+  const largeSite = data.nodes.length - data.nodes.filter((n) => n.node_type === "site").length >= AGGREGATED_VIEW_THRESHOLD;
+  const [viewMode, setViewMode] = useState<"auto" | "aggregated" | "flat" | "context">("auto");
+  const [contextNode, setContextNode] = useState<{ id: string; name: string } | null>(null);
+
+  const resolvedMode = useMemo(() => {
+    if (contextNode) return "context";
+    if (viewMode === "flat") return "flat";
+    if (viewMode === "aggregated") return "aggregated";
+    if (viewMode === "auto" && largeSite) return "aggregated";
+    return "flat";
+  }, [viewMode, contextNode, largeSite]);
+
+  const handleContextSelect = useCallback((nodeId: string, nodeName: string) => {
+    setContextNode({ id: nodeId, name: nodeName });
+  }, []);
+
+  const handleContextBack = useCallback(() => {
+    setContextNode(null);
+  }, []);
+
+  const handleFlatView = useCallback(() => {
+    setViewMode("flat");
+  }, []);
+
+  const singleSite = useMemo(() => {
+    const nonSite = data.nodes.filter((n) => n.node_type !== "site");
+    if (nonSite.length === 0) return false;
+    const siteIds = new Set(nonSite.map((n) => n.site_id).filter(Boolean));
+    return siteIds.size <= 1;
+  }, [data.nodes]);
 
   const allSiteIds = useMemo(() => {
     return data.nodes.filter((n) => n.node_type === "site" && n.site_id).map((n) => n.site_id!);
@@ -262,6 +298,7 @@ export function TopologyGraph({
     highlightSet,
     expandedSites,
     activeTypeFilters,
+    grouped: !singleSite,
   });
 
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
@@ -386,6 +423,16 @@ export function TopologyGraph({
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
+  useEffect(() => {
+    if (reactFlowInstance && !isComputing && initialNodes.length > 0 && !firstFitDone.current) {
+      firstFitDone.current = true;
+      const timer = setTimeout(() => {
+        reactFlowInstance.fitView({ padding: 0.2, duration: 300 });
+      }, 150);
+      return () => clearTimeout(timer);
+    }
+  }, [reactFlowInstance, isComputing, initialNodes.length]);
+
   const onNodeClickHandler = useCallback(
     (_event: React.MouseEvent, node: Node) => {
       if (node.type === "siteGroup") {
@@ -446,6 +493,28 @@ export function TopologyGraph({
     );
   }
   if (!data.nodes.length) return <TopologyEmptyState />;
+
+  if (resolvedMode === "context" && contextNode) {
+    return (
+      <ContextGraph
+        nodeId={contextNode.id}
+        nodeName={contextNode.name}
+        onBack={handleContextBack}
+        onNodeClick={handleContextSelect}
+        allNodeIds={data.nodes.map((n) => n.node_id)}
+      />
+    );
+  }
+
+  if (resolvedMode === "aggregated") {
+    return (
+      <AggregatedView
+        data={data}
+        onContextSelect={handleContextSelect}
+        onFlatView={handleFlatView}
+      />
+    );
+  }
 
   return (
     <div className="space-y-3">
@@ -573,27 +642,31 @@ export function TopologyGraph({
           )}
         </div>
 
-        {/* Right group: expand/collapse + fit view */}
+        {/* Right group: expand/collapse (multi-site only) + fit view */}
         <div className="flex items-center gap-2">
-          <span className="text-xs text-foreground-subtle">
-            {expandedSites.size === 0
-              ? "All sites collapsed"
-              : `${expandedSites.size}/${allSiteIds.length} sites expanded`}
-          </span>
-          <button
-            onClick={collapseAll}
-            disabled={expandedSites.size === 0}
-            className="inline-flex items-center gap-1.5 rounded-md border border-border/60 px-2.5 py-1.5 text-xs font-medium text-foreground-muted transition-colors hover:bg-surface hover:text-foreground disabled:cursor-not-allowed disabled:opacity-30"
-          >
-            Collapse all
-          </button>
-          <button
-            onClick={expandAll}
-            disabled={expandedSites.size === allSiteIds.length}
-            className="inline-flex items-center gap-1.5 rounded-md border border-border/60 px-2.5 py-1.5 text-xs font-medium text-foreground-muted transition-colors hover:bg-surface hover:text-foreground disabled:cursor-not-allowed disabled:opacity-30"
-          >
-            Expand all
-          </button>
+          {!singleSite && (
+            <>
+              <span className="text-xs text-foreground-subtle">
+                {expandedSites.size === 0
+                  ? "All sites collapsed"
+                  : `${expandedSites.size}/${allSiteIds.length} sites expanded`}
+              </span>
+              <button
+                onClick={collapseAll}
+                disabled={expandedSites.size === 0}
+                className="inline-flex items-center gap-1.5 rounded-md border border-border/60 px-2.5 py-1.5 text-xs font-medium text-foreground-muted transition-colors hover:bg-surface hover:text-foreground disabled:cursor-not-allowed disabled:opacity-30"
+              >
+                Collapse all
+              </button>
+              <button
+                onClick={expandAll}
+                disabled={expandedSites.size === allSiteIds.length}
+                className="inline-flex items-center gap-1.5 rounded-md border border-border/60 px-2.5 py-1.5 text-xs font-medium text-foreground-muted transition-colors hover:bg-surface hover:text-foreground disabled:cursor-not-allowed disabled:opacity-30"
+              >
+                Expand all
+              </button>
+            </>
+          )}
           <button
             onClick={onFitView}
             className="inline-flex items-center gap-1.5 rounded-md border border-border/60 px-3 py-1.5 text-xs font-medium text-foreground-muted transition-colors hover:bg-surface hover:text-foreground"
