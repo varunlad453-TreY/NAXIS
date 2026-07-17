@@ -19,6 +19,7 @@ import logging
 import os
 import signal
 import sys
+import time
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -29,6 +30,10 @@ from shared.database.collector_telemetry import (
     ensure_collector_telemetry_schema,
     record_collector_run,
     record_worker_heartbeat,
+)
+from shared.database.correlation_telemetry import (
+    ensure_correlation_telemetry_schema,
+    save_correlation_telemetry,
 )
 from shared.database.events import insert_events, link_events_to_incident
 from shared.database.incidents import upsert_incident
@@ -63,9 +68,9 @@ class WorkerDaemon:
       1. Writes a worker heartbeat (so the UI can show liveness)
       2. Runs each enabled collector and records the outcome in the ledger
       3. Persists normalised events to Postgres
-      4. Runs correlation engine → produces Incidents, persists to DB, links events
-      5. Publishes new incidents to Redis (if enabled)
-      6. (TODO) Syncs topology
+      4. Syncs topology (populates topology_nodes/edges for cascade)
+      5. Runs correlation engine → produces Incidents, persists to DB, links events
+      6. Publishes new incidents to Redis (if enabled)
     """
 
     def __init__(self):
@@ -97,6 +102,15 @@ class WorkerDaemon:
             topology_provider=topology_provider,
         )
         self._redis_client = get_redis_client() if _settings.redis_enabled else None
+        if _settings.redis_enabled:
+            logger.info(
+                "Redis pub/sub: enabled (channel=naxis:incidents, url=%s)",
+                _settings.redis_url,
+            )
+        else:
+            logger.info(
+                "Redis pub/sub: disabled (set REDIS_ENABLED=true to enable)"
+            )
 
     # ------------------------------------------------------------------
     # Pipeline
@@ -129,15 +143,43 @@ class WorkerDaemon:
             await insert_events(all_events)
             logger.info("Persisted %d events to Postgres", len(all_events))
 
+        # Sync topology before correlation so Stage 2 cascade has
+        # populated topology_nodes/edges to query against
+        try:
+            await self._topology_sync.sync()
+        except Exception:
+            logger.exception("Topology sync failed — continuing")
+
         # Correlate events into incidents
         if all_events:
+            t0 = time.monotonic()
             incidents = await self._correlation_engine.process_events(all_events)
+            duration_ms = (time.monotonic() - t0) * 1000
+
             if incidents:
+                cascade_count = sum(
+                    1 for i in incidents
+                    if "failure cascading" in i.title.lower()
+                )
+                residual_count = len(incidents) - cascade_count
+
                 logger.info(
-                    "Correlation produced %d incident(s) from %d event(s)",
+                    "Correlation: %d incident(s) from %d event(s) "
+                    "(cascade=%d, residual=%d, topology=%s) in %.0fms",
                     len(incidents),
                     len(all_events),
+                    cascade_count,
+                    residual_count,
+                    "yes" if self._correlation_engine._topology_cascade else "no",
+                    duration_ms,
                 )
+
+                if cascade_count == 0 and residual_count > 0 and self._correlation_engine._topology_cascade:
+                    logger.warning(
+                        "No cascade incidents created — topology may be empty "
+                        "or cascade rule misconfigured"
+                    )
+
                 for incident in incidents:
                     await upsert_incident(incident)
                     await link_events_to_incident(
@@ -147,12 +189,16 @@ class WorkerDaemon:
                         await self._redis_client.publish_incident(
                             incident.to_db_dict()
                         )
+            else:
+                logger.debug("Correlation: no incidents from %d events", len(all_events))
 
-        # Sync topology after collection
-        try:
-            await self._topology_sync.sync()
-        except Exception:
-            logger.exception("Topology sync failed — continuing")
+            # Persist engine telemetry for the API to consume
+            try:
+                stats = self._correlation_engine.get_stats()
+                stats["last_duration_ms"] = duration_ms  # override with wall-clock time
+                await save_correlation_telemetry(stats, worker_id=self._worker_id)
+            except Exception:
+                logger.exception("Failed to persist correlation telemetry")
 
         logger.debug("Worker pass complete")
 
@@ -270,7 +316,12 @@ class WorkerDaemon:
         await db.connect()
         try:
             await ensure_collector_telemetry_schema()
+            await ensure_correlation_telemetry_schema()
             logger.info("Telemetry schema ensured")
+
+            # Verify Redis connectivity at startup (non-blocking)
+            if self._redis_client:
+                await self._redis_client.warm_up()
 
             while self._running:
                 try:

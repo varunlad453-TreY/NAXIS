@@ -202,7 +202,15 @@ class Incident(BaseModel):
     # ------------------------------------------------------------------
 
     def to_db_dict(self) -> Dict[str, Any]:
-        """Convert to a database row dict (matches schemas/postgres/001_init.sql)."""
+        """Convert to a database row dict (matches schemas/postgres/001_init.sql).
+
+        Notes:
+          - event_count is intentionally excluded — it is computed from
+            len(related_event_ids) and is NOT a column in the incidents
+            table (001_init.sql).
+          - probable_cause preserves None so the frontend can distinguish
+            "RCA not yet run" (null) from "RCA found nothing" (empty string).
+        """
         return {
             "incident_id": self.incident_id,
             "title": self.title,
@@ -212,9 +220,8 @@ class Incident(BaseModel):
             "affected_devices": list(self.affected_devices),
             "affected_clients": list(self.affected_clients),
             "related_event_ids": list(self.related_event_ids),
-            "probable_cause": self.probable_cause or "",
+            "probable_cause": self.probable_cause,
             "confidence_score": float(self.confidence_score),
-            "event_count": self.event_count(),
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }

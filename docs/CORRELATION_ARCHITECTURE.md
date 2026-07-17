@@ -524,7 +524,11 @@ They become a "residual" flat Stage 1 incident. Nothing is silently dropped.
 
 ### How does deduplication work?
 
-The engine tracks `event_id` values in `_processed_events: Set[str]`. On each call to `process_events()`, it filters out any events whose IDs are already in the set. `reset()` clears the cache. The dedup is per-engine-instance — restarting the process or creating a new engine starts fresh.
+The engine tracks `event_id` values in `_processed_events: OrderedDict[str, datetime]`. On each call to `process_events()`, it filters out any events whose IDs are already in the set. The tracker has a **200k entry cap** (oldest evicted first) and a **24-hour TTL** — events older than 24 hours are automatically removed at the start of each cycle.
+
+On worker restart, the engine loads all event IDs already linked to existing incidents from the database (`SELECT DISTINCT unnest(related_event_ids) FROM incidents`), so past events are never re-processed.
+
+This is a belt-and-suspenders approach: deterministic incident IDs (`inc-{sha256}...`) ensure even if an event somehow sneaks through, `ON CONFLICT DO UPDATE` at the DB level prevents duplicate rows.
 
 ### Can events from different vendors be correlated together?
 
@@ -540,25 +544,206 @@ The `default_config` fixture sets `topology_cascade_enabled=False` so existing S
 
 ---
 
+## 12. Operational Metrics (Phase 3)
+
+### Telemetry Counters
+
+The engine tracks internal counters visible via `CorrelationEngine.get_stats()`:
+
+| Counter | Type | Description |
+|---------|------|-------------|
+| `cycle_count` | int | Total correlation cycles run since engine start/reset |
+| `total_events_processed` | int | Cumulative events processed across all cycles |
+| `total_incidents_created` | int | Cumulative incidents created |
+| `cascade_incidents` | int | Incidents with topology-aware cascade titles |
+| `residual_incidents` | int | Flat incidents for events not assigned by cascade |
+| `processed_set_size` | int | Current size of the in-memory processed-event tracker |
+| `last_duration_ms` | float | Wall-clock duration of the most recent cycle |
+| `last_cycle_events` | int | Events processed in the most recent cycle |
+| `last_cycle_incidents` | int | Incidents created in the most recent cycle |
+| `cascade_enabled` | bool | Whether topology cascade was active |
+
+### DB Persistence
+
+Since the worker and API run as **separate processes**, telemetry is persisted to the `correlation_telemetry` table after each cycle. The API reads the latest row to avoid needing in-process access to `WorkerDaemon`.
+
+```sql
+CREATE TABLE correlation_telemetry (
+    id                      BIGSERIAL   PRIMARY KEY,
+    cycle_count             INTEGER     NOT NULL,
+    total_events_processed  INTEGER     NOT NULL,
+    total_incidents_created INTEGER     NOT NULL,
+    cascade_incidents       INTEGER     NOT NULL,
+    residual_incidents      INTEGER     NOT NULL,
+    processed_set_size      INTEGER     NOT NULL,
+    last_duration_ms        REAL        NOT NULL DEFAULT 0,
+    last_cycle_events       INTEGER     NOT NULL DEFAULT 0,
+    last_cycle_incidents    INTEGER     NOT NULL DEFAULT 0,
+    cascade_enabled         BOOLEAN     NOT NULL DEFAULT FALSE,
+    worker_id               TEXT,
+    recorded_at             TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+```
+
+### Structured Logging
+
+The worker logs a structured summary after every correlation cycle:
+
+```
+Correlation: 5 incident(s) from 245 event(s) (cascade=3, residual=2, topology=yes) in 234ms
+```
+
+A warning is emitted when cascade is enabled but zero cascade incidents are produced (possible topology misconfiguration):
+
+```
+No cascade incidents created — topology may be empty or cascade rule misconfigured
+```
+
+### API Endpoint
+
+`GET /correlation/stats` returns the latest telemetry from the DB:
+
+```json
+{
+  "status": "active",
+  "stats": {
+    "cycle_count": 1423,
+    "total_events_processed": 8452192,
+    "total_incidents_created": 12453,
+    "cascade_incidents": 8902,
+    "residual_incidents": 3551,
+    "processed_set_size": 184512,
+    "last_duration_ms": 234.5,
+    "last_cycle_events": 125,
+    "last_cycle_incidents": 3,
+    "cascade_enabled": true,
+    "worker_id": "worker-abc123",
+    "recorded_at": "2026-07-17T10:30:00.123456+00:00"
+  }
+}
+```
+
+Returns `{"status": "no_data", "message": "..."}` when the worker hasn't run yet, and `{"status": "inactive"}` when the engine has zero cycles.
+
+### How to Alert
+
+| Condition | Recommended Alert |
+|-----------|------------------|
+| `last_cycle_incidents == 0` for 5+ consecutive cycles | Possible correlation stall — check topology and event flow |
+| `cascade_incidents == 0` while `total_incidents_created > 10` | All incidents are residual — topology resolution may be failing |
+| `last_cycle_events == 0` for 3+ cycles | Collectors may be down or events not flowing |
+| `processed_set_size` approaching 200k | Normal under sustained load; eviction is automatic |
+
+---
+
+## 13. Redis Pub/Sub for Live Notifications (Phase 4)
+
+### Architecture
+
+```
+Worker ──→ PostgreSQL (primary persistence)
+   │
+   └──→ Redis (pub/sub channel "naxis:incidents")
+              │
+              └──→ Future: SSE / WebSocket endpoint
+                    for real-time frontend push
+```
+
+Redis is an **optional, non-blocking add-on**. The worker persists all incidents to PostgreSQL first, then publishes a copy to Redis. If Redis is down or misconfigured, the worker logs a warning and continues — no data loss.
+
+### Redis Client
+
+`RedisClient` (`backend/shared/database/redis.py`) is a singleton with:
+
+| Method | Purpose |
+|--------|---------|
+| `publish_incident(incident_dict)` | Serializes incident as JSON and publishes to `naxis:incidents` channel. Failures are caught and logged — never raised. |
+| `health()` | Returns `True`/`False` by calling `PING`. |
+| `warm_up()` | Pre-connects at worker startup so the first publish is not delayed. Returns `False` if unreachable (caller logs the warning, not the method). |
+| `close()` | Clean shutdown of the underlying connection. |
+
+### Graceful Degradation
+
+The worker logs a clear message on startup:
+
+```
+Redis pub/sub: enabled (channel=naxis:incidents, url=redis://localhost:6379/0)
+```
+
+or:
+
+```
+Redis pub/sub: disabled (set REDIS_ENABLED=true to enable)
+```
+
+If Redis is configured but unreachable at startup, the `warm_up()` check fails and a warning is logged:
+
+```
+Redis is configured (REDIS_ENABLED=true) but unreachable at redis://localhost:6379/0
+— running without pub/sub. Incidents will be persisted to the database but live
+push notifications will not be available.
+```
+
+The worker continues running. Every `publish_incident()` call is individually guarded with `try/except` and logs a warning on failure.
+
+### Configuration (settings.py)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `REDIS_URL` | `redis://localhost:6379/0` | Redis connection string |
+| `REDIS_ENABLED` | `false` | Enable Redis pub/sub for live incident push |
+| `REDIS_MAX_CONNECTIONS` | `10` | Connection pool size |
+
+### Channel Protocol
+
+The `naxis:incidents` channel carries JSON payloads matching the incident DB schema:
+
+```json
+{
+  "incident_id": "inc-a1b2c3d4e5f6g7h8",
+  "title": "core-switch-01 — failure cascading to 3 dependent devices",
+  "severity": "critical",
+  "status": "open",
+  "affected_sites": ["site-sfo-01"],
+  "affected_devices": ["core-switch-01", "ap-sfo-101", "ap-sfo-102", "ap-sfo-103"],
+  "related_event_ids": ["evt-001", "evt-002", "evt-003", "evt-004"],
+  "probable_cause": null,
+  "confidence_score": 0.82,
+  "created_at": "...",
+  "updated_at": "..."
+}
+```
+
+Consumers subscribe to `naxis:incidents` and can filter by `severity`, `site_id`, etc. server-side once an SSE/WebSocket endpoint is built.
+
+---
+
 ## Appendix: File Reference
 
 | File | Lines | Purpose |
 |------|-------|---------|
 | `backend/shared/correlation/__init__.py` | 37 | Module exports |
-| `backend/shared/correlation/engine.py` | 398 | `CorrelationEngine` — main entry point, incident creation, cascade integration |
+| `backend/shared/correlation/engine.py` | 677 | `CorrelationEngine` — main entry point, incident creation, cascade integration, telemetry counters |
 | `backend/shared/correlation/rules.py` | 585 | `SiteTimeWindowRule`, `TopologyCascadeRule`, `CascadeGroup`, `TopologyProvider`, grouping, confidence, title |
 | `backend/shared/models/event.py` | — | `UnifiedEvent`, `DeviceInfo`, `ClientInfo`, `EventSeverity`, `EventCategory`, etc. |
 | `backend/shared/models/incident.py` | — | `Incident` Pydantic model with blast radius, confidence, lifecycle |
 | `backend/config/settings.py` | — | `CorrelationSettings` (env var → config mapping, lines ~85-99) |
+| `backend/shared/database/correlation_telemetry.py` | 128 | DB persistence for engine telemetry (write after each cycle, read for API) |
+| `backend/shared/database/redis.py` | 98 | `RedisClient` singleton — async pub/sub for live incident notifications |
+| `backend/worker/main.py` | 370 | `WorkerDaemon` — pipeline: collect → persist → topology sync → correlate → publish → telemetry |
+| `backend/api/routes/correlation.py` | 59 | `GET /correlation/stats` — latest engine telemetry for monitoring |
+| `schemas/postgres/006_correlation_telemetry.sql` | 30 | Correlation telemetry table schema |
 | `backend/tests/conftest.py` | 537 | `make_event()`, `MockTopologyProvider`, all fixtures |
-| `backend/tests/test_correlation_engine.py` | 1020 | 78 tests across 13 test classes |
-| `backend/worker/main.py` | — | WorkerDaemon with `# TODO: correlate + create incidents` (line ~106) |
+| `backend/tests/test_correlation_engine.py` | 1220 | 87 tests across 15 test classes (incl. 8 telemetry tests) |
+| `backend/tests/test_correlation_telemetry.py` | 173 | 9 tests for DB persistence layer + API endpoint |
+| `backend/tests/test_correlation_pipeline.py` | 340 | 9 full-pipeline integration tests (incl. 2 Redis pub/sub tests) |
+| `backend/tests/test_redis_client.py` | 195 | 11 unit tests for RedisClient (publish, health, warm_up, close, singleton) |
 | `docs/5_handoff.md` | — | AI session handoff (not for human onboarding) |
 | `docs/why/why-correlation-engine.md` | 216 | Product rationale and business case for the engine |
 
 ---
 
-**Document Version:** 2.0
-**Last Updated:** 2026-07-07
+**Document Version:** 3.0
+**Last Updated:** 2026-07-17
 **Authors:** Naxis Development Team
 **License:** MIT
