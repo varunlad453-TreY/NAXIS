@@ -168,11 +168,26 @@ export function TopologyGraph({
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
 
+  const topologySignature = useMemo(() => {
+    const nodeKey = initialNodes.map((n) => n.id).sort().join(",");
+    const edgeKey = initialEdges.map((e) => `${e.source}->${e.target}`).sort().join(",");
+    return `${nodeKey}|${edgeKey}`;
+  }, [initialNodes, initialEdges]);
+
   useEffect(() => {
-    setNodes(initialNodes);
+    setNodes((prev) => {
+      const prevPositions = new Map(prev.map((n) => [n.id, n.position]));
+      return initialNodes.map((n) => {
+        const kept = prevPositions.get(n.id);
+        return kept ? { ...n, position: kept } : n;
+      });
+    });
     setEdges(initialEdges);
-    setFitViewKey((k) => k + 1);
   }, [initialNodes, initialEdges, setNodes, setEdges]);
+
+  useEffect(() => {
+    setFitViewKey((k) => k + 1);
+  }, [topologySignature]);
 
   useEffect(() => {
     if (reactFlowInstance && highlightedNodeIds && highlightedNodeIds.length > 0) {

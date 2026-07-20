@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { Suspense, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useSearchParams } from "next/navigation";
 import { Server, Activity } from "lucide-react";
@@ -9,6 +9,14 @@ import { TopologyGraph } from "@/components/topology";
 import { NODE_TYPE_META } from "@/types/topology";
 
 export default function TopologyPage() {
+  return (
+    <Suspense fallback={null}>
+      <TopologyPageInner />
+    </Suspense>
+  );
+}
+
+function TopologyPageInner() {
   const searchParams = useSearchParams();
   const highlightParam = searchParams.get("highlight");
 

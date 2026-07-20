@@ -73,6 +73,7 @@ class Settings(BaseSettings):
     # VeloCloud
     velocloud_url: str = Field(default="", description="VeloCloud orchestrator URL")
     velocloud_api_key: str = Field(default="", description="VeloCloud API key")
+    velocloud_enterprise_id: str = Field(default="", description="VeloCloud enterprise ID (skip auto-discover)")
     velocloud_enabled: bool = Field(default=False, description="Enable VeloCloud integration")
 
     # Arista WLC
