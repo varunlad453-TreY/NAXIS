@@ -11,6 +11,7 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./schemas/postgres:/docker-entrypoint-initdb.d:ro
+    shm_size: 256mb
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U naxis -d naxis"]
       interval: 10s

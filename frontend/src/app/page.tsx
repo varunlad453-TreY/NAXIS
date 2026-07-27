@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { DashboardBackground } from "@/components/dashboard/dashboard-background";
@@ -28,6 +28,25 @@ function useCount(key: string[], fn: () => Promise<{ total: number }>, placehold
   return { count: data?.total ?? placeholder, isStale: isPlaceholderData };
 }
 
+function useEventCounts() {
+  const c1h = useCount(["events-count", "1h"], () =>
+    api.listEvents({ limit: 1, start_time: new Date(Date.now() - RANGE_MS["1h"]).toISOString() })
+  );
+  const c24h = useCount(["events-count", "24h"], () =>
+    api.listEvents({ limit: 1, start_time: new Date(Date.now() - RANGE_MS["24h"]).toISOString() })
+  );
+  const c7d = useCount(["events-count", "7d"], () =>
+    api.listEvents({ limit: 1, start_time: new Date(Date.now() - RANGE_MS["7d"]).toISOString() })
+  );
+  const c30d = useCount(["events-count", "30d"], () =>
+    api.listEvents({ limit: 1, start_time: new Date(Date.now() - RANGE_MS["30d"]).toISOString() })
+  );
+  return useMemo(
+    () => ({ "1h": c1h, "24h": c24h, "7d": c7d, "30d": c30d } as const),
+    [c1h, c24h, c7d, c30d]
+  );
+}
+
 export default function HomePage() {
   const [showInventory, setShowInventory] = useState(false);
   const [eventRange, setEventRange] = useState<EventRange>("24h");
@@ -44,9 +63,10 @@ export default function HomePage() {
   const { count: sdwanEdgeCount } = useCount(["sdwan-devices-count"], () =>
     api.listDevices({ platform: "velocloud", limit: 1 })
   );
-  const { count: eventCount, isStale: eventCountStale } = useCount(["events-count", eventRange], () =>
-    api.listEvents({ limit: 1, start_time: new Date(Date.now() - RANGE_MS[eventRange]).toISOString() })
-  );
+
+  const eventCounts = useEventCounts();
+  const eventCount = eventCounts[eventRange].count;
+  const eventCountStale = eventCounts[eventRange].isStale;
 
   const isOnline = health?.status === "healthy";
 
