@@ -76,9 +76,9 @@ make up
 ## Integrations
 
 - ✅ **Juniper Mist** — Events + AP inventory (live)
-- ✅ **Cisco DNAC** — Devices, alarms, topology, clients, interfaces (live)
+- ✅ **Cisco DNAC** — Devices, alarms, topology, clients, interfaces (registered)
 - ✅ **Arista SD-WAN (VeloCloud)** — Edge inventory, WAN links, tunnels, events, topology (live)
-- ✅ **Arista WLC** — Clients, APs, radios, events (live)
+- ⬜ **Arista WLC** — Clients, APs, radios, events (code exists, host/password not configured)
 
 ## Project Structure
 

@@ -11,8 +11,11 @@
 - Pre-fetch all 4 ranges on mount for instant switching
 - Keep previous event count during loading (placeholderData)
 - Show `—` on initial blank slate instead of misleading `0`
-- Created DB index ix_events_timestamp on events(timestamp) — COUNT queries 15x faster
-- Increased postgres shm_size from 64MB to 256MB for autovacuum
+- Verified existing ORM index on events.timestamp, removed duplicate index; VACUUM ANALYZE completed
+- Increased postgres shm_size from 64MB to 256MB — query time 10,000ms → 84ms
+- Fixed HeroSection hardcoded "1 Vendors live" → dynamic from topology summary (2)
+- Fixed HeroSection hardcoded "61 Sites" → dynamic from DB (153)
+- Full doc audit: corrected Arista WLC/DNAC status to "not configured", Mist client/radio to "0 rows" across all docs
 
 ## [18] — 2026-07-21 — Phase A–F Completion
 - Fixed dashboard event count to last 24h (was lifetime total)

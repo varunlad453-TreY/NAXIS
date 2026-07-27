@@ -233,23 +233,23 @@ The `WorkerDaemon.run_once()` cycle:
 | `mist-inventory` | Mist API (AP inventory + stats) | ✅ Live |
 | `mist-ap-history` | Mist API (device lifecycle) | ✅ Live |
 | `mist-ap-rf` | Mist API (wireless performance) | ✅ Live |
-| `mist-client-topology` | Mist API (client mapping) | ⚠️ Empty response |
+| `mist-client-topology` | Mist API (client mapping) | ⚠️ 0 rows (client tracking not enabled) |
 | `mist-wired-uplink` | Mist API (AP-to-switch) | ✅ Live |
-| `mist-radio-neighbors` | Mist API (RF interference) | ⚠️ Empty response |
-| `dnac-devices` | DNAC Intent API | ✅ Registered |
-| `dnac-alarms` | DNAC Intent API | ✅ Registered |
-| `dnac-topology` | DNAC Intent API | ✅ Registered |
-| `dnac-clients` | DNAC Intent API | ✅ Registered |
-| `dnac-interfaces` | DNAC Intent API | ✅ Registered |
+| `mist-radio-neighbors` | Mist API (RF interference) | ⚠️ 0 rows (radio scanning not enabled) |
+| `dnac-devices` | DNAC Intent API | ✅ Registered (not configured) |
+| `dnac-alarms` | DNAC Intent API | ✅ Registered (not configured) |
+| `dnac-topology` | DNAC Intent API | ✅ Registered (not configured) |
+| `dnac-clients` | DNAC Intent API | ✅ Registered (not configured) |
+| `dnac-interfaces` | DNAC Intent API | ✅ Registered (not configured) |
 | `velocloud-edges` | VCO API (edge inventory) | ✅ Live |
 | `velocloud-links` | VCO API (link metrics) | ✅ Live |
 | `velocloud-tunnels` | VCO API (tunnel health) | ✅ Live |
 | `velocloud-events` | VCO API (enterprise events) | ✅ Live |
 | `velocloud-apps` | VCO API (application visibility) | ⚠️ mark_skipped (VCO limit) |
-| `arista-wlc-clients` | Arista WLC API (wireless clients) | ✅ Live |
-| `arista-wlc-aps` | Arista WLC API (AP inventory) | ✅ Live |
-| `arista-wlc-radios` | Arista WLC API (channel utilization) | ✅ Live |
-| `arista-wlc-events` | Arista WLC API (controller events) | ✅ Live |
+| `arista-wlc-clients` | Arista WLC API (wireless clients) | ✅ Registered (not configured) |
+| `arista-wlc-aps` | Arista WLC API (AP inventory) | ✅ Registered (not configured) |
+| `arista-wlc-radios` | Arista WLC API (channel utilization) | ✅ Registered (not configured) |
+| `arista-wlc-events` | Arista WLC API (controller events) | ✅ Registered (not configured) |
 
 ### Adding a new collector
 
@@ -397,7 +397,7 @@ Current: **300+ tests, 0 failures**.
 | 16 | VeloCloud end-to-end verification: fix `props` data gap, 151 new tests, topology sync |
 | 17 | Dashboard Collector Health Widget, TelemetryAlertType fix |
 | 18 | Phase A–F completion: 26 items across oversight, pipeline wiring, monitoring, frontend UX, technical debt |
-| 19 | VeloCloud all-5-collectors live, notification system (Slack+email+dedup), dashboard event count UX overhaul, DB index + shm_size |
+| 19 | VeloCloud all-5-collectors live, notification system (Slack+email+dedup), dashboard event count UX overhaul, DB index + shm_size, dynamic vendor/site counts from topology summary |
 
 ---
 

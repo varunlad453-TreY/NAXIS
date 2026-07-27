@@ -17,14 +17,16 @@ This session had three main threads:
 3. **Dashboard event count UX overhaul** — Time-range selector (1h/24h/7d/30d), pre-fetch all 4 ranges on mount, keep previous count during loading, show `—` on blank slate instead of `0`. Plus PostgreSQL index on `events.timestamp` (was declared in ORM but never created in DB — queries went from ~10s to ~650ms).
 
 **Key accomplishments:**
-1. VeloCloud all 5 collectors producing real data (edges=93, links=442, tunnels=0, events=171, inventory=93)
+1. VeloCloud all 5 collectors producing real data (edges=93, links=442, tunnels=0, events=171, inventory=93, topology: 93 edge nodes + 63 wan_gateway + 200 wan_link edges)
 2. Stale `velocloud-auth` entries cleaned from `collector_run_ledger` (9 rows)
 3. Notification system: Slack webhook sender, SMTP email sender, in-memory dedup engine (15-min window)
 4. 11 new env vars in `settings.py` (enable flag, Slack URL, SMTP config, recipients, min failure/skip thresholds)
 5. Dashboard event count time-range selector (1h/24h/7d/30d) — instant switching via pre-fetch
 6. No more `0` flash — `placeholderData` keeps previous count, `—` on initial blank slate
-7. PostgreSQL index `ix_events_timestamp` on `events (timestamp)` — was ORM-declared but never created
-8. Postgres container `shm_size` increased from 64MB to 256MB (autovacuum can keep up)
+7. PostgreSQL index on `events (timestamp)` — verified ORM-created `idx_events_timestamp` existed; removed duplicate `ix_events_timestamp`; VACUUM completed; query 10,000ms → **84ms**
+8. Postgres container `shm_size` increased from 64MB to 256MB; VACUUM ANALYZE completed (19GB table)
+9. Dynamic vendor/site counts — hardcoded "1 Vendors live" → 2 from topology summary; hardcoded "61 Sites" → 153 from DB
+10. Full doc audit against production — corrected Arista WLC (not configured), DNAC (not configured), Mist client/radio (0 rows from API, not errors) across all docs
 
 ---
 
@@ -146,10 +148,20 @@ This session had three main threads:
 | `backend/config/settings.py` | Added `NotificationSettings` with 11 env vars |
 | `backend/worker/main.py` | Imported `dispatch_alerts`, wired after `check_collector_health()` |
 | `.env` | Added commented-out notification settings for discoverability |
-| `frontend/src/app/page.tsx` | `useEventCounts()` fires 4 queries, `useCount` returns `{ count, isStale }`, range pills |
-| `frontend/src/components/dashboard/hero-section.tsx` | Accepts `eventRange`/`eventCountStale`/`eventCount: number`, renders range pills, shows `—` |
+| `frontend/src/app/page.tsx` | `useEventCounts()` fires 4 queries, `useCount` returns `{ count, isStale }`, range pills; added `getTopologySummary()` for live vendor/site counts |
+| `frontend/src/components/dashboard/hero-section.tsx` | Accepts `eventRange`/`eventCountStale`/`eventCount: number`, renders range pills, shows `—`; `vendorCount`/`siteCount` props replace hardcoded "1" and "61" |
 | `frontend/src/components/dashboard/platform-observer-section.tsx` | Accepts `number | null` for counts, shows `—` |
 | `docker-compose.yml` | Added `shm_size: 256mb` to postgres service |
+
+### Late-breaking fixes (audit findings)
+
+| File | Change |
+|------|--------|
+| `frontend/src/app/page.tsx` | Added `getTopologySummary()` query → live `siteCount` (153) and `vendorCount` (2) passed to HeroSection |
+| `frontend/src/components/dashboard/hero-section.tsx` | Hardcoded "1 Vendors live" and "61 Sites monitored" replaced with dynamic props |
+| `README.md` | Arista WLC downgraded from "✅ Live" to "⬜ Requires config"; DNAC from "✅ Live" to "✅ Registered" |
+| `docs/DEVELOPER_GUIDE.md` | All collector statuses verified against DB: Arista WLC→"Registered (not configured)", DNAC→"Registered (not configured)", Mist client/radio→"0 rows (not enabled)" |
+| `docs/handoff docs/19_handoff.md` | Collector registry corrected with real DB-verified statuses for all 21 collectors |
 
 ---
 
@@ -181,25 +193,25 @@ This session had three main threads:
 | | `mist-inventory` | AP inventory + stats | ✅ Live |
 | | `mist-ap-history` | Device lifecycle tracking | ✅ Live |
 | | `mist-ap-rf` | Wireless performance metrics | ✅ Live |
-| | `mist-client-topology` | Client connectivity mapping | ⚠️ Empty response |
+| | `mist-client-topology` | Client connectivity mapping | ✅ Success (0 rows — Mist client tracking not enabled) |
 | | `mist-wired-uplink` | AP-to-switch topology | ✅ Live |
-| | `mist-radio-neighbors` | RF interference detection | ⚠️ Empty response |
-| **DNAC** | `dnac-devices` | Network device inventory | ✅ Registered |
-| | `dnac-alarms` | Assurance events | ✅ Registered |
-| | `dnac-topology` | Physical + L3 topology | ✅ Registered |
-| | `dnac-clients` | Client health overview | ✅ Registered |
-| | `dnac-interfaces` | Interface status | ✅ Registered |
+| | `mist-radio-neighbors` | RF interference detection | ✅ Success (0 rows — radio scanning not enabled) |
+| **DNAC** | `dnac-devices` | Network device inventory | ✅ Registered (not configured) |
+| | `dnac-alarms` | Assurance events | ✅ Registered (not configured) |
+| | `dnac-topology` | Physical + L3 topology | ✅ Registered (not configured) |
+| | `dnac-clients` | Client health overview | ✅ Registered (not configured) |
+| | `dnac-interfaces` | Interface status | ✅ Registered (not configured) |
 | **VeloCloud** | `velocloud-edges` | Edge appliance inventory | ✅ Live |
 | | `velocloud-links` | Link metrics | ✅ Live |
 | | `velocloud-tunnels` | Tunnel health | ✅ Live |
 | | `velocloud-events` | Enterprise events/alarms | ✅ Live |
 | | `velocloud-apps` | Application visibility + QoS | ⚠️ mark_skipped (VCO limit) |
-| **Arista WLC** | `arista-wlc-clients` | Wireless client inventory | ✅ Live |
-| | `arista-wlc-aps` | AP inventory + radio status | ✅ Live |
-| | `arista-wlc-radios` | Channel utilization + interference | ✅ Live |
-| | `arista-wlc-events` | Controller events/alarms | ✅ Live |
+| **Arista WLC** | `arista-wlc-clients` | Wireless client inventory | ✅ Registered (not configured) |
+| | `arista-wlc-aps` | AP inventory + radio status | ✅ Registered (not configured) |
+| | `arista-wlc-radios` | Channel utilization + interference | ✅ Registered (not configured) |
+| | `arista-wlc-events` | Controller events/alarms | ✅ Registered (not configured) |
 
-**Total: 21 collectors across 4 vendors**
+**Total: 21 collectors across 4 vendors (2 live, 2 registered-not-configured)**
 
 ---
 

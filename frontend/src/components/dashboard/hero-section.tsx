@@ -8,6 +8,8 @@ interface HeroSectionProps {
   eventCountStale: boolean;
   eventRange: EventRange;
   onEventRangeChange: (range: EventRange) => void;
+  siteCount: number;
+  vendorCount: number;
 }
 
 const RANGE_LABELS: Record<EventRange, string> = {
@@ -28,7 +30,11 @@ function fmt(n: number | null): string {
   return n !== null ? new Intl.NumberFormat().format(n) : "—";
 }
 
-export function HeroSection({ isOnline, eventCount, eventCountStale, eventRange, onEventRangeChange }: HeroSectionProps) {
+function liveVendors(n: number): string {
+  return n > 0 ? n.toString() : "—";
+}
+
+export function HeroSection({ isOnline, eventCount, eventCountStale, eventRange, onEventRangeChange, siteCount, vendorCount }: HeroSectionProps) {
   return (
     <section className="max-w-2xl space-y-6" style={{ animation: "naxis-enter 0.6s 0.1s both" }}>
       <div className="flex items-center gap-2.5">
@@ -68,11 +74,11 @@ export function HeroSection({ isOnline, eventCount, eventCountStale, eventRange,
           <div className="text-[11px] text-foreground-subtle">Events</div>
         </div>
         <div>
-          <div className="font-mono text-lg font-semibold text-foreground">1</div>
+          <div className="font-mono text-lg font-semibold text-foreground">{liveVendors(vendorCount)}</div>
           <div className="text-[11px] text-foreground-subtle">Vendors live</div>
         </div>
         <div>
-          <div className="font-mono text-lg font-semibold text-foreground">61</div>
+          <div className="font-mono text-lg font-semibold text-foreground">{new Intl.NumberFormat().format(siteCount)}</div>
           <div className="text-[11px] text-foreground-subtle">Sites monitored</div>
         </div>
         <div className="ml-auto flex gap-1 rounded-lg border border-border/40 p-0.5">

@@ -64,6 +64,17 @@ export default function HomePage() {
     api.listDevices({ platform: "velocloud", limit: 1 })
   );
 
+  const { data: topoSummary } = useQuery({
+    queryKey: ["topology-summary"],
+    queryFn: () => api.getTopologySummary(),
+    refetchInterval: 60000,
+  });
+
+  const siteCount = topoSummary?.by_type?.site ?? 0;
+  const vendorCount = topoSummary?.by_vendor
+    ? Object.keys(topoSummary.by_vendor).filter((v) => v !== "internet").length
+    : 0;
+
   const eventCounts = useEventCounts();
   const eventCount = eventCounts[eventRange].count;
   const eventCountStale = eventCounts[eventRange].isStale;
@@ -73,7 +84,7 @@ export default function HomePage() {
   return (
     <DashboardBackground>
       <div className="relative mx-auto max-w-6xl space-y-16 px-6 py-20 lg:px-8">
-        <HeroSection isOnline={isOnline} eventCount={eventCount} eventCountStale={eventCountStale} eventRange={eventRange} onEventRangeChange={setEventRange} />
+        <HeroSection isOnline={isOnline} eventCount={eventCount} eventCountStale={eventCountStale} eventRange={eventRange} onEventRangeChange={setEventRange} siteCount={siteCount} vendorCount={vendorCount} />
         <CollectorHealthWidget />
         <PlatformObserverSection mistDeviceCount={mistDeviceCount} sdwanEdgeCount={sdwanEdgeCount} />
         <InventoryToggle
