@@ -4,8 +4,12 @@ import { HardDrive, Network, Radio, Wifi } from "lucide-react";
 import { PlatformCard } from "./platform-card";
 
 interface PlatformObserverSectionProps {
-  mistDeviceCount: number;
-  sdwanEdgeCount: number;
+  mistDeviceCount: number | null;
+  sdwanEdgeCount: number | null;
+}
+
+function fmt(n: number | null): string {
+  return n !== null ? n.toLocaleString() : "—";
 }
 
 export function PlatformObserverSection({ mistDeviceCount, sdwanEdgeCount }: PlatformObserverSectionProps) {
@@ -21,7 +25,7 @@ export function PlatformObserverSection({ mistDeviceCount, sdwanEdgeCount }: Pla
           label="Juniper Mist"
           sublabel="Wireless"
           description="AP inventory, client sessions and RF health across 61 Tata Motors sites."
-          stat={{ value: mistDeviceCount.toLocaleString(), label: "APs" }}
+          stat={{ value: fmt(mistDeviceCount), label: "APs" }}
           active
           accentRgb="139,92,246"
           tag="Live"
@@ -44,7 +48,7 @@ export function PlatformObserverSection({ mistDeviceCount, sdwanEdgeCount }: Pla
           label="Arista SD-WAN"
           sublabel="WAN"
           description="Edge devices, tunnel health and WAN telemetry across all sites."
-          stat={{ value: sdwanEdgeCount.toLocaleString(), label: "Edges" }}
+          stat={{ value: fmt(sdwanEdgeCount), label: "Edges" }}
           active
           accentRgb="52,211,153"
           tag="Live"

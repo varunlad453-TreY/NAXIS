@@ -4,7 +4,8 @@ type EventRange = "1h" | "24h" | "7d" | "30d";
 
 interface HeroSectionProps {
   isOnline: boolean;
-  eventCount: number;
+  eventCount: number | null;
+  eventCountStale: boolean;
   eventRange: EventRange;
   onEventRangeChange: (range: EventRange) => void;
 }
@@ -23,7 +24,11 @@ const RANGE_FULL: Record<EventRange, string> = {
   "30d": "last 30 days",
 };
 
-export function HeroSection({ isOnline, eventCount, eventRange, onEventRangeChange }: HeroSectionProps) {
+function fmt(n: number | null): string {
+  return n !== null ? new Intl.NumberFormat().format(n) : "—";
+}
+
+export function HeroSection({ isOnline, eventCount, eventCountStale, eventRange, onEventRangeChange }: HeroSectionProps) {
   return (
     <section className="max-w-2xl space-y-6" style={{ animation: "naxis-enter 0.6s 0.1s both" }}>
       <div className="flex items-center gap-2.5">
@@ -34,8 +39,8 @@ export function HeroSection({ isOnline, eventCount, eventRange, onEventRangeChan
         <span className="text-[10px] font-semibold uppercase tracking-[0.25em] text-foreground-subtle">
           {isOnline ? "Systems nominal" : "Connecting…"}
         </span>
-        <span className="ml-auto font-mono text-[10px] text-foreground-subtle/50">
-          {new Intl.NumberFormat().format(eventCount)} events in {RANGE_FULL[eventRange]}
+        <span className={`ml-auto font-mono text-[10px] transition-opacity ${eventCountStale ? "text-foreground-subtle/30" : "text-foreground-subtle/50"}`}>
+          {fmt(eventCount)} events in {RANGE_FULL[eventRange]}
         </span>
       </div>
 
@@ -57,8 +62,8 @@ export function HeroSection({ isOnline, eventCount, eventRange, onEventRangeChan
 
       <div className="flex flex-wrap items-end gap-4 border-t border-border/40 pt-5 text-sm">
         <div>
-          <div className="font-mono text-lg font-semibold text-foreground">
-            {new Intl.NumberFormat().format(eventCount)}
+          <div className={`font-mono text-lg font-semibold transition-opacity ${eventCountStale ? "text-foreground/40" : "text-foreground"}`}>
+            {fmt(eventCount)}
           </div>
           <div className="text-[11px] text-foreground-subtle">Events</div>
         </div>

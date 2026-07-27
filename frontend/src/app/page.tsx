@@ -18,9 +18,14 @@ const RANGE_MS: Record<EventRange, number> = {
   "30d": 2592000000,
 };
 
-function useCount(key: string[], fn: () => Promise<{ total: number }>) {
-  const { data } = useQuery({ queryKey: key, queryFn: fn, refetchInterval: 15000 });
-  return data?.total ?? 0;
+function useCount(key: string[], fn: () => Promise<{ total: number }>, placeholder: number | null = null) {
+  const { data, isPlaceholderData } = useQuery({
+    queryKey: key,
+    queryFn: fn,
+    refetchInterval: 15000,
+    placeholderData: (prev: { total: number } | undefined) => prev ?? (placeholder !== null ? { total: placeholder } : undefined),
+  });
+  return { count: data?.total ?? placeholder, isStale: isPlaceholderData };
 }
 
 export default function HomePage() {
@@ -33,13 +38,13 @@ export default function HomePage() {
     refetchInterval: 10000,
   });
 
-  const mistDeviceCount = useCount(["mist-devices-count"], () =>
+  const { count: mistDeviceCount } = useCount(["mist-devices-count"], () =>
     api.listDevices({ platform: "mist", limit: 1 })
   );
-  const sdwanEdgeCount = useCount(["sdwan-devices-count"], () =>
+  const { count: sdwanEdgeCount } = useCount(["sdwan-devices-count"], () =>
     api.listDevices({ platform: "velocloud", limit: 1 })
   );
-  const eventCount = useCount(["events-count", eventRange], () =>
+  const { count: eventCount, isStale: eventCountStale } = useCount(["events-count", eventRange], () =>
     api.listEvents({ limit: 1, start_time: new Date(Date.now() - RANGE_MS[eventRange]).toISOString() })
   );
 
@@ -48,7 +53,7 @@ export default function HomePage() {
   return (
     <DashboardBackground>
       <div className="relative mx-auto max-w-6xl space-y-16 px-6 py-20 lg:px-8">
-        <HeroSection isOnline={isOnline} eventCount={eventCount} eventRange={eventRange} onEventRangeChange={setEventRange} />
+        <HeroSection isOnline={isOnline} eventCount={eventCount} eventCountStale={eventCountStale} eventRange={eventRange} onEventRangeChange={setEventRange} />
         <CollectorHealthWidget />
         <PlatformObserverSection mistDeviceCount={mistDeviceCount} sdwanEdgeCount={sdwanEdgeCount} />
         <InventoryToggle
