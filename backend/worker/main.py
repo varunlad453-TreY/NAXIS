@@ -48,6 +48,10 @@ from worker.collectors.velocloud import VeloCloudCollector
 from worker.collectors.velocloud_inventory import VelocloudInventoryCollector
 from worker.collectors.arista_wlc import AristaWlcCollector
 from worker.collectors.topology_sync import TopologySync
+from worker.collectors.health_snapshot import collect_health_snapshots
+from worker.collectors.snmp_poller import SnmpPoller
+from shared.monitoring.collector_health import check_collector_health
+from shared.database.retention import run_retention
 
 logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO").upper(),
@@ -84,7 +88,10 @@ class WorkerDaemon:
         self._velocloud_inventory = VelocloudInventoryCollector()
         self._arista_wlc = AristaWlcCollector()
         self._topology_sync = TopologySync()
+        self._snmp_poller = SnmpPoller()
         self._last_collected: datetime = datetime.now(timezone.utc) - timedelta(hours=24)
+        self._last_health_snapshot: datetime = datetime.now(timezone.utc) - timedelta(hours=24)
+        self._last_retention: datetime = datetime.now(timezone.utc) - timedelta(hours=24)
 
         # Correlation engine with Stage 2 topology cascade
         correlation_config = CorrelationConfig(
@@ -200,6 +207,38 @@ class WorkerDaemon:
             except Exception:
                 logger.exception("Failed to persist correlation telemetry")
 
+        # Collector health alerting (every cycle)
+        try:
+            await check_collector_health(window_minutes=30)
+        except Exception:
+            logger.exception("Collector health check failed")
+
+        # Health snapshots (every 5 minutes)
+        now_utc = datetime.now(timezone.utc)
+        if (now_utc - self._last_health_snapshot).total_seconds() >= 300:
+            try:
+                result = await collect_health_snapshots()
+                if result.get("error"):
+                    logger.warning("Health snapshot error: %s", result["error"])
+                else:
+                    logger.info(
+                        "Health snapshots: %d checked, %d changed",
+                        result.get("checked", 0),
+                        result.get("changed", 0),
+                    )
+            except Exception:
+                logger.exception("Health snapshot collection failed")
+            self._last_health_snapshot = now_utc
+
+        # Data retention cleanup (every 24 hours)
+        if (now_utc - self._last_retention).total_seconds() >= 86400:
+            try:
+                result = await run_retention(days=7)
+                logger.info("Retention cleanup: %s", result)
+            except Exception:
+                logger.exception("Retention cleanup failed")
+            self._last_retention = now_utc
+
         logger.debug("Worker pass complete")
 
     async def _collect_all(self) -> list[CollectorOutcome]:
@@ -275,6 +314,26 @@ class WorkerDaemon:
             except Exception:
                 logger.exception("Arista WLC collection failed")
 
+        # SNMP Poller — discovers LLDP/CDP topology edges and interface events
+        if self._snmp_poller._enabled and self._snmp_poller._targets:
+            try:
+                snmp_events = await self._snmp_poller.collect()
+                if snmp_events:
+                    snmp_outcome = CollectorOutcome(
+                        collector_id="snmp-poller",
+                        source_system="snmp",
+                        status="success",
+                        event_count=len(snmp_events),
+                        events=snmp_events,
+                    )
+                    try:
+                        await record_collector_run(snmp_outcome)
+                    except Exception:
+                        logger.exception("Failed to record SNMP poller run")
+                    outcomes.append(snmp_outcome)
+            except Exception:
+                logger.exception("SNMP polling failed")
+
         self._last_collected = now
         return outcomes
 
@@ -337,6 +396,7 @@ class WorkerDaemon:
 
                 await asyncio.sleep(COLLECTOR_INTERVAL)
         finally:
+            await self._velocloud.close()
             await db.disconnect()
             logger.info("Worker DB pool closed")
 

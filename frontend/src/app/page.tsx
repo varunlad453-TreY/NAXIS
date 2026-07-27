@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { DashboardBackground } from "@/components/dashboard/dashboard-background";
+import { CollectorHealthWidget } from "@/components/dashboard/collector-health-widget";
 import { HeroSection } from "@/components/dashboard/hero-section";
 import { InventoryToggle } from "@/components/dashboard/inventory-toggle";
 import { PlatformObserverSection } from "@/components/dashboard/platform-observer-section";
@@ -28,7 +29,9 @@ export default function HomePage() {
   const sdwanEdgeCount = useCount(["sdwan-devices-count"], () =>
     api.listDevices({ platform: "velocloud", limit: 1 })
   );
-  const eventCount = useCount(["events-count"], () => api.listEvents({ limit: 1 }));
+  const eventCount = useCount(["events-count"], () =>
+    api.listEvents({ limit: 1, start_time: new Date(Date.now() - 86400000).toISOString() })
+  );
 
   const isOnline = health?.status === "healthy";
 
@@ -36,6 +39,7 @@ export default function HomePage() {
     <DashboardBackground>
       <div className="relative mx-auto max-w-6xl space-y-16 px-6 py-20 lg:px-8">
         <HeroSection isOnline={isOnline} eventCount={eventCount} />
+        <CollectorHealthWidget />
         <PlatformObserverSection mistDeviceCount={mistDeviceCount} sdwanEdgeCount={sdwanEdgeCount} />
         <InventoryToggle
           show={showInventory}

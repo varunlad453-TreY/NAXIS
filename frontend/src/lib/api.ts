@@ -16,6 +16,7 @@ import type {
   IntegrationConfigResponse,
   IntegrationActionResponse,
   TelemetryAlertsResponse,
+  TelemetryResponse,
 } from "@/types/integration";
 import type {
   TopologyGraphResponse,
@@ -255,6 +256,12 @@ export const api = {
 
   listTelemetryAlerts: () =>
     fetchAPI<TelemetryAlertsResponse>("/telemetry/alerts").then((r) => camelizeKeys(r)),
+
+  getTelemetry: () =>
+    fetchAPI<TelemetryResponse>("/telemetry").then((r) => camelizeKeys(r)),
+
+  getCorrelationStats: () =>
+    fetchAPI<Record<string, unknown>>("/correlation/stats").then((r) => camelizeKeys(r)),
 
   /**
    * Get full topology graph

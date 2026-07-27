@@ -1,19 +1,45 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useCallback, useMemo } from "react";
 import {
   AlertTriangle,
   XCircle,
   ChevronDown,
   ChevronUp,
   AlertCircle,
+  X,
 } from "lucide-react";
 
 import { cn, formatTimestamp } from "@/lib/utils";
 import type { TelemetryAlert, TelemetryAlertSeverity } from "@/types/integration";
 
+const DISMISSED_KEY = "naxis-dismissed-alerts";
+
+function getDismissed(): Set<string> {
+  if (typeof window === "undefined") return new Set();
+  try {
+    const raw = window.localStorage.getItem(DISMISSED_KEY);
+    return new Set(raw ? JSON.parse(raw) : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function persistDismissed(ids: Set<string>) {
+  try {
+    window.localStorage.setItem(DISMISSED_KEY, JSON.stringify([...ids]));
+  } catch {
+    // localStorage full or unavailable
+  }
+}
+
+function alertDismissKey(alert: TelemetryAlert): string {
+  return `${alert.sourceSystem}-${alert.collectorId}-${alert.type}`;
+}
+
 interface AlertBannerProps {
   alert: TelemetryAlert;
+  onDismiss?: () => void;
 }
 
 interface AlertBannerGroupProps {
@@ -61,7 +87,7 @@ function AlertIcon({ severity }: { severity: TelemetryAlertSeverity }) {
   return <Icon className={cn("h-4 w-4 shrink-0", config.text)} />;
 }
 
-export function AlertBanner({ alert }: AlertBannerProps) {
+export function AlertBanner({ alert, onDismiss }: AlertBannerProps) {
   const config = severityConfig[alert.severity];
   const Icon = config.icon;
 
@@ -95,22 +121,32 @@ export function AlertBanner({ alert }: AlertBannerProps) {
         <p className="text-sm leading-5 text-foreground">{alert.message}</p>
       </div>
 
-      {/* Badge */}
-      <div className="shrink-0">          <span
-            className={cn(
-              "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em]",
-              alert.severity === "critical"
-                ? "bg-critical/10 text-critical"
-                : "bg-minor/10 text-minor"
-            )}
+      {/* Badge + Dismiss */}
+      <div className="flex shrink-0 items-center gap-2">
+        <span
+          className={cn(
+            "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em]",
+            alert.severity === "critical"
+              ? "bg-critical/10 text-critical"
+              : "bg-minor/10 text-minor"
+          )}
+        >
+          {alert.severity === "critical" ? (
+            <AlertCircle className="h-3 w-3" />
+          ) : (
+            <AlertTriangle className="h-3 w-3" />
+          )}
+          {severityConfig[alert.severity].label}
+        </span>
+        {onDismiss && (
+          <button
+            onClick={onDismiss}
+            className="rounded p-1 text-foreground-subtle opacity-0 transition-all hover:bg-surface-elevated hover:text-foreground group-hover:opacity-100"
+            title="Dismiss alert"
           >
-            {alert.severity === "critical" ? (
-              <AlertCircle className="h-3 w-3" />
-            ) : (
-              <AlertTriangle className="h-3 w-3" />
-            )}
-            {severityConfig[alert.severity].label}
-          </span>
+            <X className="h-3.5 w-3.5" />
+          </button>
+        )}
       </div>
     </div>
   );
@@ -118,13 +154,34 @@ export function AlertBanner({ alert }: AlertBannerProps) {
 
 export function AlertBannerGroup({ alerts }: AlertBannerGroupProps) {
   const [expanded, setExpanded] = useState(true);
+  const [dismissed, setDismissed] = useState<Set<string>>(() => getDismissed());
 
-  if (!alerts.length) {
+  const visibleAlerts = useMemo(
+    () => alerts.filter((a) => !dismissed.has(alertDismissKey(a))),
+    [alerts, dismissed]
+  );
+
+  const handleDismiss = useCallback((alert: TelemetryAlert) => {
+    setDismissed((prev) => {
+      const next = new Set(prev);
+      next.add(alertDismissKey(alert));
+      persistDismissed(next);
+      return next;
+    });
+  }, []);
+
+  const handleDismissAll = useCallback(() => {
+    const allKeys = new Set(alerts.map(alertDismissKey));
+    setDismissed(allKeys);
+    persistDismissed(allKeys);
+  }, [alerts]);
+
+  if (!visibleAlerts.length) {
     return null;
   }
 
-  const criticalCount = alerts.filter((a) => a.severity === "critical").length;
-  const warningCount = alerts.filter((a) => a.severity === "warning").length;
+  const criticalCount = visibleAlerts.filter((a) => a.severity === "critical").length;
+  const warningCount = visibleAlerts.filter((a) => a.severity === "warning").length;
 
   return (
     <div className="rounded-2xl border border-border/40 bg-background/40 overflow-hidden">
@@ -179,8 +236,20 @@ export function AlertBannerGroup({ alerts }: AlertBannerGroupProps) {
       {/* Alert list */}
       {expanded && (
         <div className="space-y-2 border-t border-border/40 px-4 py-3">
-          {alerts.map((alert, index) => (
-            <AlertBanner key={`${alert.collectorId}-${alert.type}-${index}`} alert={alert} />
+          <div className="flex items-center justify-end">
+            <button
+              onClick={handleDismissAll}
+              className="text-xs text-foreground-subtle hover:text-foreground transition-colors"
+            >
+              Dismiss all
+            </button>
+          </div>
+          {visibleAlerts.map((alert, index) => (
+            <AlertBanner
+              key={`${alert.collectorId}-${alert.type}-${index}`}
+              alert={alert}
+              onDismiss={() => handleDismiss(alert)}
+            />
           ))}
         </div>
       )}

@@ -459,11 +459,11 @@ class AristaWlcEventsCollector:
         severity_str = raw.get("severity", raw.get("level", "info")).lower()
         timestamp_str = raw.get("timestamp", raw.get("time", ""))
 
-        # TODO: Parse Arista log timestamps ("MMM DD HH:MM:SS" format)
-        # Currently falls back to datetime.now() — improve with dateutil.parser
+        # ponytail: Arista logs use "MMM DD HH:MM:SS" format, no year
         if timestamp_str:
             try:
-                timestamp = datetime.now(timezone.utc).replace(tzinfo=None)
+                ts = datetime.strptime(timestamp_str, "%b %d %H:%M:%S")
+                timestamp = ts.replace(year=datetime.now(timezone.utc).year, tzinfo=None)
             except Exception:
                 timestamp = datetime.now(timezone.utc).replace(tzinfo=None)
         else:

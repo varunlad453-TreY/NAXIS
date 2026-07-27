@@ -2,14 +2,19 @@
 Correlation API Routes.
 
 Exposes correlation engine telemetry so operators and the UI can verify
-the engine is running and producing incidents.
+the engine is running and producing incidents. Also provides a Server-Sent
+Events endpoint for live incident push via Redis pub/sub.
 """
 
+import asyncio
+import json
 import logging
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter
+from fastapi.responses import StreamingResponse
 
+from config.settings import get_settings
 from shared.database.correlation_telemetry import (
     ensure_correlation_telemetry_schema,
     load_latest_correlation_telemetry,
@@ -22,6 +27,8 @@ router = APIRouter(
     tags=["correlation"],
     responses={500: {"description": "Internal server error"}},
 )
+
+_settings = get_settings()
 
 
 @router.get(
@@ -52,3 +59,73 @@ async def get_correlation_stats() -> Dict[str, Any]:
         "status": status,
         "stats": stats,
     }
+
+
+@router.get(
+    "/incidents/stream",
+    summary="Server-Sent Events stream for live incident updates",
+    description=(
+        "Subscribes to the Redis naxis:incidents channel and streams new "
+        "incidents as Server-Sent Events. Falls back to a periodic keepalive "
+        "if Redis is disabled or unreachable."
+    ),
+)
+async def stream_incidents():
+    """SSE endpoint for live incident updates from Redis pub/sub."""
+
+    async def event_generator():
+        redis_client = None
+        pubsub = None
+
+        if _settings.redis_enabled:
+            try:
+                import redis.asyncio as aioredis
+
+                redis_client = aioredis.from_url(
+                    _settings.redis_url,
+                    decode_responses=True,
+                    max_connections=_settings.redis_max_connections,
+                )
+                pubsub = redis_client.pubsub()
+                await pubsub.subscribe("naxis:incidents")
+                logger.info("SSE: subscribed to Redis naxis:incidents")
+            except Exception as exc:
+                logger.warning("SSE: Redis subscribe failed — falling back to heartbeat: %s", exc)
+                pubsub = None
+
+        try:
+            while True:
+                if pubsub:
+                    try:
+                        message = await pubsub.get_message(
+                            ignore_subscribe_messages=True, timeout=30.0
+                        )
+                        if message and message.get("data"):
+                            data = message["data"]
+                            yield f"data: {data}\n\n"
+                            continue
+                    except Exception:
+                        yield f"data: {json.dumps({'type': 'heartbeat'})}\n\n"
+                        await asyncio.sleep(30)
+                else:
+                    yield f"data: {json.dumps({'type': 'heartbeat'})}\n\n"
+                    await asyncio.sleep(30)
+        except asyncio.CancelledError:
+            pass
+        finally:
+            if pubsub:
+                await pubsub.unsubscribe("naxis:incidents")
+                await pubsub.close()
+            if redis_client:
+                await redis_client.close()
+            logger.info("SSE: client disconnected")
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )

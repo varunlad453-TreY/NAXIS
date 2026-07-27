@@ -5,135 +5,109 @@ Open-source operational intelligence platform for network telemetry correlation,
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Python](https://img.shields.io/badge/python-3.11+-blue.svg)
 ![Next.js](https://img.shields.io/badge/next.js-14+-black.svg)
-![Architecture](https://img.shields.io/badge/architecture-MVP%20v2.0-green.svg)
+![License](https://img.shields.io/badge/license-MIT-blue.svg)
+![Python](https://img.shields.io/badge/python-3.11+-blue.svg)
+![Next.js](https://img.shields.io/badge/next.js-15-black.svg)
 
 ## Overview
 
-Naxis is **not a monitoring tool** — it's an operational intelligence platform that understands the "why" behind network events through:
+Naxis is an open-source operational intelligence platform for network telemetry correlation, topology-aware reasoning, and incident management. It normalizes events from multi-vendor networks (Mist, DNAC, VeloCloud), correlates them into structured incidents, and syncs topology into a queryable graph — all on PostgreSQL.
 
-- **Multi-Vendor Telemetry Normalization**: Unified event schema across Cisco, Juniper, Arista
-- **Topology-Aware Correlation**: Graph-based event correlation using network topology
-- **Incident Intelligence**: Time-series analysis and pattern detection
-- **AI-Assisted RCA**: Local LLM inference for root cause analysis
-
-## ⚡ MVP Architecture (v2.0)
-
-**Simplified for 2-person team execution:**
-- **2 backend services** (down from 7) - 71% reduction
-- **7 Docker containers** (down from 11) - 36% reduction
-- **50-70% lower operational complexity**
-- **Same powerful data architecture** (ClickHouse + Neo4j + Redis + Ollama)
-
-See [docs/MVP_ARCHITECTURE.md](docs/MVP_ARCHITECTURE.md) for complete design.
+**Not a monitoring tool.** A reasoning layer that tells you *why* something is wrong.
 
 ## Quick Start
 
-```bash
-# Clone repository
-git clone <repo-url> naxis && cd naxis
-
-# Setup environment
-make setup
-
-# Start services
-make up
-
-# Windows dev entrypoint
-./dev.ps1
-
-# Pull LLM model
-make ollama
-
-# Access applications
-# API:      http://localhost:8000
-# Frontend: http://localhost:3000
-# Neo4j:    http://localhost:7474
+```powershell
+# Windows
+.\dev.ps1
 ```
+
+```bash
+# Linux/Mac
+make up
+```
+
+- API: `http://localhost:8000`
+- Frontend: `http://localhost:3000`
+- Full test suite: `pytest backend\tests -v` (300 tests, 0 failures)
 
 ## Architecture
 
-**MVP v2.0** - Simplified for execution practicality:
-
 ```
-┌─────────────────┐
-│  Next.js Web UI │  Port 3000
-└────────┬────────┘
-         │ HTTP + SSE
-         ▼
-┌─────────────────┐
-│   FastAPI API   │  Port 8000
-│  (Query + RCA)  │
-└────┬────────┬───┘
-     │        │
-     ▼        ▼
-┌─────────┐ ┌────────┐
-│ ClickH. │ │ Neo4j  │
-│ Events  │ │ Graph  │
-└────▲────┘ └───▲────┘
-     │          │
-     └──────┬───┘
-            │
-     ┌──────▼─────────────┐
-     │  Worker (Daemon)   │
-     │  • Collect from    │
-     │    DNAC/Mist/Arista│
-     │  • Normalize events│
-     │  • Sync topology   │
-     │  • Correlate events│
-     │  • Create incidents│
-     └────────────────────┘
+                    ┌──────────────────────┐
+                    │   Next.js 15 (UI)    │  port 3000
+                    └──────────┬───────────┘
+                               │ HTTP
+                               ▼
+                    ┌──────────────────────┐
+                    │  FastAPI (api)       │  port 8000
+                    └──────┬───────┬───────┘
+                           │       │
+                           ▼       ▼
+                    ┌──────────┐ ┌──────────┐
+                    │PostgreSQL│ │  Redis   │
+                    │(primary) │ │(pub/sub) │
+                    └────▲─────┘ └────▲─────┘
+                         │            │
+                         └──────┬─────┘
+                                │
+                     ┌──────────▼──────────────┐
+                     │  Worker daemon           │
+                     │  • Collect from vendors  │
+                     │  • Normalize to Unified  │
+                     │  • Sync topology graph   │
+                     │  • Correlate → incidents │
+                     │  • Record telemetry      │
+                     └─────────────────────────┘
 ```
 
-**See documentation:**
-- [docs/MVP_ARCHITECTURE.md](docs/MVP_ARCHITECTURE.md) - Complete MVP design (42KB)
-- [MVP_STRUCTURE.md](MVP_STRUCTURE.md) - Directory structure
-- [MVP_SUMMARY.md](MVP_SUMMARY.md) - Quick reference
-- [ARCHITECTURE.md](ARCHITECTURE.md) - Original design (reference)
+**One database (PostgreSQL).** No ClickHouse, Neo4j, or Ollama. One Docker image, two entrypoints (api + worker).
 
 ## Tech Stack
 
 | Component | Technology | Purpose |
 |-----------|-----------|---------|
-| Backend | FastAPI | API Gateway & Services |
-| Frontend | Next.js 14 | Web UI |
-| Event Store | ClickHouse | Time-series events |
-| Graph DB | Neo4j Community | Network topology |
-| Event Bus | Redis Streams | Event processing |
-| AI Runtime | Ollama | Local LLM inference |
-| Orchestration | Docker Compose | Local deployment |
+| Backend | FastAPI + async daemon | API + worker in one Python monolith |
+| Frontend | Next.js 15 + TanStack Query + shadcn | Web UI |
+| Database | PostgreSQL 16 (self-hosted, Docker) | Events, incidents, topology, telemetry |
+| Cache/Notify | Redis (optional, non-blocking) | Real-time incident pub/sub |
+| Deploy | Docker Compose | Local development + production |
 
-## Project Structure (MVP v2.0)
+## Integrations
+
+- ✅ **Juniper Mist** — Events + AP inventory (live)
+- ✅ **Cisco DNAC** — Devices, alarms, topology, clients, interfaces (live)
+- ✅ **Arista SD-WAN (VeloCloud)** — Edge inventory, WAN links, events (live)
+- ⬜ **Arista WLC** — Planned
+
+## Project Structure
 
 ```
 naxis/
 ├── backend/
-│   ├── shared/           # Common libraries
-│   ├── worker/           # ✨ Background daemon (collects, normalizes, correlates)
-│   └── api/              # ✨ REST API (queries, RCA)
-├── frontend/             # Next.js UI
-├── schemas/              # Database schemas (ClickHouse SQL, Neo4j Cypher)
-├── config/               # .env.example
-├── docs/                 # MVP_ARCHITECTURE.md, etc.
-├── docker-compose.yml    # Production stack (7 services)
-└── docker-compose.dev.yml # Development overrides
+│   ├── main.py            # FastAPI entrypoint
+│   ├── run_worker.py      # Worker daemon entrypoint
+│   ├── api/               # REST API routes + services
+│   ├── worker/            # Collectors, topology, pipeline
+│   ├── shared/            # Models, correlation engine, DB clients
+│   └── tests/             # 300 tests
+├── frontend/              # Next.js 15 UI
+├── schemas/               # PostgreSQL SQL files
+├── config/                # .env
+└── docs/                  # All documentation
 ```
-
-**Key change:** Consolidated 5 backend services into 1 worker service for MVP simplicity.
 
 ## Development
 
 ### Prerequisites
-
-- Docker 20.10+
-- Docker Compose 2.20+
-- 16GB RAM (minimum)
-- 50GB disk space
+- Docker 20.10+ with Compose 2.20+
+- 8GB RAM minimum
 
 ### Commands
 
 ```bash
 make up        # Start all services
-./dev.ps1      # Windows-friendly dev startup
+.\dev.ps1      # Windows dev startup
 make down      # Stop all services
 make logs      # View logs
 make rebuild   # Rebuild from scratch
@@ -143,108 +117,31 @@ make clean     # Remove all data
 
 ### Configuration
 
-Edit `.env` file for service configuration:
-
 ```env
-# Vendor Credentials
-DNAC_HOST=dnac.example.com
-DNAC_USERNAME=admin
-DNAC_PASSWORD=password
+# Database (defaults work for local Postgres)
+DATABASE_URL=postgresql+asyncpg://naxis:naxis@localhost:5432/naxis
 
-MIST_API_KEY=your-api-key
-MIST_ORG_ID=your-org-id
+# Vendor credentials (configure as needed)
+MIST_API_KEY=...
+DNAC_ENABLED=false          # DNAC not configured in dev
+VELOCLOUD_API_KEY=...
 
-# Service Settings
+# Worker
 COLLECTOR_INTERVAL=60
-CORRELATION_TIME_WINDOW=300
+CORRELATION_TOPOLOGY_CASCADE=true
+
+# Redis (optional)
+REDIS_ENABLED=false
 ```
-
-## Phase 1 Integrations
-
-- ✅ Cisco DNAC
-- ✅ Juniper Mist
-- ✅ Arista SD-WAN (VeloCloud)
-- ✅ Arista Wireless Controllers
-
-## Roadmap (MVP v2.0)
-
-### Phase 1: Foundation (Weeks 1-2) ✅ COMPLETE
-- [x] Monorepo structure
-- [x] Simplified architecture (7→2 backend services)
-- [x] Docker Compose setup
-- [x] Documentation (42KB architecture guide)
-
-### 🎯 Phase 2: Data Layer (Week 3) - START HERE
-- [ ] Shared models (event, incident, identity)
-- [ ] Database clients (Redis, ClickHouse, Neo4j)
-- [ ] Database schemas (SQL, Cypher)
-
-### Phase 3: Worker Service (Weeks 4-5)
-- [ ] Single collector (DNAC)
-- [ ] Event normalization
-- [ ] Basic topology sync
-- [ ] Main worker loop
-
-### Phase 4: API Service (Week 6)
-- [ ] Health checks
-- [ ] Events endpoints
-- [ ] EventService queries
-
-### Phase 5: Frontend (Week 7)
-- [ ] Layout + navigation
-- [ ] Events list page
-- [ ] API client
-
-### Phase 6: Correlation (Weeks 8-9)
-- [ ] Time-window correlation
-- [ ] Incident creation
-- [ ] Incidents API & UI
-
-### Phase 7: Topology (Week 10)
-- [ ] Full topology sync
-- [ ] Topology API
-- [ ] Graph visualization
-
-### Phase 8: RCA (Weeks 11-12)
-- [ ] Ollama integration
-- [ ] RCA service
-- [ ] RCA UI
-
-### Phase 9-10: Additional Collectors & Polish (Weeks 13-16)
-- [ ] Mist, Arista SD-WAN, Arista WLC collectors
-- [ ] Real-time updates (SSE)
-- [ ] Performance optimization
 
 ## Documentation
 
-### Essential Reading
-- **[docs/MVP_ARCHITECTURE.md](docs/MVP_ARCHITECTURE.md)** - Complete MVP design (42KB)
-- **[MVP_SUMMARY.md](MVP_SUMMARY.md)** - Quick reference guide
-- **[MVP_STRUCTURE.md](MVP_STRUCTURE.md)** - Directory structure
-
-### Reference
-- [ARCHITECTURE.md](ARCHITECTURE.md) - Original architecture (for reference)
-- [backend/worker/README.md](backend/worker/README.md) - Worker service details
-- [backend/api/README.md](backend/api/README.md) - API service details
-
-### Coming Soon
-- API Documentation
-- Deployment Guide  
-- Development Guide
-
-## Contributing
-
-Contributions welcome! See [CONTRIBUTING.md](docs/CONTRIBUTING.md) for guidelines.
+- **[docs/DEVELOPER_GUIDE.md](docs/DEVELOPER_GUIDE.md)** — Start here. Onboarding, architecture walkthrough, collector system, testing guide.
+- **[docs/TELEMETRY_ARCHITECTURE.md](docs/TELEMETRY_ARCHITECTURE.md)** — Collector → ledger → UI health architecture.
+- **[docs/CORRELATION_ARCHITECTURE.md](docs/CORRELATION_ARCHITECTURE.md)** — Correlation engine (Stage 1 + Stage 2) design.
+- **[docs/FRONTEND_ARCHITECTURE.md](docs/FRONTEND_ARCHITECTURE.md)** — Frontend structure and patterns.
+- **[docs/handoff docs/](docs/handoff%20docs/)** — Per-session change logs (16 sessions).
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) for details.
-
-## Support
-
-- Issues: https://github.com/your-org/naxis/issues
-- Discussions: https://github.com/your-org/naxis/discussions
-
----
-
-**Built with ❤️ for network operations teams**
+MIT

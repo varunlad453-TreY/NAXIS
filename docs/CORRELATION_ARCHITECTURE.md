@@ -298,27 +298,22 @@ backend/tests/
 └── test_correlation_engine.py  # All 78 tests
 
 backend/worker/
-└── main.py              # WorkerDaemon — has # TODO: correlate at line ~106
+└── main.py              # WorkerDaemon — runs correlation after topology sync
 ```
 
-### Where to Wire It in the Worker
+### Where It's Wired
 
-In `WorkerDaemon.run_once()` (`backend/worker/main.py:106`), there's:
+In `WorkerDaemon.run_once()` (`backend/worker/main.py`), correlation runs after topology sync:
 
 ```python
-# TODO: correlate + create incidents
-```
-
-Integration is straightforward:
-```python
-from backend.shared.correlation import CorrelationEngine, CorrelationConfig
-
 engine = CorrelationEngine(config=CorrelationConfig())
 incidents = await engine.process_events(all_events)
 for incident in incidents:
     await db.upsert_incident(incident)
     await db.link_events_to_incident(incident.incident_id, incident.related_event_ids)
 ```
+
+This was wired in Session 15 — the `# TODO: correlate + create incidents` placeholder is gone.
 
 ---
 

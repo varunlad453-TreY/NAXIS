@@ -78,7 +78,7 @@ export interface IntegrationDetailResponse extends Integration {
 
 export type TelemetryAlertSeverity = "warning" | "critical";
 
-export type TelemetryAlertType = "stale_data" | "repeated_failure" | "data_gap";
+export type TelemetryAlertType = "staleData" | "repeatedFailure" | "dataGap";
 
 export interface TelemetryAlert {
   severity: TelemetryAlertSeverity;
@@ -93,6 +93,36 @@ export interface TelemetryAlert {
 export interface TelemetryAlertsResponse {
   alerts: TelemetryAlert[];
   count: number;
+}
+
+export interface TelemetryCollectorEntry {
+  collectorId: string;
+  sourceSystem: string;
+  lastRun: string | null;
+  lastSuccess: string | null;
+  lastError: string | null;
+  lastStatus: string;
+  failureCount: number;
+  currentAgeSeconds: number | null;
+  durationMs: number | null;
+  rowsWritten: number | null;
+  derivedStatus: string;
+}
+
+export interface TelemetrySummary {
+  totalCollectors: number;
+  healthy: number;
+  degraded: number;
+  stale: number;
+  error: number;
+  notConfigured: number;
+  alertCount: number;
+}
+
+export interface TelemetryResponse {
+  collectors: TelemetryCollectorEntry[];
+  alerts: TelemetryAlert[];
+  summary: TelemetrySummary;
 }
 
 export interface IntegrationDefinition {

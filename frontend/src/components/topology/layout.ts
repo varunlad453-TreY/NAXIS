@@ -221,7 +221,7 @@ export function buildGroupedLayout(
         child_count: children.length,
         isExpanded,
         health_status: siteNode?.health_status ?? "unknown",
-        vendor: siteNode?.vendor ?? "mist",
+        vendor: siteNode?.vendor ?? "",
         crossSiteEdgeCount: crossSiteEdgeCounts[siteId] ?? 0,
       },
       style: {
