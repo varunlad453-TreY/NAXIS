@@ -110,6 +110,19 @@ CORRELATION_TOPOLOGY_CASCADE=true
 
 # Redis (optional)
 REDIS_ENABLED=false
+
+# Notifications (optional, disabled by default)
+# NOTIFICATION_ENABLED=true
+# NOTIFICATION_MIN_FAILURES=3
+# NOTIFICATION_MIN_SKIPS=10
+# SLACK_WEBHOOK_URL=https://hooks.slack.com/services/...
+# SMTP_HOST=smtp.example.com
+# SMTP_PORT=587
+# SMTP_USER=notifier@example.com
+# SMTP_PASSWORD=secret
+# SMTP_FROM=naxis@example.com
+# NOTIFICATION_EMAIL_TO=ops@example.com
+# NOTIFICATION_DEDUP_MINUTES=15
 ```
 
 ### Running the worker directly (without Docker)
@@ -208,8 +221,9 @@ The `WorkerDaemon.run_once()` cycle:
 7. Publishes incidents to Redis (if enabled) — SSE endpoint `/correlation/incidents/stream` for real-time frontend push
 8. Records correlation telemetry to DB
 9. Runs collector health monitoring (failure/skip pattern detection on `collector_run_ledger`)
-10. Runs data retention cleanup (purging >7d data from telemetry tables)
-11. Sleeps for `COLLECTOR_INTERVAL` seconds
+10. Runs notification dispatch — sends Slack webhook / SMTP email for collector failures and skips (if `NOTIFICATION_ENABLED=true`, with in-memory dedup to avoid spam)
+11. Runs data retention cleanup (purging >7d data from telemetry tables)
+12. Sleeps for `COLLECTOR_INTERVAL` seconds
 
 ### Current collectors (21 total across 4 vendors)
 
@@ -219,23 +233,23 @@ The `WorkerDaemon.run_once()` cycle:
 | `mist-inventory` | Mist API (AP inventory + stats) | ✅ Live |
 | `mist-ap-history` | Mist API (device lifecycle) | ✅ Live |
 | `mist-ap-rf` | Mist API (wireless performance) | ✅ Live |
-| `mist-client-topology` | Mist API (client mapping) | ⚠️ 404 |
-| `mist-wired-uplink` | Mist API (AP-to-switch) | ⚠️ 404 |
-| `mist-radio-neighbors` | Mist API (RF interference) | ✅ Live |
+| `mist-client-topology` | Mist API (client mapping) | ⚠️ Empty response |
+| `mist-wired-uplink` | Mist API (AP-to-switch) | ✅ Live |
+| `mist-radio-neighbors` | Mist API (RF interference) | ⚠️ Empty response |
 | `dnac-devices` | DNAC Intent API | ✅ Registered |
 | `dnac-alarms` | DNAC Intent API | ✅ Registered |
 | `dnac-topology` | DNAC Intent API | ✅ Registered |
 | `dnac-clients` | DNAC Intent API | ✅ Registered |
 | `dnac-interfaces` | DNAC Intent API | ✅ Registered |
-| `velocloud-edges` | VCO API (edge inventory) | ✅ Registered |
-| `velocloud-links` | VCO API (link metrics) | ✅ Registered |
-| `velocloud-tunnels` | VCO API (tunnel health) | ✅ Registered |
-| `velocloud-events` | VCO API (enterprise events) | ✅ Registered |
-| `velocloud-apps` | VCO API (application visibility) | ✅ Registered |
-| `arista-wlc-clients` | Arista WLC API (wireless clients) | ✅ Registered |
-| `arista-wlc-aps` | Arista WLC API (AP inventory) | ✅ Registered |
-| `arista-wlc-radios` | Arista WLC API (channel utilization) | ✅ Registered |
-| `arista-wlc-events` | Arista WLC API (controller events) | ✅ Registered | |
+| `velocloud-edges` | VCO API (edge inventory) | ✅ Live |
+| `velocloud-links` | VCO API (link metrics) | ✅ Live |
+| `velocloud-tunnels` | VCO API (tunnel health) | ✅ Live |
+| `velocloud-events` | VCO API (enterprise events) | ✅ Live |
+| `velocloud-apps` | VCO API (application visibility) | ⚠️ mark_skipped (VCO limit) |
+| `arista-wlc-clients` | Arista WLC API (wireless clients) | ✅ Live |
+| `arista-wlc-aps` | Arista WLC API (AP inventory) | ✅ Live |
+| `arista-wlc-radios` | Arista WLC API (channel utilization) | ✅ Live |
+| `arista-wlc-events` | Arista WLC API (controller events) | ✅ Live |
 
 ### Adding a new collector
 
@@ -361,7 +375,7 @@ Current: **300+ tests, 0 failures**.
 
 | Doc | What it covers |
 |-----|---------------|
-| `docs/TELEMETRY_ARCHITECTURE.md` | Collector → ledger → UI architecture; per-collector health |
+| `docs/TELEMETRY_ARCHITECTURE.md` | Collector → ledger → UI architecture; per-collector health; notification system |
 | `docs/CORRELATION_ARCHITECTURE.md` | Full correlation engine design (Stage 1 + 2) |
 | `docs/FRONTEND_ARCHITECTURE.md` | Frontend structure and patterns |
 | `docs/TOPOLOGY_VISUALIZATION.md` | Topology graph rendering |
@@ -383,7 +397,8 @@ Current: **300+ tests, 0 failures**.
 | 16 | VeloCloud end-to-end verification: fix `props` data gap, 151 new tests, topology sync |
 | 17 | Dashboard Collector Health Widget, TelemetryAlertType fix |
 | 18 | Phase A–F completion: 26 items across oversight, pipeline wiring, monitoring, frontend UX, technical debt |
+| 19 | VeloCloud all-5-collectors live, notification system (Slack+email+dedup), dashboard event count UX overhaul, DB index + shm_size |
 
 ---
 
-*Last updated: 2026-07-21*
+*Last updated: 2026-07-27*

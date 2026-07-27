@@ -1,5 +1,37 @@
 # Changelog
 
+## [19] — 2026-07-27 — Notification System, Dashboard UX, DB Performance
+- VeloCloud all 5 collectors live: links/tunnels switched from stubs to real API calls
+- VeloCloudAppsCollector correctly mark_skipped (vco109 methodError on monitor/* endpoints)
+- Cleaned 9 stale velocloud-auth rows from collector_run_ledger
+- Created notifier.py: Slack webhook (rich blocks), SMTP email (HTML table), in-memory dedup (15-min window)
+- Added 11 notification env vars to settings.py (enable flag, Slack URL, SMTP config, thresholds)
+- Wired dispatch_alerts into worker cycle after collector health check
+- Added time-range selector (1h/24h/7d/30d) to dashboard event count
+- Pre-fetch all 4 ranges on mount for instant switching
+- Keep previous event count during loading (placeholderData)
+- Show `—` on initial blank slate instead of misleading `0`
+- Created DB index ix_events_timestamp on events(timestamp) — COUNT queries 15x faster
+- Increased postgres shm_size from 64MB to 256MB for autovacuum
+
+## [18] — 2026-07-21 — Phase A–F Completion
+- Fixed dashboard event count to last 24h (was lifetime total)
+- Wired health_snapshot, SNMP poller into worker pipeline
+- Added Docker healthcheck for worker service
+- Optimized VeloCloud with persistent client (no re-auth per cycle)
+- Created collector health monitoring module (failure/skip pattern alerts)
+- Created data retention cleanup module (7d cutoff, 24h interval)
+- Added SSE endpoint GET /correlation/incidents/stream (Redis pub/sub)
+- Added correlation engine health bar to frontend
+- Added site dropdown + jump-to-site in topology toolbar
+- Added Export PNG button, keyboard shortcut cheat sheet, device count in search
+- Added per-collector alert dismiss with localStorage persistence
+- Added cascade relationship badge in incident detail
+- Added auto fitView on site expand (scoped to site node)
+- Added 404 page, loading indicator for topology re-layout
+- Fixed Arista WLC timestamp parsing (was datetime.now() stub)
+- Removed dead code getInitialResolvedTheme() from providers.tsx
+
 ## [17] — 2026-07-21 — Dashboard Collector Health Widget
 - Added `CollectorHealthWidget` to main dashboard (polls `GET /telemetry`, shows summary stats + inline alerts)
 - Added `api.getTelemetry()` and `TelemetryResponse` types

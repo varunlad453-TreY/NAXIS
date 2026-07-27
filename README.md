@@ -13,7 +13,7 @@ Open-source operational intelligence platform for network telemetry correlation,
 
 Naxis is an open-source operational intelligence platform for network telemetry correlation, topology-aware reasoning, and incident management. It normalizes events from multi-vendor networks (Mist, DNAC, VeloCloud), correlates them into structured incidents, and syncs topology into a queryable graph — all on PostgreSQL.
 
-**Not a monitoring tool.** A reasoning layer that tells you *why* something is wrong.
+**Not a monitoring tool.** A reasoning layer that tells you *why* something is wrong. Includes collector health monitoring with Slack + email notifications.
 
 ## Quick Start
 
@@ -77,8 +77,8 @@ make up
 
 - ✅ **Juniper Mist** — Events + AP inventory (live)
 - ✅ **Cisco DNAC** — Devices, alarms, topology, clients, interfaces (live)
-- ✅ **Arista SD-WAN (VeloCloud)** — Edge inventory, WAN links, events (live)
-- ⬜ **Arista WLC** — Planned
+- ✅ **Arista SD-WAN (VeloCloud)** — Edge inventory, WAN links, tunnels, events, topology (live)
+- ✅ **Arista WLC** — Clients, APs, radios, events (live)
 
 ## Project Structure
 
@@ -140,7 +140,7 @@ REDIS_ENABLED=false
 - **[docs/TELEMETRY_ARCHITECTURE.md](docs/TELEMETRY_ARCHITECTURE.md)** — Collector → ledger → UI health architecture.
 - **[docs/CORRELATION_ARCHITECTURE.md](docs/CORRELATION_ARCHITECTURE.md)** — Correlation engine (Stage 1 + Stage 2) design.
 - **[docs/FRONTEND_ARCHITECTURE.md](docs/FRONTEND_ARCHITECTURE.md)** — Frontend structure and patterns.
-- **[docs/handoff docs/](docs/handoff%20docs/)** — Per-session change logs (16 sessions).
+- **[docs/handoff docs/](docs/handoff%20docs/)** — Per-session change logs (19 sessions).
 
 ## License
 
