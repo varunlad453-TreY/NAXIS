@@ -42,12 +42,15 @@ async def check_collector_health(window_minutes: int = 30) -> List[Dict[str, Any
     if not db.pool:
         return []
 
+    from config.settings import get_settings
+    settings = get_settings()
+
     cutoff = datetime.now(timezone.utc) - timedelta(minutes=window_minutes)
     alerts: List[Dict[str, Any]] = []
 
     failure_rows = await db.fetch(_RECENT_FAILURES_QUERY, cutoff)
     for row in failure_rows:
-        if int(row["failure_count"]) >= 3:
+        if int(row["failure_count"]) >= settings.notification_min_failures:
             alerts.append({
                 "type": "repeated_failure",
                 "collector_id": row["collector_id"],
@@ -63,7 +66,7 @@ async def check_collector_health(window_minutes: int = 30) -> List[Dict[str, Any
 
     skip_rows = await db.fetch(_RECENT_SKIPS_QUERY, cutoff)
     for row in skip_rows:
-        if int(row["skip_count"]) >= 10:
+        if int(row["skip_count"]) >= settings.notification_min_skips:
             alerts.append({
                 "type": "repeated_skip",
                 "collector_id": row["collector_id"],

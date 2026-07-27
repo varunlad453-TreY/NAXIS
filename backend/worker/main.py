@@ -51,6 +51,7 @@ from worker.collectors.topology_sync import TopologySync
 from worker.collectors.health_snapshot import collect_health_snapshots
 from worker.collectors.snmp_poller import SnmpPoller
 from shared.monitoring.collector_health import check_collector_health
+from shared.monitoring.notifier import dispatch_alerts
 from shared.database.retention import run_retention
 
 logging.basicConfig(
@@ -207,9 +208,16 @@ class WorkerDaemon:
             except Exception:
                 logger.exception("Failed to persist correlation telemetry")
 
-        # Collector health alerting (every cycle)
+        # Collector health alerting + push notifications (every cycle)
         try:
-            await check_collector_health(window_minutes=30)
+            alerts = await check_collector_health(window_minutes=30)
+            if alerts:
+                dispatch_result = await dispatch_alerts(alerts)
+                if dispatch_result.get("sent"):
+                    channel_summary = ", ".join(
+                        f"{ch}: {info['status']}" for ch, info in dispatch_result.get("channels", {}).items()
+                    )
+                    logger.info("Sent %d alert(s) via %s", len(alerts), channel_summary)
         except Exception:
             logger.exception("Collector health check failed")
 
