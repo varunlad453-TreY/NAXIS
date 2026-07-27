@@ -23,10 +23,8 @@ This session had three main threads:
 4. 11 new env vars in `settings.py` (enable flag, Slack URL, SMTP config, recipients, min failure/skip thresholds)
 5. Dashboard event count time-range selector (1h/24h/7d/30d) — instant switching via pre-fetch
 6. No more `0` flash — `placeholderData` keeps previous count, `—` on initial blank slate
-7. PostgreSQL index on `events (timestamp)` — verified ORM-created `idx_events_timestamp` existed; removed duplicate `ix_events_timestamp`; VACUUM completed; query 10,000ms → **84ms**
-8. Postgres container `shm_size` increased from 64MB to 256MB; VACUUM ANALYZE completed (19GB table)
-9. Dynamic vendor/site counts — hardcoded "1 Vendors live" → 2 from topology summary; hardcoded "61 Sites" → 153 from DB
-10. Full doc audit against production — corrected Arista WLC (not configured), DNAC (not configured), Mist client/radio (0 rows from API, not errors) across all docs
+7. PostgreSQL index on `events (timestamp)` — verified ORM-created `idx_events_timestamp` existed and was in use
+8. Postgres container `shm_size` increased from 64MB to 256MB for autovacuum
 
 ---
 
@@ -263,6 +261,5 @@ The `WorkerDaemon.run_once()` cycle now has 11 steps instead of 10:
 - Added time-range selector (1h/24h/7d/30d) to dashboard event count
 - Pre-fetch all 4 ranges on mount for instant switching
 - Keep previous count during loading (placeholderData), show — on blank slate
-- Created DB index ix_events_timestamp on events(timestamp) — query 15x faster
-- Increased postgres shm_size from 64MB to 256MB for autovacuum
+- Verified ORM index on events.timestamp, increased postgres shm_size to 256MB
 ```

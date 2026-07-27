@@ -397,7 +397,8 @@ Current: **300+ tests, 0 failures**.
 | 16 | VeloCloud end-to-end verification: fix `props` data gap, 151 new tests, topology sync |
 | 17 | Dashboard Collector Health Widget, TelemetryAlertType fix |
 | 18 | Phase A–F completion: 26 items across oversight, pipeline wiring, monitoring, frontend UX, technical debt |
-| 19 | VeloCloud all-5-collectors live, notification system (Slack+email+dedup), dashboard event count UX overhaul, DB index + shm_size, dynamic vendor/site counts from topology summary |
+| 19 | VeloCloud all-5-collectors live, notification system (Slack+email+dedup), dashboard event count UX overhaul, DB index + shm_size |
+| 20 | Boil-the-ocean audit: verified every claim against production DB, fixed hardcoded vendor/site counts, corrected all doc statuses, removed duplicate index, VACUUM completed, fixed ReactFlow border conflict |
 
 ---
 

@@ -1,5 +1,16 @@
 # Changelog
 
+## [20] — 2026-07-27 — Boil the Ocean Audit: Production Verification & Doc Correction
+- Verified every doc claim against live DB: VeloCloud 5/5 live, topology 93 edges + 63 gateways + 200 WAN links, Mist 1,957 APs, 156K VeloCloud events
+- Fixed HeroSection hardcoded "1 Vendors live" → dynamic from /topology/summary (shows 2)
+- Fixed HeroSection hardcoded "61 Sites" → dynamic from DB (shows 153)
+- Corrected Arista WLC from "✅ Live" → "⬜ Not configured" across all docs
+- Corrected DNAC from "✅ Live" → "✅ Registered" across all docs
+- Corrected Mist client-topology/radio-neighbors from "⚠️ 404" → "0 rows (not enabled)"
+- Removed duplicate index ix_events_timestamp (ORM idx_events_timestamp DESC already covered)
+- VACUUM completed on 19GB events table — query 10,000ms → 84ms
+- Fixed ReactFlow border shorthand conflict in context-graph.tsx + aggregated-view.tsx
+
 ## [19] — 2026-07-27 — Notification System, Dashboard UX, DB Performance
 - VeloCloud all 5 collectors live: links/tunnels switched from stubs to real API calls
 - VeloCloudAppsCollector correctly mark_skipped (vco109 methodError on monitor/* endpoints)
