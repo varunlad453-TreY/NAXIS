@@ -45,7 +45,9 @@ function buildClusterLayout(
       data: { label: siteNodeName },
       style: {
         background: "hsl(var(--surface))",
-        border: "2px solid #8b5cf6",
+        borderWidth: 2,
+        borderStyle: "solid",
+        borderColor: "#8b5cf6",
         borderRadius: 12,
         padding: "10px 20px",
         fontSize: 14,
