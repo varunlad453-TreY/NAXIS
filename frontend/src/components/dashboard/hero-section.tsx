@@ -1,11 +1,40 @@
 "use client";
 
+type EventRange = "1h" | "24h" | "7d" | "30d";
+
 interface HeroSectionProps {
   isOnline: boolean;
-  eventCount: number;
+  eventCount: number | null;
+  eventCountStale: boolean;
+  eventRange: EventRange;
+  onEventRangeChange: (range: EventRange) => void;
+  siteCount: number;
+  vendorCount: number;
 }
 
-export function HeroSection({ isOnline, eventCount }: HeroSectionProps) {
+const RANGE_LABELS: Record<EventRange, string> = {
+  "1h": "1h",
+  "24h": "24h",
+  "7d": "7d",
+  "30d": "30d",
+};
+
+const RANGE_FULL: Record<EventRange, string> = {
+  "1h": "last hour",
+  "24h": "last 24 hours",
+  "7d": "last 7 days",
+  "30d": "last 30 days",
+};
+
+function fmt(n: number | null): string {
+  return n !== null ? new Intl.NumberFormat().format(n) : "—";
+}
+
+function liveVendors(n: number): string {
+  return n > 0 ? n.toString() : "—";
+}
+
+export function HeroSection({ isOnline, eventCount, eventCountStale, eventRange, onEventRangeChange, siteCount, vendorCount }: HeroSectionProps) {
   return (
     <section className="max-w-2xl space-y-6" style={{ animation: "naxis-enter 0.6s 0.1s both" }}>
       <div className="flex items-center gap-2.5">
@@ -16,8 +45,8 @@ export function HeroSection({ isOnline, eventCount }: HeroSectionProps) {
         <span className="text-[10px] font-semibold uppercase tracking-[0.25em] text-foreground-subtle">
           {isOnline ? "Systems nominal" : "Connecting…"}
         </span>
-        <span className="ml-auto font-mono text-[10px] text-foreground-subtle/50">
-          {new Intl.NumberFormat().format(eventCount)} events ingested
+        <span className={`ml-auto font-mono text-[10px] transition-opacity ${eventCountStale ? "text-foreground-subtle/30" : "text-foreground-subtle/50"}`}>
+          {fmt(eventCount)} events in {RANGE_FULL[eventRange]}
         </span>
       </div>
 
@@ -37,19 +66,36 @@ export function HeroSection({ isOnline, eventCount }: HeroSectionProps) {
         feeding one intelligence layer.
       </p>
 
-      <div className="flex flex-wrap gap-4 border-t border-border/40 pt-5 text-sm">
-        {[
-          { label: "Events", value: eventCount },
-          { label: "Vendors live", value: 1 },
-          { label: "Sites monitored", value: 61 },
-        ].map(({ label, value }) => (
-          <div key={label}>
-            <div className="font-mono text-lg font-semibold text-foreground">
-              {new Intl.NumberFormat().format(value)}
-            </div>
-            <div className="text-[11px] text-foreground-subtle">{label}</div>
+      <div className="flex flex-wrap items-end gap-4 border-t border-border/40 pt-5 text-sm">
+        <div>
+          <div className={`font-mono text-lg font-semibold transition-opacity ${eventCountStale ? "text-foreground/40" : "text-foreground"}`}>
+            {fmt(eventCount)}
           </div>
-        ))}
+          <div className="text-[11px] text-foreground-subtle">Events</div>
+        </div>
+        <div>
+          <div className="font-mono text-lg font-semibold text-foreground">{liveVendors(vendorCount)}</div>
+          <div className="text-[11px] text-foreground-subtle">Vendors live</div>
+        </div>
+        <div>
+          <div className="font-mono text-lg font-semibold text-foreground">{new Intl.NumberFormat().format(siteCount)}</div>
+          <div className="text-[11px] text-foreground-subtle">Sites monitored</div>
+        </div>
+        <div className="ml-auto flex gap-1 rounded-lg border border-border/40 p-0.5">
+          {(Object.keys(RANGE_LABELS) as EventRange[]).map((r) => (
+            <button
+              key={r}
+              onClick={() => onEventRangeChange(r)}
+              className={`rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors ${
+                r === eventRange
+                  ? "bg-accent text-accent-foreground shadow-sm"
+                  : "text-foreground-subtle hover:text-foreground"
+              }`}
+            >
+              {RANGE_LABELS[r]}
+            </button>
+          ))}
+        </div>
       </div>
     </section>
   );

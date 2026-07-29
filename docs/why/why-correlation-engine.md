@@ -9,9 +9,7 @@ The Naxis platform today is a **CRUD application dressed as an intelligence plat
 - **DNAC collector**: Pulls device inventory, alarms, topology, client health → normalized `UnifiedEvent` objects
 - **Events API + UI**: A sorted, filterable list of raw events
 - **Incident model**: A schema with blast radius fields, confidence scoring, lifecycle status
-- **Correlation engine code**: A deterministic rule engine (`backend/shared/correlation/engine.py`) that groups events by site + time window and produces `Incident` objects — **but it is NOT wired into the production pipeline**
-
-In `backend/worker/main.py:106`, there is a `# TODO: correlate + create incidents` comment. The correlation engine only runs in the dev `run_worker.py` script and the mock ingest pipeline.
+- **Correlation engine code**: A deterministic rule engine (`backend/shared/correlation/engine.py`) that groups events by site + time window, applies topology cascade (Stage 2), and produces `Incident` objects — **wired into the production pipeline as of Session 15**
 
 **The gap**: Raw telemetry is not intelligence. A NOC engineer staring at a list of 500 Mist events cannot answer the four questions that define operational intelligence:
 

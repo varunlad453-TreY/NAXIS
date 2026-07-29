@@ -17,7 +17,7 @@ import {
   NodeProps,
 } from "reactflow";
 import "reactflow/dist/style.css";
-import { Search, X, Layers } from "lucide-react";
+import { Search, X, Layers, Download } from "lucide-react";
 
 import type { TopologyGraphResponse, DeviceCategory } from "@/types/topology";
 import { NODE_TYPE_META, HEALTH_STATUS_META, AGGREGATED_VIEW_THRESHOLD } from "@/types/topology";
@@ -244,11 +244,32 @@ export function TopologyGraph({
   const [fitViewKey, setFitViewKey] = useState(0);
   const [panelMode, setPanelMode] = useState<PanelMode>(incidentId ? "incident" : null);
   const [expandedSites, setExpandedSites] = useState<Set<string>>(new Set());
+
+  const siteNames = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const n of data.nodes) {
+      if (n.node_type === "site" && n.site_id && n.name) m.set(n.site_id, n.name);
+    }
+    return m;
+  }, [data.nodes]);
+
+  const jumpToSite = useCallback((siteId: string) => {
+    setExpandedSites((prev) => {
+      if (prev.has(siteId)) return prev;
+      const next = new Set(prev);
+      next.add(siteId);
+      setTimeout(() => {
+        reactFlowInstance?.fitView({ padding: 0.3, duration: 300, nodes: [{ id: siteId }] });
+      }, 200);
+      return next;
+    });
+  }, [reactFlowInstance]);
   const [activeTypeFilters, setActiveTypeFilters] = useState<Set<string>>(
     () => new Set(Object.keys(NODE_TYPE_META)),
   );
   const [searchQuery, setSearchQuery] = useState("");
   const [showSearch, setShowSearch] = useState(false);
+  const [showShortcuts, setShowShortcuts] = useState(false);
   const searchRef = useRef<HTMLDivElement>(null);
   const firstFitDone = useRef(false);
 
@@ -353,12 +374,16 @@ export function TopologyGraph({
       const wasCollapsed = !next.has(siteId);
       if (wasCollapsed) {
         next.add(siteId);
+        // Auto fitView after expanding a site
+        setTimeout(() => {
+          reactFlowInstance?.fitView({ padding: 0.3, duration: 300 });
+        }, 200);
       } else {
         next.delete(siteId);
       }
       return next;
     });
-  }, []);
+  }, [reactFlowInstance]);
 
   const expandAll = useCallback(() => {
     setExpandedSites(new Set(allSiteIds));
@@ -469,6 +494,19 @@ export function TopologyGraph({
 
   const onFitView = useCallback(() => {
     reactFlowInstance?.fitView({ padding: 0.2 });
+  }, [reactFlowInstance]);
+
+  const onExportPng = useCallback(async () => {
+    if (!reactFlowInstance) return;
+    try {
+      const dataUrl = reactFlowInstance.toImage();
+      const link = document.createElement("a");
+      link.download = `topology-${new Date().toISOString().slice(0, 19).replace(/[:-]/g, "")}.png`;
+      link.href = await dataUrl;
+      link.click();
+    } catch {
+      // toImage may fail if canvas is tainted — silently ignore
+    }
   }, [reactFlowInstance]);
 
   if (isLoading || (isComputing && initialNodes.length === 0)) return <TopologySkeleton />;
@@ -598,6 +636,44 @@ export function TopologyGraph({
               </button>
             )}
 
+            {/* Keyboard shortcuts */}
+            <div className="relative">
+              <button
+                onClick={() => setShowShortcuts((v) => !v)}
+                className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-border/60 text-xs font-medium text-foreground-muted transition-colors hover:bg-surface hover:text-foreground"
+                title="Keyboard shortcuts"
+              >
+                ?
+              </button>
+              {showShortcuts && (
+                <>
+                  <div className="fixed inset-0 z-40" onClick={() => setShowShortcuts(false)} />
+                  <div className="absolute left-0 top-full z-50 mt-1 w-56 overflow-hidden rounded-lg border border-border/60 bg-surface shadow-surface-lg">
+                    <div className="border-b border-border/40 px-3 py-2 text-xs font-semibold text-foreground">
+                      Keyboard Shortcuts
+                    </div>
+                    <div className="divide-y divide-border/30">
+                      {[
+                        ["/", "Search nodes"],
+                        ["Esc", "Close search / panel"],
+                        ["+", "Zoom in"],
+                        ["-", "Zoom out"],
+                        ["0", "Fit view"],
+                        ["F", "Toggle flat view"],
+                      ].map(([key, desc]) => (
+                        <div key={key} className="flex items-center justify-between px-3 py-1.5 text-xs">
+                          <span className="text-foreground-muted">{desc}</span>
+                          <kbd className="rounded border border-border/60 bg-surface-elevated px-1.5 py-0.5 font-mono text-[10px] text-foreground-subtle">
+                            {key}
+                          </kbd>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+
             {/* Search results dropdown */}
             {showSearch && searchResults.length > 0 && (
               <div className="absolute left-0 top-full z-50 mt-1 w-64 overflow-hidden rounded-lg border border-border/60 bg-surface shadow-surface-lg">
@@ -616,6 +692,9 @@ export function TopologyGraph({
                       <span className="truncate font-medium text-foreground">
                         {node.name || node.node_id}
                       </span>
+                      {node.device_count != null && node.device_count > 0 && (
+                        <span className="shrink-0 text-foreground-subtle">{node.device_count} dev</span>
+                      )}
                       <span className="shrink-0 text-foreground-subtle">{meta.label}</span>
                     </button>
                   );
@@ -642,8 +721,20 @@ export function TopologyGraph({
           )}
         </div>
 
-        {/* Right group: expand/collapse (multi-site only) + fit view */}
+        {/* Right group: site jump, expand/collapse (multi-site only) + fit view */}
         <div className="flex items-center gap-2">
+          {!singleSite && allSiteIds.length > 0 && (
+            <select
+              value=""
+              onChange={(e) => { const v = e.target.value; if (v) jumpToSite(v); }}
+              className="max-w-[140px] truncate rounded-md border border-border/60 bg-surface px-2 py-1.5 text-xs text-foreground-muted transition-colors hover:bg-surface-hover"
+            >
+              <option value="">Jump to site…</option>
+              {allSiteIds.map((id) => (
+                <option key={id} value={id}>{siteNames.get(id) || id}</option>
+              ))}
+            </select>
+          )}
           {!singleSite && (
             <>
               <span className="text-xs text-foreground-subtle">
@@ -681,11 +772,22 @@ export function TopologyGraph({
             </svg>
             Fit view
           </button>
+          <button
+            onClick={onExportPng}
+            className="inline-flex items-center gap-1.5 rounded-md border border-border/60 px-3 py-1.5 text-xs font-medium text-foreground-muted transition-colors hover:bg-surface hover:text-foreground"
+            title="Export as PNG"
+          >
+            <Download className="h-3.5 w-3.5" />
+            Export
+          </button>
         </div>
       </div>
 
       {/* Graph */}
       <div className="relative">
+        {isComputing && initialNodes.length > 0 && (
+          <div className="absolute left-0 right-0 top-0 z-20 h-0.5 animate-pulse rounded-full bg-primary/50" />
+        )}
         <div ref={reactFlowWrapper} className="h-[600px] w-full">
           <ReactFlow
             nodes={nodes}

@@ -1,17 +1,11 @@
 """
 VeloCloud SD-WAN Collector
 
-Polls the VeloCloud Orchestrator's JSON-RPC-style REST API (POST /portal/rest/<module>/<action>):
-  - Edge appliance inventory       (enterprise/getEnterpriseEdges)
-  - Link inventory + VPN/tunnel state (edge/getEdge, with=["links"])
-  - Link metrics (latency, jitter, loss)  (metrics/getEdgeLinkMetrics)
-  - Enterprise events, alarms      (event/getEnterpriseEvents)
-  - Application visibility, QoS    (metrics/getEdgeAppMetrics)
+Polls the VeloCloud Orchestrator API for:
+  - Edge appliance inventory       (POST /portal/rest/enterprise/getEnterpriseEdges)
+  - Enterprise events, alarms      (POST /portal/rest/event/getEnterpriseEvents)
 
-Auth: API key via header `Authorization: Token <api_key>` (NOT X-API-KEY —
-this Orchestrator generation rejects that header with a tokenError).
-Tunnel health is not a separate endpoint on this API generation; VPN/tunnel
-state is carried on each entry in the `links` array returned by edge/getEdge.
+Auth: API key via Authorization: Token header.
 All responses are normalized to UnifiedEvent via the same contract as Mist/DNAC.
 """
 
@@ -72,10 +66,9 @@ class VeloCloudEdgesCollector:
     COLLECTOR_ID = "velocloud-edges"
     SOURCE_SYSTEM = "velocloud"
 
-    def __init__(self, client: httpx.AsyncClient, base_url: str, enterprise_id: str):
+    def __init__(self, client: httpx.AsyncClient, base_url: str):
         self._client = client
         self._base = base_url
-        self._enterprise_id = enterprise_id
 
     @retry(
         retry=retry_if_exception_type(httpx.TransportError),
@@ -83,21 +76,23 @@ class VeloCloudEdgesCollector:
         wait=wait_exponential(multiplier=1, min=2, max=10),
         reraise=True,
     )
-    async def collect(self) -> CollectorOutcome:
+    async def collect(self, edges_data: List[Dict] = None) -> CollectorOutcome:
         outcome = CollectorOutcome(
             collector_id=self.COLLECTOR_ID,
             source_system=self.SOURCE_SYSTEM,
         )
         try:
-            resp = await self._client.post(
-                f"{self._base}/portal/rest/enterprise/getEnterpriseEdges",
-                json={"enterpriseId": self._enterprise_id},
-            )
-            _raise_for_status(resp)
-            edges_raw = resp.json()
-            if isinstance(edges_raw, dict):
-                edges_raw = edges_raw.get("data", [])
-            edges_raw = edges_raw[:_MAX_EDGES]
+            if edges_data is None:
+                resp = await self._client.post(
+                    f"{self._base}/portal/rest/enterprise/getEnterpriseEdges",
+                    json={"with": ["site"]},
+                )
+                _raise_for_status(resp)
+                edges_raw = resp.json()
+                if not isinstance(edges_raw, list):
+                    edges_raw = edges_raw.get("data", [])
+            else:
+                edges_raw = edges_data
 
             events: List[UnifiedEvent] = []
             for edge in edges_raw:
@@ -115,14 +110,13 @@ class VeloCloudEdgesCollector:
     def _normalize_edge(self, raw: Dict[str, Any]) -> UnifiedEvent:
         edge_id = str(raw.get("id", f"vc-{uuid4().hex[:8]}"))
         name = raw.get("name", "unknown")
-        edge_type = raw.get("edgeType", "")
         enterprise_id = raw.get("enterpriseId", "")
-        site_id = raw.get("siteId", "")
-        site_name = raw.get("siteName", "")
+        site = raw.get("site") or {}
+        site_id = str(site.get("id", "")) or str(raw.get("siteId", ""))
+        site_name = site.get("name", "") or raw.get("siteName", "")
         model_number = raw.get("modelNumber", "")
         software_version = raw.get("softwareVersion", "")
 
-        # Edge state: connected, disconnected, etc.
         edge_state = raw.get("edgeState", "unknown")
         if edge_state.lower() in ("connected", "online"):
             severity = EventSeverity.INFO
@@ -155,15 +149,14 @@ class VeloCloudEdgesCollector:
                 device_name=name,
                 device_type="edge",
                 device_model=model_number,
-                site_id=str(site_id) if site_id else None,
+                site_id=site_id or None,
                 site_name=site_name or None,
             ),
             tags=["sdwan", "velocloud", "edge", "inventory"],
             metadata={
                 "vc_edge_id": edge_id,
-                "vc_edge_type": edge_type,
                 "vc_enterprise_id": str(enterprise_id),
-                "vc_site_id": str(site_id),
+                "vc_site_id": site_id,
                 "vc_model": model_number,
                 "vc_sw_version": software_version,
                 "vc_edge_state": edge_state,
@@ -173,17 +166,17 @@ class VeloCloudEdgesCollector:
 
 
 class VeloCloudLinksCollector:
-    """Fetches per-edge link inventory (state, ISP, VPN) plus latency/jitter/loss metrics."""
+    """Fetches link metrics (latency, jitter, loss) for VeloCloud edges.
+
+    Extracts WAN link data embedded in each edge's ``links`` array from
+    the getEnterpriseEdges response (fetched once by the orchestrator).
+    """
 
     COLLECTOR_ID = "velocloud-links"
     SOURCE_SYSTEM = "velocloud"
-    _METRICS_WINDOW_HOURS = 24
 
-    def __init__(self, client: httpx.AsyncClient, base_url: str, enterprise_id: int, edge_ids: Optional[List[tuple]] = None):
-        self._client = client
-        self._base = base_url
-        self._enterprise_id = enterprise_id
-        self._edge_ids = edge_ids
+    def __init__(self, edges_data: List[Dict]):
+        self._edges_data = edges_data
 
     async def collect(self) -> CollectorOutcome:
         outcome = CollectorOutcome(
@@ -191,162 +184,107 @@ class VeloCloudLinksCollector:
             source_system=self.SOURCE_SYSTEM,
         )
         try:
-            edges = self._edge_ids or await self._fetch_edge_ids()
-
             events: List[UnifiedEvent] = []
-            for edge_id, edge_name in edges:
-                links = await self._fetch_links(edge_id)
-                metrics_by_link = await self._fetch_link_metrics(edge_id)
+            for edge in self._edges_data:
+                edge_id = str(edge.get("id", ""))
+                edge_name = edge.get("name", "unknown")
+                links = edge.get("links", [])
+                if not isinstance(links, list):
+                    continue
                 for link in links:
                     try:
-                        metrics = metrics_by_link.get(link.get("id"), {})
-                        event = self._normalize_link(edge_id, edge_name, link, metrics)
-                        if event is not None:
-                            events.append(event)
+                        events.append(self._normalize_link(link, edge_id, edge_name))
                     except Exception:
-                        logger.exception("Failed to normalize VeloCloud link for edge %s", edge_id)
+                        logger.exception("Failed to normalize VeloCloud link")
 
             outcome.events = events
             outcome.mark_success(rows_written=len(events))
-            outcome.metadata["edges_scanned"] = len(edges)
-            logger.info("VeloCloud links: %d link metrics from %d edges", len(events), len(edges))
+            outcome.metadata["raw_count"] = len(events)
+            logger.info("VeloCloud links: %d links from %d edges", len(events), len(self._edges_data))
         except Exception as exc:
             outcome.mark_error(str(exc))
             logger.exception("VeloCloud links collection failed")
         return outcome
 
-    async def _fetch_edge_ids(self) -> List[tuple]:
-        """Returns list of (edge_id, edge_name)."""
-        try:
-            resp = await self._client.post(
-                f"{self._base}/portal/rest/enterprise/getEnterpriseEdges",
-                json={"enterpriseId": self._enterprise_id},
-            )
-            _raise_for_status(resp)
-            edges = resp.json()
-            if isinstance(edges, dict):
-                edges = edges.get("data", [])
-            return [(e["id"], e.get("name", "")) for e in edges if e.get("id")][:20]
-        except Exception:
-            logger.exception("Failed to fetch VeloCloud edges for links")
-            return []
+    def _normalize_link(self, raw: Dict[str, Any], edge_id: str = "", edge_name: str = "") -> UnifiedEvent:
+        link_id = str(raw.get("id", f"vc-link-{uuid4().hex[:8]}"))
+        edge_id = str(raw.get("edgeId", "")) or edge_id
+        edge_name = raw.get("edgeName", raw.get("edge", "")) or edge_name
+        display_name = raw.get("displayName", raw.get("name", f"Link {link_id}"))
+        state = raw.get("state", raw.get("linkState", "unknown"))
+        latency = raw.get("latency", raw.get("latencyMs", 0))
+        jitter = raw.get("jitter", raw.get("jitterMs", 0))
+        loss = raw.get("packetLoss", raw.get("lossPercent", 0))
+        bandwidth = raw.get("bandwidth", {})
 
-    async def _fetch_links(self, edge_id: int) -> List[Dict]:
-        try:
-            resp = await self._client.post(
-                f"{self._base}/portal/rest/edge/getEdge",
-                json={"enterpriseId": self._enterprise_id, "edgeId": edge_id, "with": ["links"]},
-            )
-            if resp.status_code == 200:
-                return resp.json().get("links", [])
-        except Exception:
-            logger.debug("Failed to fetch links for edge %s", edge_id)
-        return []
-
-    async def _fetch_link_metrics(self, edge_id: int) -> Dict[int, Dict]:
-        """Returns {linkId: metrics} for the trailing metrics window."""
-        try:
-            end = datetime.now(timezone.utc)
-            start = end.replace(hour=0, minute=0, second=0, microsecond=0)
-            resp = await self._client.post(
-                f"{self._base}/portal/rest/metrics/getEdgeLinkMetrics",
-                json={
-                    "enterpriseId": self._enterprise_id,
-                    "edgeId": edge_id,
-                    "interval": {"start": start.isoformat(), "end": end.isoformat()},
-                },
-            )
-            if resp.status_code != 200:
-                return {}
-            rows = resp.json()
-            return {row["linkId"]: row for row in rows if row.get("linkId") is not None}
-        except Exception:
-            logger.debug("Failed to fetch link metrics for edge %s", edge_id)
-            return {}
-
-    def _normalize_link(
-        self, edge_id: int, edge_name: str, raw: Dict[str, Any], metrics: Dict[str, Any]
-    ) -> Optional[UnifiedEvent]:
-        link_id = raw.get("id")
-        if link_id is None:
-            return None
-
-        link_type = raw.get("networkType", "")
-        isp = raw.get("isp", "")
-        ip = raw.get("ipAddress", "")
-        state = raw.get("state", "unknown")
-        vpn_state = raw.get("vpnState", "unknown")
-
-        latency = metrics.get("bestLatencyMsRx") or metrics.get("bestLatencyMsTx") or 0
-        jitter = metrics.get("bestJitterMsRx") or metrics.get("bestJitterMsTx") or 0
-        loss = metrics.get("bestLossPctRx") or metrics.get("bestLossPctTx") or 0
-
-        if state.upper() in ("DISCONNECTED", "DOWN"):
+        if state.lower() in ("stable", "connected", "up"):
+            severity = EventSeverity.INFO
+            event_type = EventType.LINK_UP
+        elif state.lower() in ("down", "disconnected", "error"):
             severity = EventSeverity.CRITICAL
             event_type = EventType.LINK_DOWN
-        elif isinstance(loss, (int, float)) and loss > 5:
-            severity = EventSeverity.CRITICAL
-            event_type = EventType.PACKET_LOSS
-        elif isinstance(latency, (int, float)) and latency > 100:
+        elif latency and isinstance(latency, (int, float)) and latency > 300:
             severity = EventSeverity.WARNING
             event_type = EventType.HIGH_LATENCY
+        elif loss and isinstance(loss, (int, float)) and loss > 5:
+            severity = EventSeverity.WARNING
+            event_type = EventType.PACKET_LOSS
         else:
             severity = EventSeverity.INFO
             event_type = EventType.LINK_UP
 
         description = (
-            f"Link {link_type} ({isp}) on edge {edge_name} — state: {state}, "
-            f"latency: {latency:.1f}ms, jitter: {jitter:.2f}ms, loss: {loss:.2f}%"
+            f"Link {display_name} — state: {state}"
+            f", latency: {latency}ms" if latency else ""
+        ) + (
+            f", jitter: {jitter}ms" if jitter else ""
+        ) + (
+            f", loss: {loss}%" if loss else ""
         )
 
         return UnifiedEvent(
             event_id=f"vc-link-{uuid4().hex[:12]}",
             timestamp=datetime.now(timezone.utc).replace(tzinfo=None),
             source=EventSource.VELOCLOUD,
-            source_event_id=f"vc-link-{edge_id}-{link_id}",
+            source_event_id=link_id,
             severity=severity,
-            category=EventCategory.PERFORMANCE,
+            category=EventCategory.CONNECTIVITY,
             event_type=event_type,
-            title=f"Link: {link_type} ({edge_name})",
+            title=f"Link: {display_name}",
             description=description,
             device=DeviceInfo(
-                device_id=str(edge_id),
-                device_name=edge_name,
+                device_id=edge_id or link_id,
+                device_name=edge_name or display_name,
                 device_type="edge",
+                site_id="",
+                site_name="",
             ),
-            tags=["sdwan", "velocloud", "link", "performance"],
+            tags=["sdwan", "velocloud", "link"],
             metadata={
-                "vc_edge_id": str(edge_id),
-                "vc_link_id": str(link_id),
-                "vc_link_type": link_type,
-                "vc_isp": isp,
-                "vc_ip": ip,
+                "vc_link_id": link_id,
+                "vc_edge_id": edge_id,
+                "vc_link_state": state,
                 "vc_latency_ms": latency,
                 "vc_jitter_ms": jitter,
-                "vc_loss_percent": loss,
-                "vc_link_state": state,
-                "vc_vpn_state": vpn_state,
+                "vc_loss_pct": loss,
+                "vc_bandwidth": bandwidth,
             },
             raw_event=raw,
         )
 
 
 class VeloCloudTunnelsCollector:
-    """Derives VPN/tunnel health from each edge's link inventory.
+    """Fetches tunnel health and encryption status from VeloCloud.
 
-    This VCO API generation has no dedicated tunnel endpoint — overlay
-    tunnel state is the `vpnState` field on each entry returned by
-    edge/getEdge's `links` array (one overlay tunnel per WAN link).
+    Extracts tunnel data embedded in each edge's ``tunnels`` array
+    from the getEnterpriseEdges response (fetched once by the orchestrator).
     """
 
     COLLECTOR_ID = "velocloud-tunnels"
     SOURCE_SYSTEM = "velocloud"
 
-    def __init__(self, client: httpx.AsyncClient, base_url: str, enterprise_id: int, edge_ids: Optional[List[tuple]] = None):
-        self._client = client
-        self._base = base_url
-        self._enterprise_id = enterprise_id
-        self._edge_ids = edge_ids
+    def __init__(self, edges_data: List[Dict]):
+        self._edges_data = edges_data
 
     async def collect(self) -> CollectorOutcome:
         outcome = CollectorOutcome(
@@ -354,103 +292,88 @@ class VeloCloudTunnelsCollector:
             source_system=self.SOURCE_SYSTEM,
         )
         try:
-            edges = self._edge_ids or await self._fetch_edge_ids()
-
             events: List[UnifiedEvent] = []
-            for edge_id, edge_name in edges:
-                links = await self._fetch_links(edge_id)
-                for link in links:
+            for edge in self._edges_data:
+                edge_id = str(edge.get("id", ""))
+                edge_name = edge.get("name", "unknown")
+                tunnels = edge.get("tunnels", edge.get("edgeTunnels", []))
+                if not isinstance(tunnels, list):
+                    continue
+                for tunnel in tunnels:
                     try:
-                        event = self._normalize_tunnel(edge_id, edge_name, link)
-                        if event is not None:
-                            events.append(event)
+                        events.append(self._normalize_tunnel(tunnel, edge_id, edge_name))
                     except Exception:
-                        logger.exception("Failed to normalize VeloCloud tunnel for edge %s", edge_id)
+                        logger.exception("Failed to normalize VeloCloud tunnel")
 
             outcome.events = events
             outcome.mark_success(rows_written=len(events))
-            outcome.metadata["edges_scanned"] = len(edges)
-            logger.info("VeloCloud tunnels: %d tunnels from %d edges", len(events), len(edges))
+            outcome.metadata["raw_count"] = len(events)
+            logger.info("VeloCloud tunnels: %d tunnels from %d edges", len(events), len(self._edges_data))
         except Exception as exc:
             outcome.mark_error(str(exc))
             logger.exception("VeloCloud tunnels collection failed")
         return outcome
 
-    async def _fetch_edge_ids(self) -> List[tuple]:
-        try:
-            resp = await self._client.post(
-                f"{self._base}/portal/rest/enterprise/getEnterpriseEdges",
-                json={"enterpriseId": self._enterprise_id},
-            )
-            _raise_for_status(resp)
-            edges = resp.json()
-            if isinstance(edges, dict):
-                edges = edges.get("data", [])
-            return [(e["id"], e.get("name", "")) for e in edges if e.get("id")][:20]
-        except Exception:
-            logger.exception("Failed to fetch VeloCloud edges for tunnels")
-            return []
+    def _normalize_tunnel(self, raw: Dict[str, Any], edge_id: str = "", edge_name: str = "") -> UnifiedEvent:
+        tunnel_id = str(raw.get("id", f"vc-tunnel-{uuid4().hex[:8]}"))
+        edge_id = str(raw.get("edgeId", "")) or edge_id
+        edge_name = raw.get("edgeName", raw.get("edge", "")) or edge_name
+        state = raw.get("state", raw.get("tunnelState", "unknown"))
+        transport = raw.get("transportType", raw.get("transport", ""))
+        encryption = raw.get("encryption", raw.get("encryptionProtocol", ""))
+        local_ip = raw.get("localIp", "")
+        remote_ip = raw.get("remoteIp", "")
+        remote_name = raw.get("peerName", raw.get("gatewayName", ""))
+        latency = raw.get("latency", 0)
+        loss = raw.get("packetLoss", 0)
 
-    async def _fetch_links(self, edge_id: int) -> List[Dict]:
-        try:
-            resp = await self._client.post(
-                f"{self._base}/portal/rest/edge/getEdge",
-                json={"enterpriseId": self._enterprise_id, "edgeId": edge_id, "with": ["links"]},
-            )
-            if resp.status_code == 200:
-                return resp.json().get("links", [])
-        except Exception:
-            logger.debug("Failed to fetch links for tunnels on edge %s", edge_id)
-        return []
-
-    def _normalize_tunnel(self, edge_id: int, edge_name: str, raw: Dict[str, Any]) -> Optional[UnifiedEvent]:
-        link_id = raw.get("id")
-        if link_id is None:
-            return None
-
-        link_type = raw.get("networkType", "")
-        remote_isp = raw.get("isp", "")
-        vpn_state = str(raw.get("vpnState", "unknown"))
-        link_state = str(raw.get("state", "unknown"))
-
-        if vpn_state.upper() in ("STABLE",) and link_state.upper() not in ("DISCONNECTED", "DOWN"):
+        if state.lower() in ("stable", "connected", "up"):
             severity = EventSeverity.INFO
             event_type = EventType.TUNNEL_UP
-        elif link_state.upper() in ("DISCONNECTED", "DOWN"):
+        elif state.lower() in ("down", "disconnected", "error", "degraded"):
             severity = EventSeverity.CRITICAL
             event_type = EventType.TUNNEL_DOWN
         else:
             severity = EventSeverity.WARNING
             event_type = EventType.OTHER
 
-        description = (
-            f"Tunnel over {link_type} ({remote_isp}) on {edge_name} — "
-            f"link state: {link_state}, VPN state: {vpn_state}"
-        )
+        desc_parts = [f"Tunnel to {remote_name or remote_ip or 'peer'} — state: {state}"]
+        if transport: desc_parts.append(f"transport: {transport}")
+        if encryption: desc_parts.append(f"encryption: {encryption}")
+        if latency: desc_parts.append(f"latency: {latency}ms")
+        if loss: desc_parts.append(f"loss: {loss}%")
+        if local_ip: desc_parts.append(f"local: {local_ip}")
+        if remote_ip: desc_parts.append(f"remote: {remote_ip}")
 
         return UnifiedEvent(
             event_id=f"vc-tunnel-{uuid4().hex[:12]}",
             timestamp=datetime.now(timezone.utc).replace(tzinfo=None),
             source=EventSource.VELOCLOUD,
-            source_event_id=f"vc-tunnel-{edge_id}-{link_id}",
+            source_event_id=tunnel_id,
             severity=severity,
             category=EventCategory.CONNECTIVITY,
             event_type=event_type,
-            title=f"Tunnel: {link_type} ({edge_name})",
-            description=description,
+            title=f"Tunnel: {remote_name or remote_ip or tunnel_id}",
+            description=" — ".join(desc_parts),
             device=DeviceInfo(
-                device_id=str(edge_id),
-                device_name=edge_name,
+                device_id=edge_id or tunnel_id,
+                device_name=edge_name or "unknown",
                 device_type="edge",
+                site_id="",
+                site_name="",
             ),
             tags=["sdwan", "velocloud", "tunnel"],
             metadata={
-                "vc_edge_id": str(edge_id),
-                "vc_link_id": str(link_id),
-                "vc_link_type": link_type,
-                "vc_isp": remote_isp,
-                "vc_link_state": link_state,
-                "vc_vpn_state": vpn_state,
+                "vc_tunnel_id": tunnel_id,
+                "vc_edge_id": edge_id,
+                "vc_tunnel_state": state,
+                "vc_transport_type": transport,
+                "vc_encryption": encryption,
+                "vc_local_ip": local_ip,
+                "vc_remote_ip": remote_ip,
+                "vc_peer_name": remote_name,
+                "vc_latency": latency,
+                "vc_loss": loss,
             },
             raw_event=raw,
         )
@@ -461,8 +384,6 @@ class VeloCloudEventsCollector:
 
     COLLECTOR_ID = "velocloud-events"
     SOURCE_SYSTEM = "velocloud"
-
-    _WINDOW_HOURS = 24
 
     def __init__(self, client: httpx.AsyncClient, base_url: str, enterprise_id: int):
         self._client = client
@@ -481,19 +402,21 @@ class VeloCloudEventsCollector:
             source_system=self.SOURCE_SYSTEM,
         )
         try:
-            end = datetime.now(timezone.utc)
-            start = end.replace(hour=0, minute=0, second=0, microsecond=0)
+            now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+            payload = {
+                "enterpriseId": self._enterprise_id,
+                "interval": {"start": now_ms - 3600000, "end": now_ms},
+                "limit": 200,
+            }
             resp = await self._client.post(
                 f"{self._base}/portal/rest/event/getEnterpriseEvents",
-                json={
-                    "enterpriseId": self._enterprise_id,
-                    "interval": {"start": start.isoformat(), "end": end.isoformat()},
-                    "limit": 200,
-                },
+                json=payload,
             )
             _raise_for_status(resp)
             body = resp.json()
             events_raw = body.get("data", []) if isinstance(body, dict) else body
+            if not isinstance(events_raw, list):
+                events_raw = []
 
             events: List[UnifiedEvent] = []
             for raw in events_raw:
@@ -512,46 +435,48 @@ class VeloCloudEventsCollector:
         return outcome
 
     def _normalize_event(self, raw: Dict[str, Any]) -> UnifiedEvent:
-        event_id = raw.get("id", f"vc-{uuid4().hex[:8]}")
-        event_time = raw.get("eventTime")
+        source_eid = str(raw.get("id", ""))
+        ts_raw = raw.get("eventTime") or raw.get("createdWhen") or ""
         try:
-            timestamp = datetime.fromisoformat(str(event_time).replace("Z", "+00:00")).replace(tzinfo=None)
-        except (TypeError, ValueError):
+            timestamp = datetime.fromisoformat(ts_raw.replace("Z", "+00:00")).replace(tzinfo=None)
+        except Exception:
             timestamp = datetime.now(timezone.utc).replace(tzinfo=None)
 
         level = str(raw.get("severity", "INFO")).upper()
         severity = _map_vc_severity(level)
 
-        name = raw.get("message", "VeloCloud Event")
-        edge_name = raw.get("edgeName", "")
-        event_type_str = raw.get("event", "")
+        event_type_str = raw.get("event", raw.get("type", "UNKNOWN"))
+        event_type, category = _map_vc_event_type(event_type_str, "")
 
-        event_type, category = _map_vc_event_type(event_type_str, name)
-
-        description = name
-        if edge_name:
-            description = f"{edge_name}: {description}"
+        edge_name = raw.get("edgeName", "") or raw.get("enterpriseName", "") or "unknown"
+        edge_id = str(raw.get("edgeId", "")) or raw.get("edgeLogicalId", "") or ""
+        site_name = raw.get("siteName", "") or ""
+        detail = raw.get("detail", "") or raw.get("message", "") or event_type_str
+        title = event_type_str.replace("_", " ").title()
 
         return UnifiedEvent(
             event_id=f"vc-event-{uuid4().hex[:12]}",
             timestamp=timestamp,
             source=EventSource.VELOCLOUD,
-            source_event_id=str(event_id),
+            source_event_id=source_eid,
             severity=severity,
             category=category,
             event_type=event_type,
-            title=name[:120],
-            description=description,
+            title=title[:120],
+            description=detail,
             device=DeviceInfo(
-                device_id=edge_name,
-                device_name=edge_name,
+                device_id=edge_id or "unknown",
+                device_name=edge_name or "unknown",
                 device_type="edge",
-            ) if edge_name else None,
+                site_id=str(raw.get("siteId", "")) or edge_id,
+                site_name=site_name,
+            ) if edge_id else None,
             tags=["sdwan", "velocloud", "event"],
             metadata={
-                "vc_event_id": str(event_id),
+                "vc_event_id": source_eid,
                 "vc_level": level,
                 "vc_edge_name": edge_name,
+                "vc_edge_id": edge_id,
                 "vc_event_type": event_type_str,
             },
             raw_event=raw,
@@ -559,126 +484,143 @@ class VeloCloudEventsCollector:
 
 
 class VeloCloudAppsCollector:
-    """Fetches application visibility and QoS metrics from VeloCloud."""
+    """Fetches application visibility and QoS metrics from VeloCloud.
+
+    Tries POST /portal/rest/monitor/getEdgeAppSeries to fetch per-edge
+    application traffic data.  Falls back to getEdgeMonitoring if the
+    app-series endpoint isn't available on this VCO version.
+    """
 
     COLLECTOR_ID = "velocloud-apps"
     SOURCE_SYSTEM = "velocloud"
 
-    _WINDOW_HOURS = 24
-
-    def __init__(self, client: httpx.AsyncClient, base_url: str, enterprise_id: int, edge_ids: Optional[List[tuple]] = None):
+    def __init__(self, client: httpx.AsyncClient, base_url: str, enterprise_id: int, edges_data: List[Dict]):
         self._client = client
         self._base = base_url
         self._enterprise_id = enterprise_id
-        self._edge_ids = edge_ids
+        self._edges_data = edges_data
 
+    @retry(
+        retry=retry_if_exception_type(httpx.TransportError),
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+        reraise=True,
+    )
     async def collect(self) -> CollectorOutcome:
         outcome = CollectorOutcome(
             collector_id=self.COLLECTOR_ID,
             source_system=self.SOURCE_SYSTEM,
         )
         try:
-            edges = self._edge_ids or await self._fetch_edge_ids()
-
+            now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
             events: List[UnifiedEvent] = []
-            for edge_id, edge_name in edges:
-                apps = await self._fetch_apps(edge_id)
-                for app in apps:
-                    try:
-                        event = self._normalize_app(edge_id, edge_name, app)
-                        if event is not None:
-                            events.append(event)
-                    except Exception:
-                        logger.exception("Failed to normalize VeloCloud app for edge %s", edge_id)
+
+            # Try each endpoint in order, use the first that returns 200
+            # ponytail: VCO vco109 returns methodError on all monitor/*
+            # endpoints.  Add VCO-version-specific app endpoint config
+            # when targeting a VCO that supports them.
+            _APP_ENDPOINTS = [
+                ("POST", "/portal/rest/monitor/getEdgeAppSeries", {"enterpriseId": self._enterprise_id, "interval": {"start": now_ms - 3600000, "end": now_ms}, "limit": 20}),
+                ("POST", "/portal/rest/monitor/getEnterpriseEdgeAppMetrics", {"enterpriseId": self._enterprise_id, "interval": {"start": now_ms - 3600000, "end": now_ms}}),
+            ]
+            for method, path, body in _APP_ENDPOINTS:
+                resp = await self._client.post(f"{self._base}{path}", json=body)
+                if resp.status_code != 200:
+                    logger.debug("%s returned %d: %.200s", path, resp.status_code, resp.text[:200])
+                    continue
+                data = resp.json()
+                apps_raw = data.get("data", []) if isinstance(data, dict) else data
+                if isinstance(apps_raw, list):
+                    for app in apps_raw:
+                        try:
+                            events.append(self._normalize_app(app))
+                        except Exception:
+                            logger.exception("Failed to normalize VeloCloud app metric from %s", path)
+                    logger.info("VeloCloud apps: %d from %s", len(events), path)
+                    if events:
+                        break
 
             outcome.events = events
+            if not events:
+                outcome.mark_skipped("No App/AppSeries/Monitoring endpoint available on this VCO")
+                return outcome
             outcome.mark_success(rows_written=len(events))
-            outcome.metadata["edges_scanned"] = len(edges)
-            logger.info("VeloCloud apps: %d app entries from %d edges", len(events), len(edges))
+            outcome.metadata["raw_count"] = len(events)
+            logger.info("VeloCloud applications: %d app metrics collected", len(events))
         except Exception as exc:
             outcome.mark_error(str(exc))
             logger.exception("VeloCloud apps collection failed")
         return outcome
 
-    async def _fetch_edge_ids(self) -> List[tuple]:
-        try:
-            resp = await self._client.post(
-                f"{self._base}/portal/rest/enterprise/getEnterpriseEdges",
-                json={"enterpriseId": self._enterprise_id},
-            )
-            _raise_for_status(resp)
-            edges = resp.json()
-            if isinstance(edges, dict):
-                edges = edges.get("data", [])
-            return [(e["id"], e.get("name", "")) for e in edges if e.get("id")][:20]
-        except Exception:
-            logger.exception("Failed to fetch VeloCloud edges for apps")
-            return []
+    def _normalize_app(self, raw: Dict[str, Any]) -> UnifiedEvent:
+        app_id = str(raw.get("id", raw.get("appId", f"vc-app-{uuid4().hex[:8]}")))
+        app_name = raw.get("name", raw.get("appName", "Unknown"))
+        edge_id = str(raw.get("edgeId", ""))
+        edge_name = raw.get("edgeName", raw.get("edge", ""))
+        bytes_sent = raw.get("bytesSent", raw.get("txBytes", 0))
+        bytes_recv = raw.get("bytesReceived", raw.get("rxBytes", 0))
+        total_bytes = (bytes_sent or 0) + (bytes_recv or 0)
+        throughput = raw.get("throughputBps", raw.get("throughput", 0))
+        dscp = raw.get("dscp", raw.get("qos", ""))
 
-    async def _fetch_apps(self, edge_id: int) -> List[Dict]:
-        try:
-            end = datetime.now(timezone.utc)
-            start = end.replace(hour=0, minute=0, second=0, microsecond=0)
-            resp = await self._client.post(
-                f"{self._base}/portal/rest/metrics/getEdgeAppMetrics",
-                json={
-                    "enterpriseId": self._enterprise_id,
-                    "edgeId": edge_id,
-                    "interval": {"start": start.isoformat(), "end": end.isoformat()},
-                },
-            )
-            if resp.status_code == 200:
-                data = resp.json()
-                return data if isinstance(data, list) else []
-        except Exception:
-            logger.debug("Failed to fetch apps for edge %s", edge_id)
-        return []
+        severity = EventSeverity.INFO
+        event_type = EventType.OTHER
 
-    def _normalize_app(self, edge_id: int, edge_name: str, raw: Dict[str, Any]) -> Optional[UnifiedEvent]:
-        # This VCO tenant returns numeric application/category codes rather
-        # than resolved names — no app-name lookup endpoint was available.
-        app_id = raw.get("application")
-        if app_id is None:
-            return None
-
-        bytes_rx = raw.get("bytesRx", 0)
-        bytes_tx = raw.get("bytesTx", 0)
-        packets_rx = raw.get("packetsRx", 0)
-        packets_tx = raw.get("packetsTx", 0)
-        flow_count = raw.get("flowCount", 0)
-        app_label = f"app-{app_id}"
-
-        description = (
-            f"App {app_label} on {edge_name} — RX: {bytes_rx}B, TX: {bytes_tx}B, flows: {flow_count}"
-        )
+        if total_bytes and isinstance(total_bytes, (int, float)) and total_bytes > 0:
+            desc = f"App {app_name}: {_format_bytes(total_bytes)}"
+            if throughput: desc += f", {_format_bps(throughput)}"
+            if dscp: desc += f", DSCP: {dscp}"
+        else:
+            desc = f"App {app_name}: no traffic data"
 
         return UnifiedEvent(
             event_id=f"vc-app-{uuid4().hex[:12]}",
             timestamp=datetime.now(timezone.utc).replace(tzinfo=None),
             source=EventSource.VELOCLOUD,
-            source_event_id=f"vc-app-{edge_id}-{app_id}-{uuid4().hex[:8]}",
-            severity=EventSeverity.INFO,
-            category=EventCategory.APPLICATION,
-            event_type=EventType.OTHER,
-            title=f"App: {app_label} ({edge_name})",
-            description=description,
+            source_event_id=app_id,
+            severity=severity,
+            category=EventCategory.PERFORMANCE,
+            event_type=event_type,
+            title=f"App: {app_name}",
+            description=desc,
             device=DeviceInfo(
-                device_id=str(edge_id),
-                device_name=edge_name,
+                device_id=edge_id or "unknown",
+                device_name=edge_name or app_name,
                 device_type="edge",
+                site_id="",
+                site_name="",
             ),
-            tags=["sdwan", "velocloud", "application"],
+            tags=["sdwan", "velocloud", "application", "qos"],
             metadata={
-                "vc_edge_id": str(edge_id),
                 "vc_app_id": app_id,
-                "vc_bytes_rx": bytes_rx,
-                "vc_bytes_tx": bytes_tx,
-                "vc_packets_rx": packets_rx,
-                "vc_packets_tx": packets_tx,
-                "vc_flow_count": flow_count,
+                "vc_app_name": app_name,
+                "vc_edge_id": edge_id,
+                "vc_bytes_sent": bytes_sent,
+                "vc_bytes_received": bytes_recv,
+                "vc_total_bytes": total_bytes,
+                "vc_throughput_bps": throughput,
+                "vc_dscp": dscp,
             },
             raw_event=raw,
         )
+
+
+def _format_bytes(b: int) -> str:
+    """Format bytes to human-readable string."""
+    for unit in ("B", "KB", "MB", "GB"):
+        if b < 1024:
+            return f"{b:.1f} {unit}"
+        b /= 1024
+    return f"{b:.1f} TB"
+
+
+def _format_bps(bps: int) -> str:
+    """Format bits per second to human-readable string."""
+    for unit in ("bps", "Kbps", "Mbps", "Gbps"):
+        if bps < 1000:
+            return f"{bps:.1f} {unit}"
+        bps /= 1000
+    return f"{bps:.1f} Tbps"
 
 
 # ---------------------------------------------------------------------------
@@ -699,16 +641,19 @@ class VeloCloudCollector:
         self._api_key = settings.velocloud_api_key
         self._enterprise_id_override = (settings.velocloud_enterprise_id or "").strip()
         self._enabled = settings.velocloud_enabled
+        self._client: Optional[httpx.AsyncClient] = None
 
     @property
     def is_configured(self) -> bool:
         return bool(self._base_url and self._api_key and self._enabled)
 
     async def _get_enterprise_id(self, client: httpx.AsyncClient) -> Optional[int]:
-        """Return the enterprise ID as an int: prefer the configured override, else discover.
+        """Return the enterprise ID as int: prefer the configured override, else discover.
 
-        The Orchestrator's RPC methods reject a string enterpriseId with
-        "invalid enterprise context" — it must be sent as a JSON integer.
+        Using the override avoids a per-cycle discovery call that would
+        otherwise be a recurring failure point if the VCO is transiently slow.
+        The RPC methods reject a string enterpriseId with "invalid enterprise
+        context", so the value must be a JSON integer.
         """
         if self._enterprise_id_override:
             try:
@@ -716,79 +661,98 @@ class VeloCloudCollector:
             except ValueError:
                 logger.error("VELOCLOUD_ENTERPRISE_ID is not a valid integer: %r", self._enterprise_id_override)
                 return None
-
         try:
-            resp = await client.post(f"{self._base_url}/portal/rest/enterprise/getEnterprise", json={})
+            resp = await client.post(
+                f"{self._base_url}/portal/rest/enterprise/getEnterprise",
+                json={},
+            )
             _raise_for_status(resp)
             data = resp.json()
-            eid = data.get("id") if isinstance(data, dict) else None
-            if eid is not None:
-                return int(eid)
+            if isinstance(data, dict) and data.get("id") is not None:
+                return int(data["id"])
         except Exception:
-            logger.exception("VeloCloud enterprise discovery failed")
+            logger.exception("Failed to fetch VeloCloud enterprise ID")
         return None
+
+    async def _fetch_all_edges_data(self, client: httpx.AsyncClient) -> Optional[List[Dict]]:
+        """Fetch all edges with links and tunnels embedded in a single call."""
+        try:
+            resp = await client.post(
+                f"{self._base_url}/portal/rest/enterprise/getEnterpriseEdges",
+                json={"with": ["site", "links", "tunnels"]},
+            )
+            _raise_for_status(resp)
+            edges_raw = resp.json()
+            if not isinstance(edges_raw, list):
+                edges_raw = edges_raw.get("data", [])
+            return edges_raw
+        except Exception:
+            logger.exception("Failed to fetch VeloCloud edges data")
+            return None
 
     async def collect_all(self) -> List[CollectorOutcome]:
         """
         Run all VeloCloud sub-collectors.
 
-        Returns a list of CollectorOutcome — one per sub-collector.
+        Fetches edges ONCE with links + tunnels embedded, then fans out
+        to each sub-collector.  Each returns a CollectorOutcome independently.
         The worker records each independently in the telemetry ledger.
         """
         if not self._enabled:
-            return [self._skipped_outcome("VeloCloud collector disabled")]
+            return self._skipped_outcomes("VeloCloud collector disabled")
         if not self._base_url or not self._api_key:
-            return [self._skipped_outcome("VeloCloud credentials not configured")]
+            return self._skipped_outcomes("VeloCloud credentials not configured")
 
         outcomes: List[CollectorOutcome] = []
 
-        async with httpx.AsyncClient(
-            headers={"Authorization": f"Token {self._api_key}", "Content-Type": "application/json"},
-            timeout=httpx.Timeout(30.0),
-            follow_redirects=True,
-        ) as client:
-            # Get enterprise ID
-            enterprise_id = await self._get_enterprise_id(client)
-            if not enterprise_id:
-                auth_msg = (
-                    "VeloCloud auth failed: could not discover enterprise ID. "
-                    "Set VELOCLOUD_ENTERPRISE_ID in config/.env, or verify the API key has portal access."
-                )
-                for cid in ("velocloud-edges", "velocloud-events", "velocloud-links", "velocloud-tunnels", "velocloud-apps"):
-                    o = CollectorOutcome(collector_id=cid, source_system="velocloud")
-                    o.mark_error(auth_msg)
-                    outcomes.append(o)
-                return outcomes
+        if self._client is None:
+            self._client = httpx.AsyncClient(
+                headers={"Authorization": f"Token {self._api_key}", "Content-Type": "application/json"},
+                timeout=httpx.Timeout(60.0),
+                follow_redirects=True,
+            )
 
-            # Create sub-collectors with the shared client
-            edges_collector = VeloCloudEdgesCollector(client, self._base_url, enterprise_id)
-            events_collector = VeloCloudEventsCollector(client, self._base_url, enterprise_id)
+        client = self._client
 
-            # Run edges collector first — reuse its edge list for downstream collectors
-            edges_outcome = await edges_collector.collect()
-            outcomes.append(edges_outcome)
+        # Get enterprise ID
+        enterprise_id = await self._get_enterprise_id(client)
+        if not enterprise_id:
+            for cid in ["velocloud-edges", "velocloud-links", "velocloud-tunnels", "velocloud-events", "velocloud-apps"]:
+                o = CollectorOutcome(collector_id=cid, source_system="velocloud")
+                o.mark_error("Could not fetch VeloCloud enterprise ID")
+                outcomes.append(o)
+            return outcomes
 
-            # Build edge_ids list from the edges collector's raw data
-            edge_ids: Optional[List[tuple]] = None
-            if edges_outcome.events:
-                edge_ids = []
-                for ev in edges_outcome.events:
-                    eid = ev.metadata.get("vc_edge_id", "")
-                    ename = ev.device.device_name if ev.device else ""
-                    if eid:
-                        edge_ids.append((int(eid), ename or ""))
+        # Fetch edges ONCE with links + tunnels embedded
+        edges_data = await self._fetch_all_edges_data(client)
 
-            links = VeloCloudLinksCollector(client, self._base_url, enterprise_id, edge_ids=edge_ids)
-            tunnels = VeloCloudTunnelsCollector(client, self._base_url, enterprise_id, edge_ids=edge_ids)
-            apps = VeloCloudAppsCollector(client, self._base_url, enterprise_id, edge_ids=edge_ids)
+        # When edges_data is None, pass empty list so sub-collectors produce
+        # empty outcomes (graceful degradation) instead of crashing
+        if edges_data is None:
+            edges_data = []
 
-            # Run remaining sub-collectors
-            outcomes.append(await events_collector.collect())
-            outcomes.append(await links.collect())
-            outcomes.append(await tunnels.collect())
-            outcomes.append(await apps.collect())
+        # Run edges collector (uses pre-fetched data, no extra API call)
+        outcomes.append(await VeloCloudEdgesCollector(client, self._base_url).collect(edges_data))
+
+        # Links collector — extracts links embedded in each edge
+        outcomes.append(await VeloCloudLinksCollector(edges_data).collect())
+
+        # Tunnels collector — extracts tunnels embedded in each edge
+        outcomes.append(await VeloCloudTunnelsCollector(edges_data).collect())
+
+        # Events collector — separate API call, already working
+        outcomes.append(await VeloCloudEventsCollector(client, self._base_url, enterprise_id).collect())
+
+        # Apps collector — tries monitoring API
+        outcomes.append(await VeloCloudAppsCollector(client, self._base_url, enterprise_id, edges_data).collect())
 
         return outcomes
+
+    async def close(self) -> None:
+        """Close the reusable HTTP client."""
+        if self._client is not None:
+            await self._client.aclose()
+            self._client = None
 
     async def connect(self) -> bool:
         """Validate VeloCloud credentials."""
@@ -796,8 +760,9 @@ class VeloCloudCollector:
             return False
         try:
             async with httpx.AsyncClient(
-                headers={"Authorization": f"Token {self._api_key}"},
+                headers={"Authorization": f"Token {self._api_key}", "Content-Type": "application/json"},
                 timeout=httpx.Timeout(15.0),
+                verify=False,
             ) as client:
                 eid = await self._get_enterprise_id(client)
                 return bool(eid)
@@ -805,13 +770,14 @@ class VeloCloudCollector:
             logger.exception("VeloCloud connect failed")
             return False
 
-    def _skipped_outcome(self, reason: str) -> CollectorOutcome:
-        outcome = CollectorOutcome(
-            collector_id="velocloud-edges",
-            source_system="velocloud",
-        )
-        outcome.mark_skipped(reason)
-        return outcome
+    def _skipped_outcomes(self, reason: str) -> List[CollectorOutcome]:
+        ids = ["velocloud-edges", "velocloud-links", "velocloud-tunnels", "velocloud-events", "velocloud-apps"]
+        outcomes = []
+        for cid in ids:
+            o = CollectorOutcome(collector_id=cid, source_system="velocloud")
+            o.mark_skipped(reason)
+            outcomes.append(o)
+        return outcomes
 
 
 # ---------------------------------------------------------------------------

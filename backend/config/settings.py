@@ -102,6 +102,19 @@ class Settings(BaseSettings):
         default=True, description="Enable Stage 2 infrastructure-aware topology cascade"
     )
 
+    # Notifications — collector health alerts
+    notification_enabled: bool = Field(default=False, description="Enable push notification alerts")
+    notification_slack_webhook: str = Field(default="", description="Slack webhook URL for collector alerts")
+    notification_smtp_host: str = Field(default="", description="SMTP host for email alerts")
+    notification_smtp_port: int = Field(default=587, description="SMTP port")
+    notification_smtp_user: str = Field(default="", description="SMTP username")
+    notification_smtp_password: str = Field(default="", description="SMTP password")
+    notification_smtp_from: str = Field(default="naxis@localhost", description="SMTP from address")
+    notification_email_to: str = Field(default="", description="Comma-separated recipient emails for alerts")
+    notification_dedup_minutes: int = Field(default=15, description="Minutes before re-sending the same alert")
+    notification_min_failures: int = Field(default=3, description="Minimum failures before alerting")
+    notification_min_skips: int = Field(default=10, description="Minimum skips before alerting")
+
     @property
     def postgres_url(self) -> str:
         """Async PostgreSQL URL for SQLAlchemy/asyncpg."""

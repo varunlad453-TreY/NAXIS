@@ -31,6 +31,14 @@ export default function CorrelationEnginePage() {
     refetchInterval: 15000,
   });
 
+  const { data: engineStats } = useQuery({
+    queryKey: ["correlation-stats"],
+    queryFn: () => api.getCorrelationStats(),
+    refetchInterval: 30000,
+  });
+
+  const engineHealth = engineStats as { status?: string; stats?: Record<string, unknown> } | undefined;
+
   const incidents = data?.incidents ?? [];
 
   const stats = useMemo(() => ({
@@ -109,6 +117,56 @@ export default function CorrelationEnginePage() {
             </div>
           </div>
         </div>
+
+        {/* Engine Health */}
+        {engineHealth && (
+          <div className="flex flex-wrap items-center gap-4 rounded-xl border border-border/40 bg-surface/30 p-4 text-sm">
+            <div className="flex items-center gap-2">
+              <Brain className="h-4 w-4 text-primary" />
+              <span className="font-medium text-foreground">Engine</span>
+            </div>
+            <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium ${
+              engineHealth.status === "active" ? "bg-emerald-500/10 text-emerald-400" :
+              engineHealth.status === "no_data" ? "bg-amber-500/10 text-amber-400" :
+              "bg-foreground/5 text-foreground-muted"
+            }`}>
+              <span className={`h-1.5 w-1.5 rounded-full ${
+                engineHealth.status === "active" ? "bg-emerald-400" :
+                engineHealth.status === "no_data" ? "bg-amber-400" :
+                "bg-foreground-muted"
+              }`} />
+              {engineHealth.status ?? "unknown"}
+            </span>
+            {engineHealth.stats && (
+              <>
+                <span className="text-foreground-muted">|</span>
+                <span className="text-foreground-muted">
+                  {engineHealth.stats.lastCycleIncidents as number ?? 0} incidents
+                </span>
+                <span className="text-foreground-muted">·</span>
+                <span className="text-foreground-muted">
+                  {(engineHealth.stats.lastCycleEvents as number ?? 0).toLocaleString()} events
+                </span>
+                {engineHealth.stats.lastDurationMs != null && (
+                  <>
+                    <span className="text-foreground-muted">·</span>
+                    <span className="text-foreground-muted">
+                      {(engineHealth.stats.lastDurationMs as number).toFixed(0)}ms
+                    </span>
+                  </>
+                )}
+                {engineHealth.stats.cascadeEnabled != null && (
+                  <>
+                    <span className="text-foreground-muted">·</span>
+                    <span className="text-foreground-muted">
+                      Cascade: {engineHealth.stats.cascadeEnabled ? "on" : "off"}
+                    </span>
+                  </>
+                )}
+              </>
+            )}
+          </div>
+        )}
 
         {/* Empty state — no incidents yet */}
         {!isLoading && incidents.length === 0 && (

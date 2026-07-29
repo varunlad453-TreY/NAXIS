@@ -1,6 +1,6 @@
 # Telemetry Upgrade — Architecture Documentation
 
-> **Version:** 1.0 · **Date:** July 2026 · **Status:** In Progress (Phase 3 complete)
+> **Version:** 1.2 · **Date:** July 21, 2026 · **Status:** Live (All phases A–F complete, 26/26 items delivered)
 
 ---
 
@@ -84,9 +84,14 @@ The upgrade was executed in phases, each building on the previous:
 | 5 | IntegrationService derived from ledger | Replace in-memory state with live Postgres queries | ✅ Done |
 | 6 | Expandable collector sections on Integrations page | Show per-collector status, health, and what each collects | ✅ Done |
 | 7 | DNAC collector (5 sub-collectors) | First real multi-sub-collector vendor integration | ✅ Done |
-| 8 | Mist topology collectors | Complete wireless telemetry coverage | ❌ Next |
-| 9 | VeloCloud + Arista collectors | Vendor-agnostic collector contract for all vendors | ❌ Future |
-| 10 | Staleness alerts UI | Visual alerts on the frontend for degraded collectors | ❌ Future |
+| 8 | Mist topology collectors | Complete wireless telemetry coverage | ✅ Done (5 sub-collectors) |
+| 9 | VeloCloud + Arista collectors | Vendor-agnostic collector contract for all vendors | ✅ Done (5 + 4 sub-collectors) |
+| 10 | Staleness alerts UI | Visual alerts on the frontend for degraded collectors | ✅ Done (alert-banner.tsx + dismiss) |
+| 11 | Pipeline wiring (SNMP, health_snapshot) | Wire existing but unused collectors into worker | ✅ Done |
+| 12 | Collector health monitoring | Failure/skip pattern detection on collector_run_ledger | ✅ Done |
+| 13 | Data retention cleanup | Purge >7d data from telemetry tables | ✅ Done |
+| 14 | Frontend UX (cascade, dismiss, shortcuts) | Improve topology and incident detail usability | ✅ Done |
+| 15 | Dashboard event count fix | Show last-24h data instead of lifetime total | ✅ Done |
 
 ### 3.2 Why Each Change Was Made
 
@@ -209,27 +214,28 @@ class CollectorOutcome:
 The `WorkerDaemon` in `backend/worker/main.py` orchestrates the full pipeline:
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                    WorkerDaemon.run_once()                    │
-│                                                               │
-│  1. Run all collectors → List[CollectorOutcome]               │
-│     ├── MistCollector.collect()          → mist-events        │
-│     ├── MistInventoryCollector.collect() → mist-inventory     │
-│     └── DNACCollector.collect_all()      → 5 sub-collectors   │
-│         ├── DnacDevicesCollector         → dnac-devices       │
-│         ├── DnacAlarmsCollector          → dnac-alarms        │
-│         ├── DnacTopologyCollector        → dnac-topology      │
-│         ├── DnacClientHealthCollector    → dnac-clients       │
-│         └── DnacInterfaceCollector       → dnac-interfaces    │
-│                                                               │
-│  2. Record each outcome in collector_run_ledger               │
-│  3. Write worker heartbeat to worker_heartbeat table          │
-│  4. Persist all UnifiedEvent objects to Postgres              │
-│  5. (TODO) Run correlation engine → incidents                 │
-│  6. (TODO) Sync topology graph                                │
-│                                                               │
-│  7. Sleep for collector_interval seconds                      │
-└─────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────┐
+│                    WorkerDaemon.run_once()                        │
+│                                                                   │
+│  1. Run all collectors → List[CollectorOutcome]                   │
+│     ├── MistCollector.collect()          → 7 mist sub-collectors  │
+│     ├── DNACCollector.collect_all()      → 5 dnac sub-collectors  │
+│     ├── VeloCloudCollector.collect_all() → 5 vc sub-collectors    │
+│     ├── AristaWlcCollector.collect_all() → 4 awlc sub-collectors  │
+│     ├── SnmpPoller.collect()             → SNMP targets           │
+│     └── collect_health_snapshots()       → node health data       │
+│                                                                   │
+│  2. Record each outcome in collector_run_ledger                   │
+│  3. Write worker heartbeat to worker_heartbeat table              │
+│  4. Persist all UnifiedEvent objects to Postgres                  │
+│  5. Run correlation engine → incidents (Stage 1 + Stage 2)        │
+│  6. Publish incidents to Redis pub/sub → SSE stream to UI         │
+│  7. Sync topology graph (Mist + VeloCloud + DNAC)                 │
+│  8. Collector health monitoring (failure/skip pattern detection)  │
+│  9. Data retention cleanup (purge >7d telemetry data)             │
+│                                                                   │
+│ 10. Sleep for collector_interval seconds                          │
+└──────────────────────────────────────────────────────────────────┘
 ```
 
 ### 4.3 Telemetry Query Pipeline
@@ -277,6 +283,18 @@ The integration service derives runtime status from telemetry data using these r
 - **15 minutes (900s):** Collector transitions to `stale` / `inactive`
 - **3+ consecutive failures:** Collector transitions to `error` / `inactive`
 
+### 4.6 Collector Health Monitoring
+
+The `collector_health.py` module runs inside `WorkerDaemon.run_once()` after collection and ledger recording. It queries `collector_run_ledger` for:
+
+| Pattern | Detection | Action |
+|---------|-----------|--------|
+| **Repeated failures** | 3+ consecutive errors for same collector | Logs `CRITICAL` alert |
+| **Skip storms** | 5+ skips in last 10 runs | Logs `WARNING` alert |
+| **Recovery after failure** | Success after 2+ failures | Logs `INFO` recovery notification |
+
+These are logged via the standard Python logger, not persisted to any table — designed for integration with external monitoring (e.g., Datadog, PagerDuty).
+
 ### 4.5 Alert Generation
 
 The `/telemetry` endpoint generates three types of alerts:
@@ -294,22 +312,17 @@ The `/telemetry` endpoint generates three types of alerts:
 
 ## 5. Collector Inventory
 
-### 5.1 Juniper Mist Collectors
+### 5.1 Juniper Mist Collectors (7 sub-collectors)
 
 | Collector ID | What It Collects | API Endpoint | Status |
 |-------------|-----------------|--------------|--------|
 | `mist-events` | Alarms, audit logs, event payloads, severity, device/site context | `/api/v1/orgs/{org_id}/alarms/search`, `/api/v1/orgs/{org_id}/logs` | ✅ Live |
 | `mist-inventory` | AP inventory, site mapping, live AP stats, client counts, uptime, firmware | `/api/v1/sites/{site_id}/stats/devices` | ✅ Live |
-
-**Planned Mist collectors (Phase 8):**
-
-| Collector ID | What It Would Collect | API Endpoint | Purpose |
-|-------------|----------------------|--------------|---------|
-| `mist-ap-history` | Firmware changes, site moves, reboots | `/api/v1/sites/{site_id}/stats/devices` (history) | Track device lifecycle |
-| `mist-ap-rf` | Channel, RSSI, utilization, BSSID | `/api/v1/sites/{site_id}/stats/devices` (RF) | Wireless performance |
-| `mist-client-topology` | Client MAC, IP, SSID, band, RSSI | `/api/v1/orgs/{org_id}/clients` | Client connectivity |
-| `mist-wired-uplink` | AP-to-switch physical link graph | `/api/v1/orgs/{org_id}/wired/uplinks` | Physical topology |
-| `mist-radio-neighbors` | Interference, co-channel contention | `/api/v1/sites/{site_id}/radio/neighbors` | RF environment |
+| `mist-ap-history` | Firmware changes, site moves, reboots | `/api/v1/sites/{site_id}/stats/devices` (history) | ✅ Live |
+| `mist-ap-rf` | Channel, RSSI, utilization, BSSID | `/api/v1/sites/{site_id}/stats/devices` (RF) | ✅ Live |
+| `mist-client-topology` | Client MAC, IP, SSID, band, RSSI | `/api/v1/orgs/{org_id}/clients` | ⚠️ 404 on API |
+| `mist-wired-uplink` | AP-to-switch physical link graph | `/api/v1/orgs/{org_id}/wired/uplinks` | ⚠️ 404 on API |
+| `mist-radio-neighbors` | Interference, co-channel contention | `/api/v1/sites/{site_id}/radio/neighbors` | ✅ Live |
 
 ### 5.2 Cisco DNAC Collectors
 
@@ -323,24 +336,28 @@ The `/telemetry` endpoint generates three types of alerts:
 
 **DNAC Authentication:** Token-based via `POST /dna/system/api/v1/auth/token` with Basic auth. Token is obtained once per collection cycle and reused across all sub-collectors.
 
-### 5.3 VeloCloud Collectors (Planned — Phase 9)
+### 5.3 VeloCloud Collectors (5 sub-collectors)
 
-| Collector ID | What It Would Collect | Purpose |
-|-------------|----------------------|---------|
-| `velocloud-edges` | Edge appliance inventory, status, version | WAN edge inventory |
-| `velocloud-links` | Link metrics (latency, jitter, packet loss) | SD-WAN link health |
-| `velocloud-tunnels` | Tunnel health, encryption status | Overlay connectivity |
-| `velocloud-events` | Enterprise events, alarms | Operational events |
-| `velocloud-apps` | Application visibility, QoS policies | Application-aware routing |
+| Collector ID | What It Collects | Purpose | Status |
+|-------------|-----------------|---------|--------|
+| `velocloud-edges` | Edge appliance inventory, status, version, WAN link data (interface, ISP, public IP, state, bandwidth) | WAN edge + link inventory | ✅ Registered |
+| `velocloud-links` | Link metrics (latency, jitter, packet loss) per edge | WAN link performance | ✅ Registered |
+| `velocloud-tunnels` | Tunnel health, encryption status, gateway peers | SD-WAN tunnel visibility | ✅ Registered |
+| `velocloud-events` | Enterprise events, alarms from VCO API | Operational events | ✅ Registered |
+| `velocloud-apps` | Application visibility, QoS stats per edge | Application performance | ✅ Registered |
 
-### 5.4 Arista WLC Collectors (Planned — Phase 9)
+**Performance note:** The VeloCloud orchestrator pre-fetches `edge_ids` once per cycle and passes them to all sub-collectors, avoiding N+1 authentication requests. Persistent `httpx.AsyncClient` avoids re-auth overhead (~500ms–2s) per cycle.
 
-| Collector ID | What It Would Collect | Purpose |
-|-------------|----------------------|---------|
-| `arista-wlc-clients` | Wireless client inventory, association events | Client connectivity |
-| `arista-wlc-aps` | AP inventory, radio status, firmware | AP infrastructure |
-| `arista-wlc-radios` | Channel utilization, interference, power levels | RF environment |
-| `arista-wlc-events` | Controller events, alarms | Operational events |
+### 5.4 Arista WLC Collectors (4 sub-collectors)
+
+| Collector ID | What It Collects | API Endpoint | Status |
+|-------------|-----------------|--------------|--------|
+| `arista-wlc-clients` | Wireless client inventory, association events, RSSI, band | WLC REST API | ✅ Registered |
+| `arista-wlc-aps` | AP inventory, radio status, firmware version, uptime | WLC REST API | ✅ Registered |
+| `arista-wlc-radios` | Channel utilization, interference, power levels, noise floor | WLC REST API | ✅ Registered |
+| `arista-wlc-events` | Controller events, alarms, syslog messages | WLC REST API (show logging) | ✅ Registered |
+
+**Note:** Arista WLC log timestamps use `MMM DD HH:MM:SS` format (no year). These are parsed with `strptime("%b %d %H:%M:%S")` using the current UTC year.
 
 ---
 
@@ -441,6 +458,23 @@ Added:
 - `expandedCollectorsId` state — tracks which integration's collectors are expanded
 - `CollectorSection` rendered between `IntegrationRow` and `IntegrationConfigPanel`
 - Each integration card now has three expandable sections: Collectors, Config
+
+### 7.5 Dashboard Collector Health Widget
+
+**File:** `frontend/src/components/dashboard/collector-health-widget.tsx`
+
+A glass-card widget on the main dashboard that surfaces collector pipeline health at a glance:
+
+- **Summary grid:** Four color-coded stat cards (healthy/degraded/error/stale) using the same counts from `GET /telemetry`
+- **Inline alerts:** Expandable section rendering up to 3 `AlertBanner` items with a "+N more" overflow link to Integrations
+- **Pulsing badge:** Animated red dot + critical count when critical alerts exist
+- **All-healthy state:** Green accent badge + "All collectors operating normally" footer
+- **States:** Loading skeleton, error with retry button, empty (zero collectors), healthy, has-alerts
+- **Polling:** 30s refetch interval via `useQuery` with `api.getTelemetry()`
+
+**File:** `frontend/src/lib/api.ts` — Added `api.getTelemetry()` returning the full `TelemetryResponse` (collectors + alerts + summary).
+
+**File:** `frontend/src/types/integration.ts` — Added `TelemetryCollectorEntry`, `TelemetrySummary`, `TelemetryResponse` interfaces.
 
 ---
 
@@ -556,44 +590,53 @@ STORAGE_MODE=postgres          # Must be postgres for telemetry ledger
 
 ---
 
-## 11. Future Roadmap & Followups
+## 11. Completed Roadmap & Remaining Followups
 
-### Phase 8: Mist Topology Collectors
+### Phase 8: Mist Topology Collectors ✅
 
-**What:** Add 5 new Mist collectors that feed the topology graph and provide in-depth wireless telemetry.
+5 Mist topology collectors built and wired (`mist-ap-history`, `mist-ap-rf`, `mist-client-topology`, `mist-wired-uplink`, `mist-radio-neighbors`). Two (`client-topology`, `wired-uplink`) return 404 from Mist API — collectors handle gracefully (0 events).
 
-**Why:** The current Mist collectors only cover events and inventory. For full wireless topology, we need:
-- `mist-ap-history` — Firmware changes, site moves, reboots → device lifecycle tracking
-- `mist-ap-rf` — Channel, RSSI, utilization, BSSID → wireless performance analysis
-- `mist-client-topology` — Client MAC, IP, SSID, band, RSSI → client connectivity mapping
-- `mist-wired-uplink` — AP-to-switch physical link graph → physical topology edges
-- `mist-radio-neighbors` — Interference, co-channel contention → RF environment health
+### Phase 9: VeloCloud + Arista WLC Collectors ✅
 
-**How:** Each follows the same `CollectorOutcome` contract. They share the Mist API token with the existing collectors.
+**VeloCloud:** 5 sub-collectors (edges, links, tunnels, events, apps). Orchestrator pre-fetches `edge_ids` once per cycle. Persistent `httpx.AsyncClient` avoids re-auth overhead.
 
-**Advantage:** Complete wireless visibility — from AP hardware health to client experience to RF environment.
+**Arista WLC:** 4 sub-collectors (clients, APs, radios, events). Timestamps parsed from `MMM DD HH:MM:SS` format (was `datetime.now()` stub).
 
-### Phase 9: VeloCloud + Arista Collectors
+### Phase 10: Staleness Alerts UI ✅
 
-**What:** Implement collectors for VeloCloud SD-WAN and Arista WLC using the same `CollectorOutcome` contract.
+`AlertBannerGroup` component renders on Integrations page. Per-collector dismiss with `localStorage` persistence. "Dismiss all" button. Critical/warning severity badges.
 
-**Why:** The platform aims to be vendor-agnostic. VeloCloud covers SD-WAN (edge status, link metrics, tunnel health), and Arista WLC covers controller-based wireless.
+### Phase 11: Pipeline Wiring ✅
 
-**How:** Follow the DNAC pattern — authenticate once, fan out to sub-collectors, record each outcome independently.
+SNMP poller, health snapshot collector wired into worker. Docker healthcheck added to worker service.
 
-**Advantage:** Single pane of glass across wireless (Mist + Arista), wired (DNAC), and WAN (VeloCloud).
+### Phase 12: Collector Health Monitoring ✅
 
-### Phase 10: Staleness Alerts UI
+`shared/monitoring/collector_health.py` queries `collector_run_ledger` for failure/skip patterns and logs actionable alerts.
 
-**What:** Add visual alert banners on the Integrations page frontend that consume the `/telemetry/alerts` endpoint.
+### Phase 13: Data Retention ✅
 
-**Why:** Backend alerts exist but the UI doesn't show them yet. Operators need to see warnings directly on the Integrations page.
+`shared/database/retention.py` cleans `correlation_telemetry`, `collector_run_ledger`, `node_health_snapshots` > 7 days. Wired into worker every 24h.
 
-**How:** Fetch `/telemetry/alerts` on page load, render warning/critical banners per collector.
+### Phase 14: Frontend UX ✅
 
-**Advantage:** Proactive alerting — operators see problems before they cause incidents.
+- Per-collector alert dismiss (localStorage)
+- Cross-site device jump dropdown in topology
+- Keyboard shortcut cheat sheet
+- Cascade relationship badge in incident detail
+- Export topology as PNG
+- Auto fitView on site expand
+- SSE incident stream (Redis → frontend)
 
-### Future: OpenTelemetry Integration
+### Phase 15: Dashboard & Debt ✅
+
+- Event count now last 24h (was lifetime total)
+- Vendor fallback fixed (`"mist"` → `""`)
+- Arista WLC timestamp parsing (was `datetime.now()` stub)
+- 404 page created
+- Loading indicator for topology re-layout
+
+### Remaining: OpenTelemetry Integration
 
 **What:** Add OpenTelemetry traces and metrics for request-level and pipeline-level observability.
 
@@ -614,24 +657,39 @@ STORAGE_MODE=postgres          # Must be postgres for telemetry ledger
 | `backend/shared/models/collector_outcome.py` | `CollectorOutcome` dataclass — the universal collector contract |
 | `backend/api/routes/telemetry.py` | `/telemetry` and `/telemetry/alerts` API endpoints |
 | `backend/worker/collectors/dnac.py` | Cisco DNA Center collector with 5 sub-collectors |
+| `backend/worker/collectors/velocloud.py` | VeloCloud SD-WAN collector with 5 sub-collectors |
+| `backend/worker/collectors/arista_wlc.py` | Arista WLC collector with 4 sub-collectors |
+| `backend/worker/collectors/snmp_poller.py` | SNMP polling collector |
+| `backend/worker/collectors/health_snapshot.py` | Device health snapshot collector |
+| `backend/shared/monitoring/collector_health.py` | Collector failure/skip pattern detection |
+| `backend/shared/database/retention.py` | Data retention cleanup (>7d) |
 | `frontend/src/components/integrations/collector-section.tsx` | Expandable per-collector status UI |
+| `frontend/src/components/dashboard/collector-health-widget.tsx` | Dashboard glass-card widget |
+| `frontend/src/app/not-found.tsx` | 404 page |
+| `CHANGELOG.md` | Reverse-chronological session log |
 
 ### Modified Files
 
 | File | Changes |
 |------|---------|
-| `backend/worker/main.py` | WorkerDaemon now records heartbeats and collector runs to ledger; runs DNAC sub-collectors |
+| `backend/worker/main.py` | WorkerDaemon now records heartbeats and collector runs to ledger; runs DNAC, VeloCloud, Arista WLC, SNMP poller, health_snapshot, collector health monitoring, retention cleanup |
 | `backend/main.py` | Telemetry schema ensured on API startup; telemetry router registered |
-| `backend/api/services/integration_service.py` | Complete rewrite — derives all status from telemetry ledger; DNAC collector definitions added; DNAC test/sync support |
-| `backend/api/routes/__init__.py` | Exports `telemetry_router` |
-| `backend/shared/models/__init__.py` | Exports `CollectorOutcome` |
-| `backend/worker/collectors/__init__.py` | Exports `DNACCollector` |
-| `backend/worker/collectors/mist.py` | Returns `CollectorOutcome` instead of bare list; added `connect()` and `collect_all()` methods |
-| `backend/worker/collectors/mist_inventory.py` | Returns `CollectorOutcome` instead of bare int |
-| `frontend/src/app/integrations/page.tsx` | Added `expandedCollectorsId` state; renders `CollectorSection` |
+| `backend/api/services/integration_service.py` | Complete rewrite — derives all status from telemetry ledger; collector definitions for all 21 collectors across 4 vendors |
+| `backend/api/routes/correlation.py` | Added SSE endpoint `GET /correlation/incidents/stream` |
+| `backend/worker/collectors/velocloud.py` | Persistent `httpx.AsyncClient` avoids re-auth per cycle; `close()` method |
+| `backend/worker/collectors/arista_wlc.py` | Timestamp parsing using `strptime("%b %d %H:%M:%S")` instead of `datetime.now()` stub |
+| `frontend/src/app/page.tsx` | Event count filter: last 24h instead of lifetime total |
+| `frontend/src/app/providers.tsx` | Removed dead `getInitialResolvedTheme()` |
+| `frontend/src/app/integrations/page.tsx` | Added `expandedCollectorsId` state; renders `CollectorSection`; alert dismiss |
+| `frontend/src/app/correlation/page.tsx` | Added engine health bar |
+| `frontend/src/app/incidents/[id]/page.tsx` | Cascade relationship badge |
 | `frontend/src/components/integrations/integration-row.tsx` | Added `isCollectorsOpen`/`onToggleCollectors` props; "Collectors" button |
-| `frontend/src/components/integrations/index.ts` | Exports `CollectorSection` |
-| `frontend/src/types/integration.ts` | Added `CollectorOperationalStatus`, `IntegrationCollectorSummary` |
+| `frontend/src/components/integrations/alert-banner.tsx` | localStorage dismiss, "Dismiss all" button |
+| `frontend/src/components/topology/topology-graph.tsx` | Site dropdown, Export PNG, keyboard shortcuts, device count in search, loading bar |
+| `frontend/src/components/topology/layout.ts` | Vendor fallback `"mist"` → `""` |
+| `frontend/src/types/integration.ts` | Added `TelemetryAlert`, `TelemetryCollectorEntry`, `TelemetrySummary`, `TelemetryResponse` |
+| `frontend/src/lib/api.ts` | Added `getTelemetry()`, `getCorrelationStats()`, `listTelemetryAlerts()` |
+| `docker-compose.yml` | Worker healthcheck added |
 
 ### Database Tables
 
@@ -639,3 +697,5 @@ STORAGE_MODE=postgres          # Must be postgres for telemetry ledger
 |-------|---------|
 | `collector_run_ledger` | Persistent record of every collector run (collector_id, status, timing, rows, errors) |
 | `worker_heartbeat` | Worker liveness signal (worker_id, heartbeat_at, cycle_status) |
+| `correlation_telemetry` | Correlation engine run statistics (events processed, incidents created, duration) |
+| `node_health_snapshots` | Device health timeline data (CPU, memory, interface status) |

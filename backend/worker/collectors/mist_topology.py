@@ -876,9 +876,9 @@ class MistTopologyCollector:
         The worker records each independently in the telemetry ledger.
         """
         if not self._enabled:
-            return [self._skipped_outcome("Mist topology collector disabled")]
+            return self._skipped_outcomes("Mist topology collector disabled")
         if not self._api_key or not self._org_id:
-            return [self._skipped_outcome("Mist credentials not configured")]
+            return self._skipped_outcomes("Mist credentials not configured")
 
         outcomes: List[CollectorOutcome] = []
 
@@ -945,10 +945,11 @@ class MistTopologyCollector:
             logger.exception("Failed to fetch Mist sites for topology")
         return []
 
-    def _skipped_outcome(self, reason: str) -> CollectorOutcome:
-        outcome = CollectorOutcome(
-            collector_id="mist-topology",
-            source_system="mist",
-        )
-        outcome.mark_skipped(reason)
-        return outcome
+    def _skipped_outcomes(self, reason: str) -> List[CollectorOutcome]:
+        ids = ["mist-ap-history", "mist-ap-rf", "mist-client-topology", "mist-wired-uplink", "mist-radio-neighbors"]
+        outcomes = []
+        for cid in ids:
+            o = CollectorOutcome(collector_id=cid, source_system="mist")
+            o.mark_skipped(reason)
+            outcomes.append(o)
+        return outcomes

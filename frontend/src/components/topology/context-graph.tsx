@@ -117,8 +117,12 @@ function nodeStyle(topoNode: { node_type: string; health_status: string }) {
   const hMeta = HEALTH_STATUS_META[topoNode.health_status] ?? HEALTH_STATUS_META.unknown;
   return {
     background: "hsl(var(--surface))",
-    border: `2px solid ${meta?.color ?? "#6b7280"}`,
+    borderWidth: 2,
+    borderStyle: "solid",
+    borderColor: meta?.color ?? "#6b7280",
     borderRadius: 8,
+    borderLeftWidth: 4,
+    borderLeftColor: hMeta.color,
     padding: "6px 12px",
     fontSize: 11,
     fontWeight: 500,
@@ -128,7 +132,6 @@ function nodeStyle(topoNode: { node_type: string; health_status: string }) {
     display: "flex",
     alignItems: "center",
     gap: 8,
-    borderLeft: `4px solid ${hMeta.color}`,
   };
 }
 

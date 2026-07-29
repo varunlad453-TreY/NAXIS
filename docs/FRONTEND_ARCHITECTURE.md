@@ -4,7 +4,7 @@ This document explains how the Naxis Next.js frontend is organized, the conventi
 
 ## Tech Stack
 
-- **Framework**: Next.js 14 App Router
+- **Framework**: Next.js 15 App Router
 - **Language**: TypeScript (strict mode)
 - **Styling**: Tailwind CSS 3.4 + shadcn/ui primitives
 - **Server State**: TanStack Query (React Query)
@@ -47,7 +47,12 @@ Current primary routes:
 |--------------|------------------|------------------------------------------|
 | Operational  | `/`              | Dashboard with platform HUD + inventory  |
 | Operational  | `/integrations`  | Data-source control plane                |
+| Operational  | `/events`        | Raw unified events list                  |
+| Operational  | `/correlation`   | Correlation engine stats and incidents   |
 | Operational  | `/topology`      | Network topology graph (drill-down)      |
+| Operational  | `/sdwan`         | VeloCloud SD-WAN view                    |
+| Operational  | `/mist`          | Juniper Mist view                        |
+| Insights     | `/devices`       | Device inventory                         |
 | Insights     | `/performance`   | Performance analytics (placeholder)      |
 | Insights     | `/connectivity`  | Link/tunnel monitoring (placeholder)     |
 | Insights     | `/clients`       | Client health (placeholder)              |
@@ -68,6 +73,7 @@ The dashboard delegates to dedicated components:
 
 - `DashboardBackground` — themed layers, starfield, scanline, orbital HUD.
 - `HeroSection` — status badge, headline, description, HUD counters.
+- `CollectorHealthWidget` — live collector pipeline health (glass card with summary stats + inline alerts, polls `GET /telemetry` every 30s).
 - `PlatformObserverSection` — platform cards.
 - `InventoryToggle` — collapsible full-inventory panel.
 

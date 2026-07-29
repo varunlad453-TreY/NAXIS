@@ -11,6 +11,7 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./schemas/postgres:/docker-entrypoint-initdb.d:ro
+    shm_size: 256mb
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U naxis -d naxis"]
       interval: 10s
@@ -54,6 +55,12 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "ps aux | grep -q '[w]orker.main' || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     restart: unless-stopped
     dns:
       - 8.8.8.8

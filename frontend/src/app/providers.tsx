@@ -48,12 +48,6 @@ function getStoredTheme(): Theme {
   return "dark";
 }
 
-function getInitialResolvedTheme(): ResolvedTheme {
-  if (typeof window === "undefined") return "dark";
-  const stored = getStoredTheme();
-  return resolveTheme(stored);
-}
-
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const [theme, setThemeState] = useState<Theme>("dark");
   const [resolvedTheme, setResolvedTheme] = useState<ResolvedTheme>("dark");

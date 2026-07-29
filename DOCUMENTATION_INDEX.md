@@ -16,6 +16,7 @@ This index helps you navigate all documentation for the Events and Devices pages
 
 **Want the full picture?**
 → See **[docs/FRONTEND_EVENTS_DEVICES.md](docs/FRONTEND_EVENTS_DEVICES.md)** (45 minutes)
+→ For the platform-wide view, browse **[docs/handoff docs/](docs/handoff%20docs/)** (19 sessions of detailed change logs)
 
 **Need to verify everything works?**
 → Follow **[VERIFICATION_GUIDE.md](VERIFICATION_GUIDE.md)** (1 hour)
