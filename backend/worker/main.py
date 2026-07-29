@@ -63,6 +63,10 @@ logger = logging.getLogger(__name__)
 
 _settings = get_settings()
 COLLECTOR_INTERVAL = _settings.collector_interval
+# Hard ceiling on a single pass. A legitimate cycle (Mist + VeloCloud, ~5min)
+# fits well under this; anything longer is a stalled network read or stuck
+# query, so we cancel and recover on the next interval rather than hang forever.
+RUN_ONCE_TIMEOUT = max(COLLECTOR_INTERVAL * 10, 600)
 
 
 class WorkerDaemon:
@@ -392,7 +396,18 @@ class WorkerDaemon:
 
             while self._running:
                 try:
-                    await self.run_once()
+                    await asyncio.wait_for(self.run_once(), timeout=RUN_ONCE_TIMEOUT)
+                except asyncio.TimeoutError:
+                    logger.error(
+                        "Worker pass exceeded %ds and was cancelled — recovering next interval",
+                        RUN_ONCE_TIMEOUT,
+                    )
+                    try:
+                        await record_worker_heartbeat(
+                            self._worker_id, "error", f"Worker pass timed out (>{RUN_ONCE_TIMEOUT}s)"
+                        )
+                    except Exception:
+                        logger.exception("Failed to record timeout heartbeat")
                 except Exception:
                     logger.exception("Worker pass failed — will retry next interval")
                     try:
