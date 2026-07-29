@@ -125,10 +125,11 @@ For each Stage 1 group:
    - For each infra device that has matching children in the topology → creates one `CascadeGroup`.
    - Leaf events and other infra events whose devices match as children are placed in `symptom_events`.
 
-   **Mode B — Heuristic fallback** (no DB needed):
+   **Mode B — Heuristic fallback** (only when no `TopologyProvider` is set):
    - Merges ALL infra events at the same site as a single `root_events` list.
    - Merges ALL leaf events at the same site as `symptom_events`.
    - Conservative — does not split events across incidents when topology is unknown.
+   - **Note:** Heuristic fallback is disabled by default (`topology_fallback_to_device_type=False`). When a `TopologyProvider` is configured, cascade uses real topology only. Without a provider, `evaluate()` returns `[]`.
 
 3. **If no cascade groups found**: Falls back to Stage 1 flat incident for the entire group.
 
@@ -159,12 +160,15 @@ If no symptom events exist (infra-only group), falls back to the standard Stage 
 ```python
 class TopologyProvider(Protocol):
     async def get_parent_child_map(self, device_ids: Set[str]) -> Dict[str, List[str]]:
-        """Return parent device_id → list of direct children.
-        Only include entries where both parent and at least one child
-        are in device_ids. Implementations query topology_nodes/edges from DB."""
+        """Return parent device_id → list of direct child device_ids.
+        Uses batch resolve (device_id → node_id) + single edge query.
+        Returns results in event device_id space (not topology node_id space)
+        via a reverse index built from the resolved mapping."""
 
     async def get_all_descendants(self, device_id: str, max_depth: int = 5) -> List[str]:
-        """Return all descendants reachable via topology edges (blast radius)."""
+        """Return all descendants reachable via topology edges (blast radius).
+        Returns event device_ids so the result works directly with event matching.
+        Uses resolve_node_id() + recursive get_devices_under_node() + node_id_to_device_id()."""
 ```
 
 In tests, `MockTopologyProvider` is seeded with known relationships. In production, a `PostgresTopologyProvider` would query `topology_nodes` + `topology_edges` tables (see [Next Steps](#611-implement-postgrestopologyprovider)).
@@ -173,14 +177,14 @@ In tests, `MockTopologyProvider` is seeded with known relationships. In producti
 
 | File | Key Function |
 |------|-------------|
-| `rules.py` | `TopologyCascadeRule.evaluate()` (line 381) |
-| `rules.py` | `TopologyCascadeRule._evaluate_with_topology()` (line 417) |
-| `rules.py` | `TopologyCascadeRule._evaluate_by_device_type()` (line 496) |
-| `rules.py` | `TopologyCascadeRule._separate_by_device_type()` (line 563) |
-| `rules.py` | `TopologyProvider` protocol (line 285) |
-| `rules.py` | `CascadeGroup` dataclass (line 315) |
-| `engine.py` | `CorrelationEngine._create_from_cascade()` (line 184) |
-| `engine.py` | `process_events()` cascade loop (lines 117-170) |
+| `rules.py` | `TopologyCascadeRule.evaluate()` (line 384) |
+| `rules.py` | `TopologyCascadeRule._evaluate_with_topology()` (line 415) |
+| `rules.py` | `TopologyCascadeRule._evaluate_by_device_type()` (line 516) |
+| `rules.py` | `TopologyCascadeRule._separate_by_device_type()` (line 583) |
+| `rules.py` | `TopologyProvider` protocol (line 288) |
+| `rules.py` | `CascadeGroup` dataclass (line 319) |
+| `engine.py` | `CorrelationEngine.process_events()` (line 258) |
+| `engine.py` | `CorrelationEngine._create_from_cascade()` (line 431) |
 
 ---
 
@@ -241,7 +245,7 @@ class CorrelationConfig:
 
     # Stage 2
     topology_cascade_enabled: bool = True
-    topology_fallback_to_device_type: bool = True
+    topology_fallback_to_device_type: bool = False
     infrastructure_device_types: Set[str] = {
         "switch", "router", "wan_edge", "gateway",
         "controller", "firewall", "core_switch",
@@ -265,7 +269,7 @@ Set in `.env` file, consumed by `backend/config/settings.py` → `CorrelationSet
 | `CORRELATION_MIN_EVENT_COUNT` | `2` | Minimum events for incident |
 | `CORRELATION_SINGLE_CRITICAL` | `True` | Single critical creates incident |
 | `CORRELATION_TOPOLOGY_CASCADE` | `True` | Enable Stage 2 cascade |
-| `CORRELATION_TOPOLOGY_FALLBACK` | `True` | Enable heuristic fallback |
+| `CORRELATION_TOPOLOGY_FALLBACK` | `False` | Enable heuristic fallback |
 
 ### Device Type Classification
 

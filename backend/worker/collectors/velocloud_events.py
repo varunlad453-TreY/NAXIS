@@ -155,6 +155,7 @@ class VelocloudEventsCollector:
         try:
             timestamp = datetime.fromisoformat(ts_raw.replace("Z", "+00:00")).replace(tzinfo=None)
         except Exception:
+            logger.warning("VeloCloud event: bad timestamp '%s', using current time", ts_raw)
             timestamp = datetime.utcnow()
 
         severity = _map_severity(raw.get("severity", "INFO"))

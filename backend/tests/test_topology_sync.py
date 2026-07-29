@@ -99,13 +99,12 @@ class TestVeloCloudTopologySync:
         exec_calls = []
 
         with patch("backend.worker.collectors.topology_sync.db.fetch",
-                   AsyncMock(return_value=rows)):
+                   AsyncMock(side_effect=[rows, []])):
             with patch("backend.worker.collectors.topology_sync.db.execute",
                        AsyncMock()) as mock_exec:
                 mock_exec.side_effect = lambda *a: exec_calls.append(a)
                 await ts.sync()
 
-        # Expect: 1 site node, 1 edge node, 2 wan_gateway nodes, 1 site_membership edge, 2 wan_link edges = 7
         node_queries = [c for c in exec_calls if "INSERT INTO topology_nodes" in c[0]]
         edge_queries = [c for c in exec_calls if "INSERT INTO topology_edges" in c[0]]
         assert len(node_queries) >= 3  # site + edge + at least 1 wan_gateway
@@ -118,7 +117,7 @@ class TestVeloCloudTopologySync:
         exec_calls = []
 
         with patch("backend.worker.collectors.topology_sync.db.fetch",
-                   AsyncMock(return_value=rows)):
+                   AsyncMock(side_effect=[rows, []])):
             with patch("backend.worker.collectors.topology_sync.db.execute",
                        AsyncMock()) as mock_exec:
                 mock_exec.side_effect = lambda *a: exec_calls.append(a)
@@ -139,7 +138,7 @@ class TestVeloCloudTopologySync:
         exec_calls = []
 
         with patch("backend.worker.collectors.topology_sync.db.fetch",
-                   AsyncMock(return_value=rows)):
+                   AsyncMock(side_effect=[rows, []])):
             with patch("backend.worker.collectors.topology_sync.db.execute",
                        AsyncMock()) as mock_exec:
                 mock_exec.side_effect = lambda *a: exec_calls.append(a)
@@ -161,7 +160,7 @@ class TestVeloCloudTopologySync:
         exec_calls = []
 
         with patch("backend.worker.collectors.topology_sync.db.fetch",
-                   AsyncMock(return_value=rows)):
+                   AsyncMock(side_effect=[rows, []])):
             with patch("backend.worker.collectors.topology_sync.db.execute",
                        AsyncMock()) as mock_exec:
                 mock_exec.side_effect = lambda *a: exec_calls.append(a)
@@ -185,7 +184,7 @@ class TestVeloCloudTopologySync:
         exec_calls = []
 
         with patch("backend.worker.collectors.topology_sync.db.fetch",
-                   AsyncMock(return_value=rows)):
+                   AsyncMock(side_effect=[rows, []])):
             with patch("backend.worker.collectors.topology_sync.db.execute",
                        AsyncMock()) as mock_exec:
                 mock_exec.side_effect = lambda *a: exec_calls.append(a)
@@ -206,7 +205,7 @@ class TestVeloCloudTopologySync:
         exec_calls = []
 
         with patch("backend.worker.collectors.topology_sync.db.fetch",
-                   AsyncMock(return_value=rows)):
+                   AsyncMock(side_effect=[rows, []])):
             with patch("backend.worker.collectors.topology_sync.db.execute",
                        AsyncMock()) as mock_exec:
                 mock_exec.side_effect = lambda *a: exec_calls.append(a)
@@ -229,7 +228,7 @@ class TestVeloCloudTopologySync:
         exec_calls = []
 
         with patch("backend.worker.collectors.topology_sync.db.fetch",
-                   AsyncMock(return_value=[row])):
+                   AsyncMock(side_effect=[[row], []])):
             with patch("backend.worker.collectors.topology_sync.db.execute",
                        AsyncMock()) as mock_exec:
                 mock_exec.side_effect = lambda *a: exec_calls.append(a)
@@ -245,7 +244,7 @@ class TestVeloCloudTopologySync:
         exec_calls = []
 
         with patch("backend.worker.collectors.topology_sync.db.fetch",
-                   AsyncMock(return_value=[row])):
+                   AsyncMock(side_effect=[[row], []])):
             with patch("backend.worker.collectors.topology_sync.db.execute",
                        AsyncMock()) as mock_exec:
                 mock_exec.side_effect = lambda *a: exec_calls.append(a)
@@ -262,7 +261,7 @@ class TestVeloCloudTopologySync:
         exec_calls = []
 
         with patch("backend.worker.collectors.topology_sync.db.fetch",
-                   AsyncMock(return_value=[row])):
+                   AsyncMock(side_effect=[[row], []])):
             with patch("backend.worker.collectors.topology_sync.db.execute",
                        AsyncMock()) as mock_exec:
                 mock_exec.side_effect = lambda *a: exec_calls.append(a)
@@ -293,7 +292,7 @@ class TestVeloCloudTopologySync:
         exec_calls = []
 
         with patch("backend.worker.collectors.topology_sync.db.fetch",
-                   AsyncMock(return_value=rows)):
+                   AsyncMock(side_effect=[rows, []])):
             with patch("backend.worker.collectors.topology_sync.db.execute",
                        AsyncMock()) as mock_exec:
                 mock_exec.side_effect = lambda *a: exec_calls.append(a)
@@ -319,7 +318,7 @@ class TestVeloCloudTopologySync:
         exec_calls = []
 
         with patch("backend.worker.collectors.topology_sync.db.fetch",
-                   AsyncMock(return_value=[row])):
+                   AsyncMock(side_effect=[[row], []])):
             with patch("backend.worker.collectors.topology_sync.db.execute",
                        AsyncMock()) as mock_exec:
                 mock_exec.side_effect = lambda *a: exec_calls.append(a)

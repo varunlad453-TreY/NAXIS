@@ -1,5 +1,15 @@
 # Changelog
 
+## [21] — 2026-07-30 — Stage 2 Topology Cascade: Kill Heuristic Fallback, Wire Real Edges
+- Fixed identifier mismatch: `get_parent_child_map()` now returns event device_ids (not node_ids) via reverse index — cascade previously never matched, silently fell back to heuristics on every production run
+- Removed heuristic fallback: `topology_fallback_to_device_type` defaults to `False`; cascade with a provider returns topology results only (fails visible instead of substituting fake data)
+- Fixed 11 silent `except Exception: pass` patterns across receivers, collectors, engine, and API routes — all now log warnings with `exc_info=True`
+- Created `DatabaseTopologyProvider.get_all_descendants()` returns device_ids (not node_ids)
+- Simplified `_known_node_id_patterns()` to try all known prefixes unconditionally (was missing `mist-ap-` for short AP device_ids)
+- Cross-vendor logical links guarded: `_sync_cross_vendor_links()` only runs when Mist or VeloCloud is enabled
+- 30 new tests in `test_topology_provider.py` (identifier translation, parent-child map, descendants); 14 existing tests updated
+- 129 core tests pass (10 pre-existing failures unchanged)
+
 ## [20] — 2026-07-27 — Boil the Ocean Audit: Production Verification & Doc Correction
 - Verified every doc claim against live DB: VeloCloud 5/5 live, topology 93 edges + 63 gateways + 200 WAN links, Mist 1,957 APs, 156K VeloCloud events
 - Fixed HeroSection hardcoded "1 Vendors live" → dynamic from /topology/summary (shows 2)

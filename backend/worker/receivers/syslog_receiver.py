@@ -219,7 +219,7 @@ class SyslogReceiver:
                     try:
                         await insert_events(batch)
                     except Exception:
-                        pass
+                        logger.exception("Syslog shutdown: failed to flush %d events", len(batch))
                 raise
 
 
@@ -232,12 +232,12 @@ class _SyslogUdpProtocol(asyncio.DatagramProtocol):
             raw = data.decode("utf-8", errors="replace").strip()
             event = parse_syslog(raw, addr[0])
             if event:
-                try:
-                    self._queue.put_nowait(event)
-                except asyncio.QueueFull:
-                    pass
+                    try:
+                        self._queue.put_nowait(event)
+                    except asyncio.QueueFull:
+                        logger.warning("Syslog UDP queue full — dropping event")
         except Exception:
-            pass
+            logger.warning("Failed to decode syslog UDP datagram", exc_info=True)
 
     def error_received(self, exc: Exception) -> None:
         logger.debug("Syslog UDP error: %s", exc)
@@ -262,7 +262,7 @@ async def _handle_tcp_client(
                     try:
                         queue.put_nowait(event)
                     except asyncio.QueueFull:
-                        pass
+                        logger.warning("Syslog TCP queue full — dropping event from %s", peer)
     except (asyncio.TimeoutError, asyncio.IncompleteReadError, ConnectionResetError):
         pass
     finally:

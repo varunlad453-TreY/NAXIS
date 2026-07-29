@@ -327,18 +327,16 @@ class TestTopologyCascadeRuleUnit:
         assert len(groups) == 0
 
     @pytest.mark.asyncio
-    async def test_cascade_no_provider_fallback_to_heuristics(self, cascade_events_same_site):
-        """Without a provider, cascade falls back to device-type heuristics."""
+    async def test_cascade_no_provider_returns_empty(self, cascade_events_same_site):
+        """Without a provider, no cascade groups — topology is the only source of truth."""
         rule = TopologyCascadeRule(
             provider=None,
             config=CorrelationConfig(
                 topology_cascade_enabled=True,
-                topology_fallback_to_device_type=True,
             ),
         )
         groups = await rule.evaluate(cascade_events_same_site)
-        assert len(groups) == 1
-        assert groups[0].root_device_id == "core-switch-01"
+        assert groups == []
 
     @pytest.mark.asyncio
     async def test_cascade_provider_no_match_returns_empty(self):
@@ -357,8 +355,8 @@ class TestTopologyCascadeRuleUnit:
                       timestamp=now + timedelta(seconds=10)),
         ]
         groups = await rule.evaluate(events)
-        # Provider returns no matches, but we still get groups by heuristics
-        assert len(groups) >= 0
+        # Provider returns no matches — no cascade groups without topology data
+        assert groups == []
 
     def test_separate_by_device_type(self):
         """_separate_by_device_type correctly categorises infrastructure vs leaf."""
@@ -495,17 +493,17 @@ class TestCorrelationEngineStage2:
         self, cascade_events_same_site, topology_aware_config
     ):
         """
-        Without a topology provider but with cascade enabled, the engine
-        falls back to device-type heuristics — still produces cascade groups.
+        Without a topology provider, cascade returns empty and the engine
+        falls back to Stage 1 — flat incident with all group events.
         """
         engine = CorrelationEngine(
             config=topology_aware_config,
             topology_provider=None,
         )
         incidents = await engine.process_events(cascade_events_same_site)
-        # Should still produce a cascade group via heuristics
+        # Stage 1 flat incident containing all events
         assert len(incidents) == 1
-        assert len(incidents[0].related_event_ids) >= 2
+        assert len(incidents[0].related_event_ids) == 4
 
     @pytest.mark.asyncio
     async def test_cascade_disabled_uses_stage1_only(
@@ -543,13 +541,14 @@ class TestCorrelationEngineStage2:
     async def test_cross_vendor_with_cascade(
         self, cross_vendor_events, topology_aware_config
     ):
-        """Cross-vendor events with topology cascade enabled."""
+        """Cross-vendor events with topology cascade enabled but no provider — flat incident."""
         engine = CorrelationEngine(
             config=topology_aware_config,
             topology_provider=None,
         )
         incidents = await engine.process_events(cross_vendor_events)
-        assert len(incidents) >= 1
+        # All events at same site → flat Stage 1 incident
+        assert len(incidents) == 1
 
 
 # ==============================================================================

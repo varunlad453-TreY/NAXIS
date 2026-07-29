@@ -132,7 +132,7 @@ class MistInventoryCollector:
                         if mac:
                             stats_map[mac] = ap
             except Exception:
-                pass  # non-fatal: stats are best-effort
+                logger.warning("Mist stats: failed to fetch live data for site %s", site_id, exc_info=True)
 
         # Process 10 sites at a time
         batch_size = 10

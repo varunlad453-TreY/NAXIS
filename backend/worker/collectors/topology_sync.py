@@ -60,6 +60,8 @@ class TopologySync:
             await self._sync_mist_topology()
         if self._velo_enabled:
             await self._sync_velocloud_topology()
+        if self._mist_enabled or self._velo_enabled:
+            await self._sync_cross_vendor_links()
         logger.info("Topology sync complete")
 
     # ── Mist topology ─────────────────────────────────────────────────────────
@@ -340,6 +342,112 @@ class TopologySync:
             "VeloCloud topology: %d edges, %d sites upserted",
             len(rows), len(sites),
         )
+
+    # ── Cross-vendor logical links ─────────────────────────────────────────────
+
+    async def _sync_cross_vendor_links(self) -> None:
+        """
+        Create logical_link edges between devices at the same site that
+        belong to different vendors.
+
+        Why this matters:
+          A VeloCloud WAN edge and Mist APs at the same site are not
+          physically connected in the topology graph (no direct edge).
+          Without a cross-vendor edge, the cascade engine cannot cross
+          vendor boundaries: a VeloCloud edge failure that causes Mist AP
+          symptoms would not produce a topology-aware incident.
+
+        This method creates `logical_link` edges from each infra device
+        (wan_edge, switch, router) at a site to every leaf device (ap,
+        access_point) at the same site when they belong to different
+        vendors.  The direction is: infra → leaf, so the cascade engine
+        can traverse from root infra to symptom leaf.
+
+        Site nodes are excluded — they only carry site_membership edges
+        and are not meaningful as cascade roots or symptoms.
+        """
+        try:
+            rows = await db.fetch(
+                """
+                SELECT n.node_id, n.node_type, n.vendor, n.site_id,
+                       n.node_type IN (
+                           'switch','router','wan_edge','gateway',
+                           'controller','firewall','core_switch',
+                           'distribution_switch','access_switch'
+                       ) AS is_infra
+                FROM topology_nodes n
+                WHERE n.site_id IS NOT NULL
+                  AND n.site_id != ''
+                  AND n.node_type != 'site'
+                  AND n.node_type != 'wan_gateway'
+                """
+            )
+        except Exception:
+            logger.debug("Cross-vendor link query failed — topology table may be empty")
+            return
+
+        if not rows:
+            return
+
+        # Group device node_ids by site_id and vendor
+        from collections import defaultdict
+
+        site_vendor_devices: Dict[str, Dict[str, List[Dict]]] = defaultdict(
+            lambda: defaultdict(list)
+        )
+        for row in rows:
+            site_id = row["site_id"]
+            vendor = row["vendor"] or "unknown"
+            site_vendor_devices[site_id][vendor].append(row)
+
+        edge_count = 0
+        for site_id, vendor_groups in site_vendor_devices.items():
+            vendors = list(vendor_groups.keys())
+            if len(vendors) < 2:
+                continue  # Only one vendor at this site — nothing to bridge
+
+            # For each pair of vendors at the same site, create edges from
+            # infra devices to leaf devices of the other vendor
+            infra_devices: List[Dict] = []
+            leaf_devices: List[Dict] = []
+            for vendor, devices in vendor_groups.items():
+                for d in devices:
+                    if d["is_infra"]:
+                        infra_devices.append(d)
+                    else:
+                        leaf_devices.append(d)
+
+            if not infra_devices or not leaf_devices:
+                continue
+
+            for infra in infra_devices:
+                for leaf in leaf_devices:
+                    if infra["vendor"] == leaf["vendor"]:
+                        continue  # Only cross-vendor edges
+                    await _upsert_edge(
+                        src_id=leaf["node_id"],
+                        dst_id=infra["node_id"],
+                        edge_type="logical_link",
+                        props={
+                            "site_id": site_id,
+                            "discovered_by": "topology_sync_cross_vendor",
+                            "vendor_pair": f"{infra['vendor']}->{leaf['vendor']}",
+                        },
+                    )
+                    edge_count += 1
+
+        if edge_count:
+            logger.info(
+                "Cross-vendor links: %d logical_link edges across %d sites",
+                edge_count,
+                len(
+                    {
+                        s
+                        for s, _ in site_vendor_devices.items()
+                        if len(vendor_groups) >= 2
+                    }
+                ),
+            )
 
 
 # ── Shared DB helpers ─────────────────────────────────────────────────────────

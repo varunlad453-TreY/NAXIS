@@ -420,7 +420,19 @@ async def get_topology_backbone() -> TopologyBackboneResponse:
             nodes.append(bn)
 
         await _enrich_site_names(nodes)
-        await _enrich_health(nodes)
+        for n in nodes:
+            if n.critical_count > 0:
+                n.health_status = "critical"
+                n.health_label = f"{n.critical_count} critical"
+            elif n.warning_count > 0:
+                n.health_status = "warning"
+                n.health_label = f"{n.warning_count} warning"
+            elif n.device_count > 0:
+                n.health_status = "healthy"
+                n.health_label = "All healthy"
+            else:
+                n.health_status = "unknown"
+                n.health_label = "No devices"
 
         edges_rows = await db.fetch(_INTER_SITE_EDGES_QUERY)
         edges = [_row_to_edge(e) for e in edges_rows]

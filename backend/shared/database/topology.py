@@ -32,19 +32,11 @@ def _known_node_id_patterns(device_id: str) -> List[str]:
     Return candidate node_id patterns to try when looking up a device_id
     in the topology graph.
 
-    Covers all node types that topology_sync creates:
-      - mist-ap-{id|mac}
-      - mist-site-{uuid}
-      - switch-{mac}
-      - velo-edge-{id}
-      - velo-site-{id}
-      - wan-gw-{name}
-      - snmp-{ip}
+    Tries all known prefixes for every device_id so we never miss a match
+    due to format heuristics.  Exact device_id match comes first, followed
+    by prefixed variants.
     """
-    candidates = [
-        # Exact device_id first (some collectors write it directly)
-        device_id,
-    ]
+    candidates = [device_id]
 
     cleaned = device_id.replace(":", "").replace("-", "").replace(".", "")
     is_mac = (
@@ -52,30 +44,15 @@ def _known_node_id_patterns(device_id: str) -> List[str]:
         and all(c in "0123456789abcdefABCDEF" for c in cleaned)
     )
 
-    # If it looks like a MAC, it may be an AP, switch, or SNMP node
     if is_mac:
-        candidates.append(f"mist-ap-{device_id}")
         candidates.append(f"mist-ap-{cleaned}")
-        candidates.append(f"switch-{device_id}")
         candidates.append(f"switch-{cleaned}")
-        candidates.append(f"snmp-{device_id}")
         candidates.append(f"snmp-{cleaned}")
 
-    # Try all known vendor prefixes in priority order
-    candidates.append(f"mist-site-{device_id}")
-    candidates.append(f"velo-site-{device_id}")
-    candidates.append(f"velo-edge-{device_id}")
-    candidates.append(f"wan-gw-{device_id}")
-
-    # UUID-style identifiers (36 chars, 4 hyphens)
-    if len(device_id) == 36 and device_id.count("-") == 4:
-        candidates.append(f"mist-site-{device_id}")
-        candidates.append(f"mist-ap-{device_id}")
-
-    # Short-len identifiers may be VeloCloud edge IDs
-    if 3 <= len(device_id) <= 20 and not is_mac:
-        candidates.append(f"velo-edge-{device_id}")
-        candidates.append(f"velo-site-{device_id}")
+    # Try every known prefix — the DB cost of a few extra ANY($1) entries
+    # is negligible, and the heuristic-gated approach misses real matches.
+    for prefix in _NODE_PREFIXES:
+        candidates.append(f"{prefix}{device_id}")
 
     # Deduplicate while preserving order
     seen: Set[str] = set()
@@ -91,6 +68,33 @@ def _looks_like_mac(value: str) -> bool:
     """Heuristic: MAC addresses are 12 hex chars or 17 chars with colons."""
     cleaned = value.replace(":", "").replace("-", "").replace(".", "")
     return len(cleaned) == 12 and all(c in "0123456789abcdefABCDEF" for c in cleaned)
+
+
+# Known node_id prefix → device_type mapping used by topology_sync.
+# The prefix indicates the device type and source vendor.
+_NODE_PREFIXES = [
+    "mist-ap-", "mist-site-",
+    "switch-",
+    "velo-edge-", "velo-site-",
+    "wan-gw-",
+    "snmp-",
+]
+
+
+def node_id_to_device_id(node_id: str) -> str:
+    """
+    Reverse-resolution: given a topology node_id, extract the original
+    device_id by stripping the known prefix.
+
+    Example:
+        node_id_to_device_id("mist-ap-abc123")  → "abc123"
+        node_id_to_device_id("velo-edge-42")     → "42"
+        node_id_to_device_id("switch-001122aabbcc") → "001122aabbcc"
+    """
+    for prefix in _NODE_PREFIXES:
+        if node_id.startswith(prefix):
+            return node_id[len(prefix):]
+    return node_id
 
 
 async def resolve_node_id(device_id: str) -> Optional[str]:
@@ -404,19 +408,42 @@ class DatabaseTopologyProvider:
                 parent_to_children[parent_id] = []
             parent_to_children[parent_id].append(child_id)
 
-        # Map back from event device_ids
+        # Build reverse index: child_node_id → child_device_id
+        # This is needed because parent_to_children values are topology node_ids
+        # (e.g., "mist-ap-abc123") but the cascade rule expects event device_ids
+        # (e.g., "abc123").  The resolved dict already holds the forward mapping.
+        child_node_to_device: Dict[str, str] = {}
+        for dev_id, nid in resolved.items():
+            if nid:
+                child_node_to_device[nid] = dev_id
+
+        # Map back from event device_ids, translating children from node_id
+        # space into device_id space
         result: Dict[str, List[str]] = {}
         for device_id, node_id in resolved.items():
             if node_id and node_id in parent_to_children:
-                result[device_id] = parent_to_children[node_id]
+                child_node_ids = parent_to_children[node_id]
+                child_device_ids = []
+                for cid in child_node_ids:
+                    if cid in child_node_to_device:
+                        child_device_ids.append(child_node_to_device[cid])
+                    else:
+                        child_device_ids.append(cid)
+                result[device_id] = child_device_ids
 
         return result
 
     async def get_all_descendants(
         self, device_id: str, max_depth: int = 5
     ) -> List[str]:
-        """Recursively find all descendants of device_id."""
+        """
+        Recursively find all descendants of device_id.
+
+        Returns event device_ids (not topology node_ids) so the result
+        can be used directly by the cascade rule's event-matching logic.
+        """
         node_id = await resolve_node_id(device_id)
         if not node_id:
             return []
-        return await get_devices_under_node(node_id, max_depth=max_depth)
+        child_node_ids = await get_devices_under_node(node_id, max_depth=max_depth)
+        return [node_id_to_device_id(cid) for cid in child_node_ids]

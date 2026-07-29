@@ -158,7 +158,7 @@ class SnmpTrapReceiver:
                     try:
                         await insert_events(batch)
                     except Exception:
-                        pass
+                        logger.exception("SNMP trap shutdown: failed to flush %d events", len(batch))
                 raise
 
 

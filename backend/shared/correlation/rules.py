@@ -6,11 +6,14 @@ MVP implementation uses simple site+time-window grouping, extended
 with Stage 2 infrastructure-aware topology cascading.
 """
 
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Protocol, Set
 
 from ..models.event import EventSeverity, UnifiedEvent
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -33,7 +36,7 @@ class CorrelationConfig:
     topology_cascade_enabled: bool = True
 
     # When topology edges aren't available, fall back to device-type heuristics
-    topology_fallback_to_device_type: bool = True
+    topology_fallback_to_device_type: bool = False
 
     # Infrastructure device types (potential root causes)
     infrastructure_device_types: Set[str] = field(
@@ -400,18 +403,13 @@ class TopologyCascadeRule:
         if not infra_events:
             return []
 
-        # Try topology-aware mode first
+        # Topology-aware mode: only source of truth when provider is configured
         if self._provider:
-            cascade_groups = await self._evaluate_with_topology(
+            return await self._evaluate_with_topology(
                 infra_events, leaf_events, group_events
             )
-            if cascade_groups:
-                return cascade_groups
 
-        # Fallback: device-type heuristic
-        if self._config.topology_fallback_to_device_type:
-            return self._evaluate_by_device_type(infra_events, leaf_events)
-
+        # No provider configured — no cascade possible without data
         return []
 
     async def _evaluate_with_topology(
@@ -420,7 +418,13 @@ class TopologyCascadeRule:
         leaf_events: List[UnifiedEvent],
         all_group_events: List[UnifiedEvent],
     ) -> List[CascadeGroup]:
-        """Use the topology provider to find parent-child relationships."""
+        """Use the topology provider to find parent-child relationships.
+
+        Supports multi-hop cascading: if an infrastructure device has
+        descendants through intermediate nodes (e.g. switch -> downstream
+        switch -> AP), all leaf devices reachable via topology edges are
+        considered symptoms.
+        """
         if not self._provider:
             return []
 
@@ -453,12 +457,29 @@ class TopologyCascadeRule:
         used_event_ids: Set[str] = set()
 
         for infra_dev_id, dev_events in infra_by_device.items():
-            child_device_ids = parent_child_map.get(infra_dev_id, [])
+            # Immediate children from topology edges
+            immediate_children = set(parent_child_map.get(infra_dev_id, []))
+
+            # Multi-hop descendants via recursive traversal
+            all_descendants: Set[str] = set()
+            if hasattr(self._provider, "get_all_descendants"):
+                try:
+                    descendant_ids = await self._provider.get_all_descendants(
+                        infra_dev_id, max_depth=5
+                    )
+                    all_descendants = set(descendant_ids) - {infra_dev_id}
+                except Exception:
+                    logger.warning(
+                        "get_all_descendants failed for %s", infra_dev_id,
+                        exc_info=True
+                    )
+
+            child_device_ids = immediate_children | all_descendants
             if not child_device_ids:
                 continue
 
             # Build symptom events from leaf events whose device_id
-            # is a child of this infrastructure device
+            # is a child or descendant of this infrastructure device
             symptom_events = []
             for leaf_event in leaf_events:
                 leaf_dev_id = (
@@ -487,7 +508,6 @@ class TopologyCascadeRule:
                         root_device_id=infra_dev_id,
                     )
                 )
-                # Mark ALL events on this device as used
                 for e in dev_events:
                     used_event_ids.add(e.event_id)
 

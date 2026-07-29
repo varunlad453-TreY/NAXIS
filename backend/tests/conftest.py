@@ -281,10 +281,9 @@ def out_of_window_events(default_config) -> List[UnifiedEvent]:
 
 @pytest.fixture
 def topology_aware_config() -> CorrelationConfig:
-    """Configuration with topology cascade enabled but no DB (uses heuristics)."""
+    """Configuration with topology cascade enabled."""
     return CorrelationConfig(
         topology_cascade_enabled=True,
-        topology_fallback_to_device_type=True,
     )
 
 

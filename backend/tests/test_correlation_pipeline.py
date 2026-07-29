@@ -155,7 +155,7 @@ async def test_topology_cascade_root_cause_incident():
 
 
 @pytest.mark.asyncio
-async def test_heuristic_fallback_no_topology():
+async def test_flat_incident_when_no_topology_match():
     import worker.main as wm
     now = datetime.now(timezone.utc)
     flat_events = [

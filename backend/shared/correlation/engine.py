@@ -211,6 +211,7 @@ class CorrelationEngine:
                 limit,
             )
         except Exception:
+            logger.warning("Failed to fetch unlinked events for cross-cycle correlation", exc_info=True)
             return []
 
         events: List[UnifiedEvent] = []
@@ -220,6 +221,7 @@ class CorrelationEngine:
                 if event.event_id and not self._is_event_processed(event.event_id):
                     events.append(event)
             except Exception:
+                logger.warning("Failed to convert event row %s", row.get("event_id", "?"), exc_info=True)
                 continue
 
         if events:
