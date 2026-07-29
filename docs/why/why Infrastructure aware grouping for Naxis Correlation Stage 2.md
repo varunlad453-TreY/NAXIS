@@ -27,14 +27,14 @@ Stage 1 reports "50 devices affected" as a count. It cannot distinguish between:
 - **1 root cause device** (the core switch) whose failure cascaded
 - **49 symptom devices** (the APs) that are only down because of the root cause
 
-The operator has no way to prioritize. Every device looks equally important.
+The operator has no way to prioritise. Every device looks equally important.
 
 ### Problem C: No Symptom Suppression
 
 When 50 APs alarm simultaneously, the monitoring platform fires 50 alerts. The NOC gets flooded. Experienced operators learn to mute the site during major incidents, defeating the purpose of the platform entirely.
 
 ---
-
+ 
 ## 2. How Stage 2 Fixes This
 
 Stage 2 introduces **topology-aware correlation**. Instead of treating all events at a site equally, it:

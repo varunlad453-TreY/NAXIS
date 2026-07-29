@@ -1,5 +1,6 @@
 "use client";
 
+import { ThemeToggle } from "@/components/ui/theme-toggle";
 import { useQuery } from "@tanstack/react-query";
 import { Circle } from "lucide-react";
 import { api } from "@/lib/api";
@@ -24,6 +25,9 @@ export function Header() {
       >
         <Circle className={cn("h-2 w-2 fill-current", isOnline && "animate-pulse")} />
         {isOnline ? "Online" : "Connecting"}
+      </div>
+      <div className="border-l border-border/30 pl-4">
+        <ThemeToggle />
       </div>
     </header>
   );

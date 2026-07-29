@@ -76,7 +76,7 @@ class TopologySync:
         """
         rows = await db.fetch(
             "SELECT device_id, hostname, ip_address, model, site_id, site_name, "
-            "       connected, num_clients, firmware_version "
+            "       connected, num_clients, firmware_version , mac "
             "FROM inventory WHERE platform = 'mist'"
         )
         if not rows:
@@ -101,9 +101,12 @@ class TopologySync:
 
         # Upsert AP nodes + site_membership edges
         ap_node_ids: Dict[str, str] = {}
+        mac_to_ap_node_id: Dict[str, str] = {}
         for row in rows:
             ap_node_id = f"mist-ap-{row['device_id']}"
             ap_node_ids[row["device_id"]] = ap_node_id
+            if row["mac"]:
+                mac_to_ap_node_id[row["mac"]] = ap_node_id
             await _upsert_node(
                 node_id=ap_node_id,
                 node_type="ap",
@@ -131,14 +134,15 @@ class TopologySync:
 
         # Stage 2: Build physical_link edges from Mist wired uplink data
         # stored in the events table by MistWiredUplinkCollector.
-        await self._sync_mist_physical_links(ap_node_ids)
+        await self._sync_mist_physical_links(ap_node_ids, mac_to_ap_node_id)
 
         logger.info(
             "Mist topology: %d APs, %d sites upserted", len(rows), len(sites)
         )
 
     async def _sync_mist_physical_links(
-        self, ap_node_ids: Dict[str, str]
+        self, ap_node_ids: Dict[str, str],
+        mac_to_ap_node_id: Dict[str, str] = None,
     ) -> None:
         """
         Read the most recent Mist wired uplink events from Postgres and
@@ -183,8 +187,10 @@ class TopologySync:
             if not ap_dev_id or not switch_mac:
                 continue
 
-            # AP node ID (from inventory)
+            # AP node ID — look up by device_id (UUID) first, then by MAC
             ap_node_id = ap_node_ids.get(ap_dev_id)
+            if not ap_node_id and mac_to_ap_node_id:
+                ap_node_id = mac_to_ap_node_id.get(ap_dev_id)
             if not ap_node_id:
                 ap_node_id = f"mist-ap-{ap_dev_id}"
 

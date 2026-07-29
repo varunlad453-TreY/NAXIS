@@ -13,7 +13,8 @@ RUN npm install
 # Development
 FROM base AS development
 WORKDIR /app
-COPY --from=deps /app/node_modules ./node_modules
+COPY package.json package-lock.json* ./
+RUN npm install
 COPY . .
 EXPOSE 3000
 ENV PORT=3000

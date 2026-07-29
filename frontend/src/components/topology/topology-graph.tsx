@@ -1,11 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import {
   ReactFlow,
   Background,
   Controls,
-  MiniMap,
   Node,
   NodeTypes,
   ConnectionLineType,
@@ -17,17 +17,24 @@ import {
   NodeProps,
 } from "reactflow";
 import "reactflow/dist/style.css";
+import { Search, X, Layers } from "lucide-react";
 
-import type { TopologyGraphResponse } from "@/types/topology";
-import { NODE_TYPE_META, HEALTH_STATUS_META } from "@/types/topology";
-import { NODE_WIDTH, NODE_HEIGHT, buildLayout } from "./layout";
+import type { TopologyGraphResponse, DeviceCategory } from "@/types/topology";
+import { NODE_TYPE_META, HEALTH_STATUS_META, AGGREGATED_VIEW_THRESHOLD } from "@/types/topology";
+import { NODE_WIDTH, NODE_HEIGHT } from "./layout";
+import { useTopologyLayout } from "./use-topology-layout";
+import { api } from "@/lib/api";
+import { TopologySidePanel, type PanelMode } from "./topology-side-panel";
+import { AggregatedView } from "./aggregated-view";
+import { ContextGraph } from "./context-graph";
 
 interface TopologyGraphProps {
   data: TopologyGraphResponse;
   isLoading?: boolean;
   error?: Error | null;
   highlightedNodeIds?: string[];
-  onNodeClick?: (nodeId: string) => void;
+  incidentId?: string | null;
+  onSiteSelect?: (siteId: string) => void;
 }
 
 function deviceTypeMeta(nodeType: string) {
@@ -43,16 +50,18 @@ function healthMeta(status: string) {
 }
 
 function TopologyNodeComponent({ data }: NodeProps) {
-  const meta = deviceTypeMeta(data.node_type);
+  const meta = deviceTypeMeta(data.node_type as string);
   const hMeta = healthMeta(data.health_status as string);
   const isHighlighted = data.highlighted === true;
   const isRootCause = data.rootCause === true;
+  const deviceCount = (data.device_count as number) ?? 0;
 
   return (
     <div
       className={[
         "group cursor-pointer rounded-lg border-2 bg-surface px-4 py-3 shadow-surface transition-all hover:shadow-surface-lg",
         isRootCause ? "animate-pulse" : "",
+        data.node_type === "site" ? "hover:border-primary/50" : "",
       ].join(" ")}
       style={{
         borderColor: isHighlighted ? hMeta.color : meta.color,
@@ -75,20 +84,25 @@ function TopologyNodeComponent({ data }: NodeProps) {
             <span className="truncate text-sm font-semibold text-foreground">
               {data.label as string}
             </span>
-            {/* Health status dot */}
             <span
               className="relative inline-block h-2.5 w-2.5 shrink-0 rounded-full"
               style={{ backgroundColor: hMeta.color }}
               title={hMeta.label}
             >
               <span
-                className="absolute inset-0 animate-ping rounded-full opacity-40"
+                className="absolute inset-0 animate-ping rounded-full opacity-30"
                 style={{ backgroundColor: hMeta.color }}
               />
             </span>
           </div>
           <div className="flex items-center gap-2 text-[10px] text-foreground-subtle">
             <span>{meta.label}</span>
+            {deviceCount > 0 && (
+              <>
+                <span className="text-border">·</span>
+                <span>{deviceCount} devices</span>
+              </>
+            )}
             {data.vendor && (
               <>
                 <span className="text-border">·</span>
@@ -105,7 +119,78 @@ function TopologyNodeComponent({ data }: NodeProps) {
   );
 }
 
-const nodeTypes: NodeTypes = { topologyNode: TopologyNodeComponent };
+function SiteGroupNode({ data }: NodeProps) {
+  const hMeta = healthMeta((data.health_status as string) ?? "unknown");
+  const isExpanded = data.isExpanded === true;
+  const count = (data.child_count as number) ?? 0;
+  const crossCount = (data.crossSiteEdgeCount as number) ?? 0;
+
+  const siteMeta = NODE_TYPE_META.site ?? {
+    label: "Site",
+    category: "infrastructure" as const,
+    color: "#8b5cf6",
+  };
+
+  return (
+    <div
+      className={[
+        "relative h-full w-full rounded-xl border-2 transition-all",
+        isExpanded
+          ? "border-border/40 bg-surface/10"
+          : "border-violet-400/30 bg-violet-500/5 hover:border-violet-400/60",
+      ].join(" ")}
+    >
+      <div
+        className={[
+          "flex items-center gap-3 rounded-t-xl px-4",
+          isExpanded ? "border-b border-border/30 bg-surface/40 py-2" : "py-3",
+        ].join(" ")}
+      >
+        <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-violet-500 text-xs font-bold text-white">
+          SI
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <span className="truncate text-sm font-semibold text-foreground">
+              {data.label as string}
+            </span>
+            <span
+              className="inline-block h-2 w-2 shrink-0 rounded-full"
+              style={{ backgroundColor: hMeta.color }}
+              title={hMeta.label}
+            />
+          </div>
+          <div className="flex items-center gap-2 text-[10px] text-foreground-subtle">
+            <span>{siteMeta.label}</span>
+            {!isExpanded && (
+              <>
+                <span className="text-border">·</span>
+                <span>{count} devices</span>
+                {crossCount > 0 && (
+                  <>
+                    <span className="text-border">·</span>
+                    <span className="text-primary">{crossCount} cross-site</span>
+                  </>
+                )}
+              </>
+            )}
+            {isExpanded && (
+              <span>{count} devices</span>
+            )}
+          </div>
+        </div>
+        <span className="text-lg text-foreground-muted transition-transform duration-200">
+          {isExpanded ? "▾" : "▸"}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+const nodeTypes: NodeTypes = {
+  topologyNode: TopologyNodeComponent,
+  siteGroup: SiteGroupNode,
+};
 
 function TopologySkeleton() {
   return (
@@ -143,51 +228,111 @@ function TopologyEmptyState() {
   );
 }
 
+const ALL_TYPES = new Set(["ap", "switch", "site"]);
+
 export function TopologyGraph({
   data,
   isLoading,
   error,
   highlightedNodeIds,
-  onNodeClick,
+  incidentId,
+  onSiteSelect,
 }: TopologyGraphProps) {
   const reactFlowWrapper = useRef<HTMLDivElement>(null);
   const [reactFlowInstance, setReactFlowInstance] = useState<ReactFlowInstance | null>(null);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [fitViewKey, setFitViewKey] = useState(0);
+  const [panelMode, setPanelMode] = useState<PanelMode>(incidentId ? "incident" : null);
+  const [expandedSites, setExpandedSites] = useState<Set<string>>(new Set());
+  const [activeTypeFilters, setActiveTypeFilters] = useState<Set<string>>(
+    () => new Set(Object.keys(NODE_TYPE_META)),
+  );
+  const [searchQuery, setSearchQuery] = useState("");
+  const [showSearch, setShowSearch] = useState(false);
+  const searchRef = useRef<HTMLDivElement>(null);
+  const firstFitDone = useRef(false);
+
+  const largeSite = data.nodes.length - data.nodes.filter((n) => n.node_type === "site").length >= AGGREGATED_VIEW_THRESHOLD;
+  const [viewMode, setViewMode] = useState<"auto" | "aggregated" | "flat" | "context">("auto");
+  const [contextNode, setContextNode] = useState<{ id: string; name: string } | null>(null);
+
+  const resolvedMode = useMemo(() => {
+    if (contextNode) return "context";
+    if (viewMode === "flat") return "flat";
+    if (viewMode === "aggregated") return "aggregated";
+    if (viewMode === "auto" && largeSite) return "aggregated";
+    return "flat";
+  }, [viewMode, contextNode, largeSite]);
+
+  const handleContextSelect = useCallback((nodeId: string, nodeName: string) => {
+    setContextNode({ id: nodeId, name: nodeName });
+  }, []);
+
+  const handleContextBack = useCallback(() => {
+    setContextNode(null);
+  }, []);
+
+  const handleFlatView = useCallback(() => {
+    setViewMode("flat");
+  }, []);
+
+  const singleSite = useMemo(() => {
+    const nonSite = data.nodes.filter((n) => n.node_type !== "site");
+    if (nonSite.length === 0) return false;
+    const siteIds = new Set(nonSite.map((n) => n.site_id).filter(Boolean));
+    return siteIds.size <= 1;
+  }, [data.nodes]);
+
+  const allSiteIds = useMemo(() => {
+    return data.nodes.filter((n) => n.node_type === "site" && n.site_id).map((n) => n.site_id!);
+  }, [data.nodes]);
 
   const highlightSet = useMemo(
     () => new Set(highlightedNodeIds ?? []),
     [highlightedNodeIds]
   );
 
-  const { nodes: initialNodes, edges: initialEdges } = useMemo(
-    () => buildLayout(data.nodes, data.edges, highlightSet),
-    [data.nodes, data.edges, highlightSet]
-  );
+  const { layoutNodes: initialNodes, layoutEdges: initialEdges, isComputing } = useTopologyLayout({
+    nodes: data.nodes,
+    edges: data.edges,
+    highlightSet,
+    expandedSites,
+    activeTypeFilters,
+    grouped: !singleSite,
+  });
 
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
 
-  const topologySignature = useMemo(() => {
-    const nodeKey = initialNodes.map((n) => n.id).sort().join(",");
-    const edgeKey = initialEdges.map((e) => `${e.source}->${e.target}`).sort().join(",");
-    return `${nodeKey}|${edgeKey}`;
-  }, [initialNodes, initialEdges]);
+  const {
+    data: incidentDetail,
+    isLoading: incidentLoading,
+  } = useQuery({
+    queryKey: ["incident", incidentId],
+    queryFn: () => api.getIncident(incidentId!),
+    enabled: panelMode === "incident" && !!incidentId,
+  });
+
+  const {
+    data: nodeDetail,
+    isLoading: nodeLoading,
+  } = useQuery({
+    queryKey: ["topology-node", selectedNodeId],
+    queryFn: () => api.getTopologyNode(selectedNodeId!),
+    enabled: panelMode === "node" && !!selectedNodeId,
+  });
 
   useEffect(() => {
-    setNodes((prev) => {
-      const prevPositions = new Map(prev.map((n) => [n.id, n.position]));
-      return initialNodes.map((n) => {
-        const kept = prevPositions.get(n.id);
-        return kept ? { ...n, position: kept } : n;
-      });
-    });
+    if (incidentId) {
+      setPanelMode("incident");
+    }
+  }, [incidentId]);
+
+  useEffect(() => {
+    setNodes(initialNodes);
     setEdges(initialEdges);
-  }, [initialNodes, initialEdges, setNodes, setEdges]);
-
-  useEffect(() => {
     setFitViewKey((k) => k + 1);
-  }, [topologySignature]);
+  }, [initialNodes, initialEdges, setNodes, setEdges]);
 
   useEffect(() => {
     if (reactFlowInstance && highlightedNodeIds && highlightedNodeIds.length > 0) {
@@ -202,20 +347,131 @@ export function TopologyGraph({
     }
   }, [reactFlowInstance, highlightedNodeIds, fitViewKey]);
 
+  const toggleSite = useCallback((siteId: string) => {
+    setExpandedSites((prev) => {
+      const next = new Set(prev);
+      const wasCollapsed = !next.has(siteId);
+      if (wasCollapsed) {
+        next.add(siteId);
+      } else {
+        next.delete(siteId);
+      }
+      return next;
+    });
+  }, []);
+
+  const expandAll = useCallback(() => {
+    setExpandedSites(new Set(allSiteIds));
+  }, [allSiteIds]);
+
+  const collapseAll = useCallback(() => {
+    setExpandedSites(new Set());
+  }, []);
+
+  const toggleTypeFilter = useCallback((type: string) => {
+    setActiveTypeFilters((prev) => {
+      const next = new Set(prev);
+      if (next.has(type)) {
+        next.delete(type);
+      } else {
+        next.add(type);
+      }
+      return next;
+    });
+  }, []);
+
+  const searchResults = useMemo(() => {
+    if (!searchQuery.trim() || searchQuery.trim().length < 2) return [];
+    const q = searchQuery.trim().toLowerCase();
+    return data.nodes
+      .filter((n) => n.name?.toLowerCase().includes(q) || n.node_id?.toLowerCase().includes(q))
+      .slice(0, 20);
+  }, [searchQuery, data.nodes]);
+
+  const handleSelectSearchResult = useCallback((node: (typeof data.nodes)[0]) => {
+    setSearchQuery("");
+    setShowSearch(false);
+
+    if (node.node_type === "site" && node.site_id) {
+      toggleSite(node.site_id);
+    } else if (node.site_id) {
+      setExpandedSites((prev) => {
+        const next = new Set(prev);
+        next.add(node.site_id!);
+        return next;
+      });
+    }
+
+    setTimeout(() => {
+      if (reactFlowInstance) {
+        reactFlowInstance.fitView({
+          padding: 0.3,
+          nodes: [{ id: node.node_id }],
+          duration: 300,
+        });
+      }
+    }, 50);
+  }, [reactFlowInstance, toggleSite]);
+
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (searchRef.current && !searchRef.current.contains(event.target as unknown as globalThis.Node)) {
+        setShowSearch(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  useEffect(() => {
+    if (reactFlowInstance && !isComputing && initialNodes.length > 0 && !firstFitDone.current) {
+      firstFitDone.current = true;
+      const timer = setTimeout(() => {
+        reactFlowInstance.fitView({ padding: 0.2, duration: 300 });
+      }, 150);
+      return () => clearTimeout(timer);
+    }
+  }, [reactFlowInstance, isComputing, initialNodes.length]);
+
   const onNodeClickHandler = useCallback(
     (_event: React.MouseEvent, node: Node) => {
+      if (node.type === "siteGroup") {
+        const siteId = (node.data as Record<string, unknown>)?.site_id as string;
+        if (siteId) toggleSite(siteId);
+        return;
+      }
+
+      if (node.type === "topologyNode") {
+        const nodeData = node.data as Record<string, unknown>;
+        if (nodeData.node_type === "site") {
+          const siteId = (nodeData.site_id as string) || node.id;
+          if (siteId && onSiteSelect) {
+            onSiteSelect(siteId);
+            return;
+          }
+        }
+      }
+
       const id = node.id;
       setSelectedNodeId((prev) => (prev === id ? null : id));
-      onNodeClick?.(id);
+      setPanelMode((prev) => {
+        if (prev === "node" && selectedNodeId === id) return incidentId ? "incident" : null;
+        return "node";
+      });
     },
-    [onNodeClick]
+    [selectedNodeId, incidentId, toggleSite, onSiteSelect]
   );
+
+  const onPanelClose = useCallback(() => {
+    setPanelMode(incidentId ? "incident" : null);
+    setSelectedNodeId(null);
+  }, [incidentId]);
 
   const onFitView = useCallback(() => {
     reactFlowInstance?.fitView({ padding: 0.2 });
   }, [reactFlowInstance]);
 
-  if (isLoading) return <TopologySkeleton />;
+  if (isLoading || (isComputing && initialNodes.length === 0)) return <TopologySkeleton />;
   if (error) {
     return (
       <div className="flex h-[600px] items-center justify-center rounded-xl border border-critical/20 bg-critical/5">
@@ -238,10 +494,34 @@ export function TopologyGraph({
   }
   if (!data.nodes.length) return <TopologyEmptyState />;
 
+  if (resolvedMode === "context" && contextNode) {
+    return (
+      <ContextGraph
+        nodeId={contextNode.id}
+        nodeName={contextNode.name}
+        onBack={handleContextBack}
+        onNodeClick={handleContextSelect}
+        allNodeIds={data.nodes.map((n) => n.node_id)}
+      />
+    );
+  }
+
+  if (resolvedMode === "aggregated") {
+    return (
+      <AggregatedView
+        data={data}
+        onContextSelect={handleContextSelect}
+        onFlatView={handleFlatView}
+      />
+    );
+  }
+
   return (
     <div className="space-y-3">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-4 text-sm text-foreground-muted">
+      {/* Toolbar */}
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        {/* Left group: stats + type filters + search + blast radius */}
+        <div className="flex items-center gap-3 text-sm text-foreground-muted">
           <span className="flex items-center gap-1.5">
             <span className="h-2 w-2 rounded-full bg-primary" />
             {data.total_nodes} nodes
@@ -250,56 +530,196 @@ export function TopologyGraph({
             <span className="h-0.5 w-4 rounded bg-foreground-subtle" />
             {data.total_edges} links
           </span>
+
+          <span className="h-4 w-px bg-border/60" />
+
+          {/* Type filter toggles */}
+          {Array.from(ALL_TYPES).map((type) => {
+            const meta = deviceTypeMeta(type);
+            const isActive = activeTypeFilters.has(type);
+            return (
+              <button
+                key={type}
+                onClick={() => toggleTypeFilter(type)}
+                className={[
+                  "inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium transition-all",
+                  isActive
+                    ? "border-current bg-current/10 text-current"
+                    : "border-border/40 text-foreground-subtle opacity-40 hover:opacity-70",
+                ].join(" ")}
+                style={isActive ? { color: meta.color } : undefined}
+              >
+                <span className="h-2 w-2 rounded-full" style={{ backgroundColor: meta.color }} />
+                {meta.label}
+              </button>
+            );
+          })}
+
+          <span className="h-4 w-px bg-border/60" />
+
+          {/* Search */}
+          <div ref={searchRef} className="relative">
+            {showSearch ? (
+              <div className="flex items-center gap-1">
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Search nodes..."
+                  className="w-40 rounded-md border border-border/60 bg-surface px-2.5 py-1 text-xs text-foreground outline-none placeholder:text-foreground-subtle focus:border-primary/50"
+                  autoFocus
+                  onKeyDown={(e) => {
+                    if (e.key === "Escape") {
+                      setShowSearch(false);
+                      setSearchQuery("");
+                    }
+                    if (e.key === "Enter" && searchResults.length > 0) {
+                      handleSelectSearchResult(searchResults[0]);
+                    }
+                  }}
+                />
+                <button
+                  onClick={() => {
+                    setShowSearch(false);
+                    setSearchQuery("");
+                  }}
+                  className="rounded p-1 text-foreground-muted hover:text-foreground"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={() => setShowSearch(true)}
+                className="inline-flex items-center gap-1.5 rounded-md border border-border/60 px-2.5 py-1 text-xs font-medium text-foreground-muted transition-colors hover:bg-surface hover:text-foreground"
+              >
+                <Search className="h-3.5 w-3.5" />
+                Search
+              </button>
+            )}
+
+            {/* Search results dropdown */}
+            {showSearch && searchResults.length > 0 && (
+              <div className="absolute left-0 top-full z-50 mt-1 w-64 overflow-hidden rounded-lg border border-border/60 bg-surface shadow-surface-lg">
+                {searchResults.map((node) => {
+                  const meta = deviceTypeMeta(node.node_type);
+                  return (
+                    <button
+                      key={node.node_id}
+                      onClick={() => handleSelectSearchResult(node)}
+                      className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs transition-colors hover:bg-surface-hover"
+                    >
+                      <span
+                        className="h-2 w-2 shrink-0 rounded-full"
+                        style={{ backgroundColor: meta.color }}
+                      />
+                      <span className="truncate font-medium text-foreground">
+                        {node.name || node.node_id}
+                      </span>
+                      <span className="shrink-0 text-foreground-subtle">{meta.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {incidentId && (
+            <button
+              onClick={() => setPanelMode(panelMode === "incident" ? null : "incident")}
+              className="inline-flex items-center gap-1.5 rounded-md border border-primary/30 bg-primary/5 px-3 py-1.5 text-xs font-medium text-primary transition-colors hover:bg-primary/10"
+            >
+              <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                />
+              </svg>
+              Blast Radius
+            </button>
+          )}
         </div>
-        <button
-          onClick={onFitView}
-          className="inline-flex items-center gap-1.5 rounded-md border border-border/60 px-3 py-1.5 text-xs font-medium text-foreground-muted transition-colors hover:bg-surface hover:text-foreground"
-        >
-          <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"
-            />
-          </svg>
-          Fit view
-        </button>
+
+        {/* Right group: expand/collapse (multi-site only) + fit view */}
+        <div className="flex items-center gap-2">
+          {!singleSite && (
+            <>
+              <span className="text-xs text-foreground-subtle">
+                {expandedSites.size === 0
+                  ? "All sites collapsed"
+                  : `${expandedSites.size}/${allSiteIds.length} sites expanded`}
+              </span>
+              <button
+                onClick={collapseAll}
+                disabled={expandedSites.size === 0}
+                className="inline-flex items-center gap-1.5 rounded-md border border-border/60 px-2.5 py-1.5 text-xs font-medium text-foreground-muted transition-colors hover:bg-surface hover:text-foreground disabled:cursor-not-allowed disabled:opacity-30"
+              >
+                Collapse all
+              </button>
+              <button
+                onClick={expandAll}
+                disabled={expandedSites.size === allSiteIds.length}
+                className="inline-flex items-center gap-1.5 rounded-md border border-border/60 px-2.5 py-1.5 text-xs font-medium text-foreground-muted transition-colors hover:bg-surface hover:text-foreground disabled:cursor-not-allowed disabled:opacity-30"
+              >
+                Expand all
+              </button>
+            </>
+          )}
+          <button
+            onClick={onFitView}
+            className="inline-flex items-center gap-1.5 rounded-md border border-border/60 px-3 py-1.5 text-xs font-medium text-foreground-muted transition-colors hover:bg-surface hover:text-foreground"
+          >
+            <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"
+              />
+            </svg>
+            Fit view
+          </button>
+        </div>
       </div>
-      <div ref={reactFlowWrapper} className="h-[600px] w-full">
-        <ReactFlow
-          nodes={nodes}
-          edges={edges}
-          onNodesChange={onNodesChange}
-          onEdgesChange={onEdgesChange}
-          nodeTypes={nodeTypes}
-          onInit={setReactFlowInstance}
-          onNodeClick={onNodeClickHandler}
-          fitView={highlightedNodeIds && highlightedNodeIds.length > 0 ? false : undefined}
-          attributionPosition="bottom-left"
-          connectionLineType={ConnectionLineType.SmoothStep}
-          minZoom={0.1}
-          maxZoom={4}
-          deleteKeyCode={null}
-          className="rounded-xl border border-border/40 bg-surface/20"
-        >
-          <Background color="hsl(var(--border) / 0.3)" gap={20} size={1} />
-          <Controls
-            className="!rounded-lg !border-border/60 !bg-surface !shadow-surface"
-            showInteractive={false}
-          />
-          <MiniMap
-            nodeStrokeColor="hsl(var(--border))"
-            nodeColor={(node) => {
-              const meta = deviceTypeMeta((node.data as Record<string, unknown>)?.node_type as string);
-              return meta.color;
-            }}
-            maskColor="hsl(var(--background) / 0.7)"
-            className="!rounded-lg !border-border/60"
-            pannable
-            zoomable
-          />
-        </ReactFlow>
+
+      {/* Graph */}
+      <div className="relative">
+        <div ref={reactFlowWrapper} className="h-[600px] w-full">
+          <ReactFlow
+            nodes={nodes}
+            edges={edges}
+            onNodesChange={onNodesChange}
+            onEdgesChange={onEdgesChange}
+            nodeTypes={nodeTypes}
+            onInit={setReactFlowInstance}
+            onNodeClick={onNodeClickHandler}
+            fitView={highlightedNodeIds && highlightedNodeIds.length > 0 ? false : undefined}
+            onlyRenderVisibleElements
+            attributionPosition="bottom-left"
+            connectionLineType={ConnectionLineType.SmoothStep}
+            minZoom={0.1}
+            maxZoom={4}
+            deleteKeyCode={null}
+            className="rounded-xl border border-border/40 bg-surface/20"
+          >
+            <Background color="hsl(var(--border) / 0.3)" gap={20} size={1} />
+            <Controls
+              className="!rounded-lg !border-border/60 !bg-surface !shadow-surface"
+              showInteractive={false}
+            />
+          </ReactFlow>
+        </div>
+        <TopologySidePanel
+          mode={panelMode}
+          incidentId={incidentId}
+          incidentDetail={incidentDetail ?? null}
+          nodeDetail={nodeDetail ?? null}
+          onClose={onPanelClose}
+          incidentLoading={incidentLoading}
+          nodeLoading={nodeLoading}
+        />
       </div>
     </div>
   );

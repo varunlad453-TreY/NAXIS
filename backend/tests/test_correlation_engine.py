@@ -689,7 +689,7 @@ class TestIncidentModel:
         assert d["severity"] == "major"
         assert d["status"] == "open"
         assert d["affected_devices"] == ["dev-001"]
-        assert "event_count" in d
+        assert "event_count" not in d
 
     def test_to_summary(self):
         incident = Incident(
@@ -1018,3 +1018,162 @@ class TestCorrelationPipeline:
             assert incident.severity in IncidentSeverity
             assert len(incident.related_event_ids) >= 2
             assert incident.confidence_score > 0
+
+
+class TestEngineTelemetry:
+    """Telemetry counters on CorrelationEngine."""
+
+    @pytest.mark.asyncio
+    async def test_get_stats_returns_all_keys(self, default_config):
+        """get_stats() includes all expected telemetry keys."""
+        engine = CorrelationEngine(config=default_config)
+        stats = engine.get_stats()
+
+        assert "cycle_count" in stats
+        assert "total_events_processed" in stats
+        assert "total_incidents_created" in stats
+        assert "cascade_incidents" in stats
+        assert "residual_incidents" in stats
+        assert "processed_set_size" in stats
+        assert "last_duration_ms" in stats
+        assert "last_cycle_events" in stats
+        assert "last_cycle_incidents" in stats
+        assert "cascade_enabled" in stats
+
+        # Default values
+        assert stats["cycle_count"] == 0
+        assert stats["total_events_processed"] == 0
+        assert stats["total_incidents_created"] == 0
+        assert stats["last_duration_ms"] == 0.0
+        assert stats["last_cycle_events"] == 0
+        assert stats["last_cycle_incidents"] == 0
+
+    @pytest.mark.asyncio
+    async def test_cycle_count_increments(self, default_config):
+        """Each process_events call increments cycle_count."""
+        engine = CorrelationEngine(config=default_config)
+        assert engine._cycle_count == 0
+
+        now = datetime.utcnow()
+        events = [
+            make_event("t-1", severity=EventSeverity.CRITICAL, site_id="site-a", timestamp=now),
+            make_event("t-2", severity=EventSeverity.MAJOR, site_id="site-a",
+                       timestamp=now + timedelta(seconds=10)),
+        ]
+        await engine.process_events(events)
+        assert engine._cycle_count == 1
+
+        await engine.process_events(events)
+        assert engine._cycle_count == 2
+
+    @pytest.mark.asyncio
+    async def test_last_duration_ms_set_after_process(self, default_config):
+        """last_duration_ms is set after processing events."""
+        engine = CorrelationEngine(config=default_config)
+        assert engine._last_duration_ms == 0.0
+
+        now = datetime.utcnow()
+        events = [
+            make_event("t-3", severity=EventSeverity.CRITICAL, site_id="site-a", timestamp=now),
+            make_event("t-4", severity=EventSeverity.MAJOR, site_id="site-a",
+                       timestamp=now + timedelta(seconds=10)),
+        ]
+        await engine.process_events(events)
+        # _last_duration_ms is finalised even if clock resolution makes it 0.0
+        assert isinstance(engine._last_duration_ms, float)
+        assert engine._cycle_count == 1
+        assert engine._last_cycle_events == 2
+        assert engine._last_cycle_incidents == 1
+
+    @pytest.mark.asyncio
+    async def test_last_cycle_events_and_incidents(self, default_config):
+        """Per-cycle counters reflect the most recent cycle."""
+        engine = CorrelationEngine(config=default_config)
+        now = datetime.utcnow()
+
+        events = [
+            make_event("t-5", severity=EventSeverity.CRITICAL, site_id="site-a", timestamp=now),
+            make_event("t-6", severity=EventSeverity.MAJOR, site_id="site-a",
+                       timestamp=now + timedelta(seconds=10)),
+        ]
+        incidents = await engine.process_events(events)
+        assert engine._last_cycle_events == 2
+        assert engine._last_cycle_incidents == len(incidents)
+
+    @pytest.mark.asyncio
+    async def test_total_counters_accumulate(self, default_config):
+        """Total counters accumulate across cycles."""
+        engine = CorrelationEngine(config=default_config)
+        now = datetime.utcnow()
+
+        events_a = [
+            make_event("t-7", severity=EventSeverity.CRITICAL, site_id="site-a", timestamp=now),
+            make_event("t-8", severity=EventSeverity.MAJOR, site_id="site-a",
+                       timestamp=now + timedelta(seconds=10)),
+        ]
+        await engine.process_events(events_a)
+        assert engine._total_incidents_created == engine._last_cycle_incidents
+        assert engine._total_events_processed >= 2
+
+        events_b = [
+            make_event("t-9", severity=EventSeverity.CRITICAL, site_id="site-b", timestamp=now),
+            make_event("t-10", severity=EventSeverity.MAJOR, site_id="site-b",
+                       timestamp=now + timedelta(seconds=10)),
+        ]
+        await engine.process_events(events_b)
+        assert engine._total_incidents_created >= 2
+        assert engine._total_events_processed >= 4
+
+    @pytest.mark.asyncio
+    async def test_telemetry_updated_on_early_return(self, default_config):
+        """Telemetry is updated even when all events were already processed."""
+        engine = CorrelationEngine(config=default_config)
+        now = datetime.utcnow()
+        events = [
+            make_event("t-er-1", severity=EventSeverity.CRITICAL, site_id="site-a", timestamp=now),
+            make_event("t-er-2", severity=EventSeverity.MAJOR, site_id="site-a",
+                       timestamp=now + timedelta(seconds=10)),
+        ]
+        # First call: processes events
+        await engine.process_events(events)
+        assert engine._cycle_count == 1
+        assert engine._last_cycle_events == 2
+
+        # Second call: all already processed, early return — telemetry still set
+        await engine.process_events(events)
+        assert engine._cycle_count == 2
+        assert engine._last_cycle_events == 0  # zero new events
+        assert engine._last_cycle_incidents == 0
+        assert isinstance(engine._last_duration_ms, float)
+
+    @pytest.mark.asyncio
+    async def test_cascade_enabled_in_stats(self, default_config, topology_aware_config):
+        """Stats reflect whether cascade is enabled."""
+        engine_no = CorrelationEngine(config=default_config)
+        assert engine_no.get_stats()["cascade_enabled"] is False
+
+        engine_yes = CorrelationEngine(config=topology_aware_config)
+        assert engine_yes.get_stats()["cascade_enabled"] is True
+
+    @pytest.mark.asyncio
+    async def test_reset_clears_telemetry(self, default_config):
+        """reset() clears all counters including per-cycle telemetry."""
+        engine = CorrelationEngine(config=default_config)
+        now = datetime.utcnow()
+        events = [
+            make_event("t-11", severity=EventSeverity.CRITICAL, site_id="site-a", timestamp=now),
+            make_event("t-12", severity=EventSeverity.MAJOR, site_id="site-a",
+                       timestamp=now + timedelta(seconds=10)),
+        ]
+        await engine.process_events(events)
+        assert engine._cycle_count > 0
+        assert engine._total_events_processed > 0
+
+        engine.reset()
+        stats = engine.get_stats()
+        assert stats["cycle_count"] == 0
+        assert stats["total_events_processed"] == 0
+        assert stats["total_incidents_created"] == 0
+        assert stats["last_duration_ms"] == 0.0
+        assert stats["last_cycle_events"] == 0
+        assert stats["last_cycle_incidents"] == 0

@@ -117,7 +117,7 @@ export function Sidebar() {
       {/* Footer */}
       <div className="border-t border-border/40 p-3">
         <div className="flex items-center justify-between">
-          {!collapsed && <ThemeToggle />}
+          <ThemeToggle />
           <button
             onClick={() => setCollapsed(!collapsed)}
             className={cn(

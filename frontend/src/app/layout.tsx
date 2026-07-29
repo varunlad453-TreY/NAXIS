@@ -15,12 +15,8 @@ export const metadata: Metadata = {
 const themeScript = `
   (function() {
     try {
-      const stored = localStorage.getItem("naxis-theme");
-      const theme = stored === "light" || stored === "dark" ? stored : "system";
-      const resolved = theme === "system"
-        ? (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light")
-        : theme;
-      document.documentElement.setAttribute("data-theme", resolved);
+      var s = localStorage.getItem("naxis-theme");
+      document.documentElement.setAttribute("data-theme", s === "light" || s === "dark" ? s : "dark");
     } catch (_) {}
   })();
 `;

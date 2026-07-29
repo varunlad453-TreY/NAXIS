@@ -15,6 +15,9 @@ export interface TopologyNode {
   site_name: string | null;
   health_status: string;
   health_label: string;
+  device_count?: number;
+  critical_count?: number;
+  warning_count?: number;
   props?: Record<string, unknown> | null;
 }
 
@@ -58,6 +61,47 @@ export interface BlastRadiusResponse {
   total_edges: number;
   root_cause_node_ids: string[];
   symptom_node_ids: string[];
+  incident_id?: string;
+  incident_title?: string;
+  incident_severity?: string;
+  incident_status?: string;
+  incident_confidence?: number;
+  incident_created_at?: string;
+  incident_updated_at?: string;
+}
+
+export interface HealthSnapshot {
+  snapshot_at: string;
+  health_status: string;
+  health_label: string;
+  derived_from: string;
+}
+
+export interface NodeHealthHistoryResponse {
+  node_id: string;
+  history: HealthSnapshot[];
+  summary: Record<string, number>;
+}
+
+export interface SiteHealthCounts {
+  healthy_count: number;
+  warning_count: number;
+  critical_count: number;
+  unknown_count: number;
+}
+
+export interface SiteDeviceTypeBreakdown {
+  type: string;
+  count: number;
+}
+
+export interface SiteSummaryResponse {
+  site_id: string;
+  site_name: string | null;
+  total_devices: number;
+  health: SiteHealthCounts;
+  by_type: SiteDeviceTypeBreakdown[];
+  by_vendor: SiteDeviceTypeBreakdown[];
 }
 
 export type HealthStatus = "healthy" | "warning" | "critical" | "unknown";
@@ -68,6 +112,31 @@ export const HEALTH_STATUS_META: Record<string, { color: string; bgColor: string
   critical: { color: "#ef4444", bgColor: "rgba(239, 68, 68, 0.15)", label: "Critical" },
   unknown: { color: "#6b7280", bgColor: "rgba(107, 114, 128, 0.15)", label: "Unknown" },
 };
+
+export const CATEGORY_META: Record<DeviceCategory, { label: string; icon: string; color: string }> = {
+  infrastructure: { label: "Infrastructure", icon: "server", color: "#3b82f6" },
+  wireless: { label: "Wireless", icon: "wifi", color: "#10b981" },
+  edge: { label: "Edge", icon: "globe", color: "#8b5cf6" },
+  leaf: { label: "Leaf", icon: "endpoint", color: "#6b7280" },
+};
+
+export interface DeviceCategoryCluster {
+  category: DeviceCategory;
+  label: string;
+  count: number;
+  nodeIds: string[];
+  healthDistribution: SiteHealthCounts;
+  aggregatedHealth: HealthStatus;
+  deviceTypes: { type: string; label: string; count: number }[];
+}
+
+export interface TopologyMode {
+  type: "aggregated" | "device_browser" | "context_graph" | "flat_graph";
+  contextNodeId?: string;
+  clusterCategory?: DeviceCategory;
+}
+
+export const AGGREGATED_VIEW_THRESHOLD = 50;
 
 export const NODE_TYPE_META: Record<
   string,

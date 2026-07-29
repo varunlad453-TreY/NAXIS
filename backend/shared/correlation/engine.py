@@ -6,18 +6,30 @@ generates correlated Incidents using configurable rules.
 
 Flow:
     1. Filter events by severity threshold
-    2. Group events by site + time window (Stage 1)
-    3. For each group, run topology-aware cascade (Stage 2)
-    4. Generate Incident for each root-cause group
-    5. Link symptom events to root-cause incident
-    6. Calculate confidence scores
+    2. Query DB for recent unlinked events (cross-cycle correlation)
+    3. Group events by site + time window (Stage 1)
+    4. For each group, run topology-aware cascade (Stage 2)
+    5. Generate Incident for each root-cause group
+    6. Link symptom events to root-cause incident
+    7. Calculate confidence scores
+    8. Track processed events with TTL + capacity cap (memory-safe)
 
 Stage 2 restructures site+time groups into root-cause + symptom
 groups using infrastructure topology (topology_nodes/edges from DB)
 or device-type heuristics as fallback.
+
+Restart resilience:
+  - On first process_events() call, loads already-linked event IDs from
+    the incidents table so past events are not re-processed.
+  - Incident IDs are deterministic (SHA-256 of sorted related event IDs)
+    so re-processing the same events produces the same incident_id.
 """
 
+import hashlib
 import logging
+import time
+from collections import OrderedDict
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Set
 
 from ..models.event import EventSeverity, UnifiedEvent
@@ -35,6 +47,20 @@ from .rules import (
 
 logger = logging.getLogger(__name__)
 
+# Maximum number of processed event IDs held in memory.
+# At ~86,400 new events/day (60s cycles, ~60 events/cycle) this covers
+# ~2.3 days of history.  Older entries are evicted first.
+_MAX_PROCESSED_EVENTS = 200_000
+
+# How long a processed event ID stays in memory before it can be
+# re-processed (in case a downstream failure requires replay).
+_PROCESSED_TTL_HOURS = 24
+
+# How far back to fetch unlinked events for cross-cycle correlation.
+# Should be >= 2x the configured time window so event batches that span
+# multiple collection cycles still form complete incidents.
+_CROSS_CYCLE_WINDOW_MULTIPLIER = 2
+
 
 class CorrelationEngine:
     """
@@ -44,13 +70,13 @@ class CorrelationEngine:
     site-based time-window grouping (Stage 1) and infrastructure-aware
     topology cascading (Stage 2).
 
-    Flow:
-        1. Filter events by severity threshold
-        2. Group events by site + time window
-        3. Apply topology cascade to each group (if enabled)
-        4. Generate Incident for each root-cause group
-        5. Link symptom events with suppressed severity
-        6. Calculate confidence scores
+    Features:
+      - Cross-cycle correlation: queries DB for recent unlinked events
+        so events arriving in different collection cycles still form
+        a single incident.
+      - Memory-safe processed-event tracking with TTL + capacity cap.
+      - Restart resilience: loads existing incident event IDs from DB
+        and uses deterministic incident IDs.
     """
 
     def __init__(
@@ -68,11 +94,178 @@ class CorrelationEngine:
             if self.config.topology_cascade_enabled
             else None
         )
-        self._processed_events: Set[str] = set()
+
+        # Processed event tracker: OrderedDict[event_id, processed_at_utc]
+        # OrderedDict gives us O(1) insert/lookup and ordered eviction
+        self._processed_events: OrderedDict[str, datetime] = OrderedDict()
+        self._processed_loaded = False
+
+        # Telemetry counters
+        self._cycle_count: int = 0
+        self._total_events_processed: int = 0
+        self._total_incidents_created: int = 0
+        self._total_cascade_incidents: int = 0
+        self._total_residual_incidents: int = 0
+        self._last_duration_ms: float = 0.0
+        self._last_cycle_events: int = 0
+        self._last_cycle_incidents: int = 0
+
+    # ------------------------------------------------------------------
+    # Processed-event tracker (memory-safe with TTL + cap)
+    # ------------------------------------------------------------------
+
+    def _is_event_processed(self, event_id: str) -> bool:
+        """True if event_id has been processed and is not yet evicted."""
+        return event_id in self._processed_events
+
+    def _mark_processed(self, event_id: str) -> None:
+        """
+        Record an event as processed.  If the tracker is at capacity,
+        the oldest entry (by insertion order) is evicted first.
+        """
+        self._processed_events[event_id] = datetime.now(timezone.utc)
+        self._processed_events.move_to_end(event_id)
+
+        # Evict oldest entries when over capacity
+        while len(self._processed_events) > _MAX_PROCESSED_EVENTS:
+            self._processed_events.popitem(last=False)
+
+    def _evict_expired(self) -> int:
+        """
+        Remove event IDs that have been in the tracker longer than TTL.
+        Returns the number evicted.
+        """
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=_PROCESSED_TTL_HOURS)
+        expired: List[str] = [
+            eid
+            for eid, ts in self._processed_events.items()
+            if ts < cutoff
+        ]
+        for eid in expired:
+            del self._processed_events[eid]
+        if expired:
+            logger.debug("Evicted %d expired event IDs from processed tracker", len(expired))
+        return len(expired)
+
+    async def _load_processed_from_db(self) -> None:
+        """
+        On first call, load event IDs that are already linked to incidents
+        from the DB.  This prevents re-processing events that were
+        correlated in a previous worker lifetime (restart resilience).
+        """
+        if self._processed_loaded:
+            return
+        self._processed_loaded = True
+
+        try:
+            from ..database.client import db as _db
+
+            rows = await _db.fetch(
+                "SELECT DISTINCT unnest(related_event_ids) AS eid FROM incidents"
+            )
+            now = datetime.now(timezone.utc)
+            count = 0
+            for row in rows:
+                eid = row["eid"]
+                if eid:
+                    self._processed_events[eid] = now
+                    count += 1
+            logger.info(
+                "Loaded %d processed event IDs from incidents table", count
+            )
+        except Exception:
+            logger.info(
+                "No existing incidents found or DB not ready — "
+                "starting fresh processed tracker"
+            )
+
+    # ------------------------------------------------------------------
+    # Cross-cycle correlation helper
+    # ------------------------------------------------------------------
+
+    async def _fetch_unlinked_events(
+        self, window_seconds: int, limit: int = 5000
+    ) -> List[UnifiedEvent]:
+        """
+        Fetch events from the DB that are NOT yet linked to any incident
+        and fall within the correlation time window.  These are appended
+        to the current batch so event groups that span multiple collection
+        cycles still form complete incidents.
+        """
+        cutoff = datetime.now(timezone.utc) - timedelta(
+            seconds=window_seconds * _CROSS_CYCLE_WINDOW_MULTIPLIER
+        )
+        try:
+            from ..database.client import db as _db
+            from ..database.events import _row_to_event
+
+            rows = await _db.fetch(
+                """
+                SELECT * FROM events
+                WHERE incident_id IS NULL
+                  AND timestamp >= $1
+                ORDER BY timestamp ASC
+                LIMIT $2
+                """,
+                cutoff,
+                limit,
+            )
+        except Exception:
+            return []
+
+        events: List[UnifiedEvent] = []
+        for row in rows:
+            try:
+                event = _row_to_event(row)
+                if event.event_id and not self._is_event_processed(event.event_id):
+                    events.append(event)
+            except Exception:
+                continue
+
+        if events:
+            logger.info(
+                "Fetched %d unlinked events from DB for cross-cycle correlation "
+                "(window=%ds)",
+                len(events),
+                window_seconds * _CROSS_CYCLE_WINDOW_MULTIPLIER,
+            )
+        return events
+
+    # ------------------------------------------------------------------
+    # Deterministic incident ID
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _compute_incident_id(event_ids: List[str]) -> str:
+        """
+        Deterministic incident ID derived from the sorted, deduplicated
+        set of related event IDs.
+
+        Re-processing the exact same set of events produces the same
+        incident_id, which means ON CONFLICT DO UPDATE in upsert_incident
+        correctly deduplicates — no duplicate incidents on restart.
+        """
+        sorted_ids = sorted(set(event_ids))
+        hash_input = ",".join(sorted_ids).encode("utf-8")
+        return f"inc-{hashlib.sha256(hash_input).hexdigest()[:16]}"
+
+    # ------------------------------------------------------------------
+    # Main correlation pipeline
+    # ------------------------------------------------------------------
 
     async def process_events(self, events: List[UnifiedEvent]) -> List[Incident]:
         """
         Process a batch of events and return correlated incidents.
+
+        Pipeline:
+          1. Load processed IDs from DB (first call only — restart resilience)
+          2. Evict expired entries from the processed tracker (memory safety)
+          3. Fetch recent unlinked events from DB (cross-cycle correlation)
+          4. Combine & deduplicate: current batch + DB history
+          5. Stage 1: group by site + time window
+          6. Stage 2: topology cascade on each group (if enabled)
+          7. Create Incidents with deterministic IDs
+          8. Mark all processed events
 
         Args:
             events: List of UnifiedEvent objects to correlate
@@ -84,12 +277,40 @@ class CorrelationEngine:
             logger.info("No events to process")
             return []
 
-        logger.info("Processing %d events for correlation", len(events))
+        self._cycle_count += 1
+        _cycle_start = time.monotonic()
+
+        # --- Restart resilience: load previously processed IDs from DB ---
+        await self._load_processed_from_db()
+
+        # --- Memory safety: evict expired entries ---
+        self._evict_expired()
+
+        logger.info(
+            "Processing %d events for correlation (cycle %d)",
+            len(events),
+            self._cycle_count,
+        )
 
         # Filter out already-processed events
-        new_events = [e for e in events if e.event_id not in self._processed_events]
+        new_events = [
+            e for e in events if not self._is_event_processed(e.event_id)
+        ]
+
+        # --- Cross-cycle correlation: fetch unlinked events from DB ---
+        try:
+            db_events = await self._fetch_unlinked_events(
+                self.config.time_window_seconds
+            )
+            for db_event in db_events:
+                if db_event.event_id not in {e.event_id for e in new_events}:
+                    new_events.append(db_event)
+        except Exception:
+            logger.warning("Cross-cycle DB fetch failed — continuing with current batch")
+
         if not new_events:
             logger.info("All events already processed")
+            self._update_cycle_telemetry(0, 0, _cycle_start)
             return []
 
         logger.debug("Found %d new events to process", len(new_events))
@@ -115,7 +336,9 @@ class CorrelationEngine:
                 continue
 
             if self._topology_cascade:
-                cascade_groups = await self._topology_cascade.evaluate(group_events)
+                cascade_groups = await self._topology_cascade.evaluate(
+                    group_events
+                )
             else:
                 cascade_groups = []
 
@@ -141,9 +364,7 @@ class CorrelationEngine:
                 # Create residual incidents for events in the group that
                 # were not assigned to any cascade group
                 unassigned = [
-                    e
-                    for e in group_events
-                    if e.event_id not in assigned_ids
+                    e for e in group_events if e.event_id not in assigned_ids
                 ]
                 if unassigned:
                     residual = self.create_incident(unassigned)
@@ -170,14 +391,38 @@ class CorrelationEngine:
                 )
 
         # Mark all processed events
-        self._processed_events.update(processed_events_in_cycle)
+        for eid in processed_events_in_cycle:
+            self._mark_processed(eid)
+
+        # Update telemetry
+        cascade_count = sum(
+            1
+            for i in incidents
+            if "failure cascading" in i.title.lower()
+        )
+        residual_count = len(incidents) - cascade_count
+        self._total_events_processed += len(processed_events_in_cycle)
+        self._total_incidents_created += len(incidents)
+        self._total_cascade_incidents += cascade_count
+        self._total_residual_incidents += residual_count
+
+        self._update_cycle_telemetry(
+            len(processed_events_in_cycle),
+            len(incidents),
+            _cycle_start,
+        )
 
         logger.info(
             "Generated %d correlated incidents from %d events "
-            "(Stage 2 cascade: %s)",
+            "(Stage 2 cascade: %s, cascade=%d, residual=%d, "
+            "tracker_size=%d, duration=%.0fms)",
             len(incidents),
             len(processed_events_in_cycle),
             "enabled" if self._topology_cascade else "disabled",
+            cascade_count,
+            residual_count,
+            len(self._processed_events),
+            self._last_duration_ms,
         )
         return incidents
 
@@ -193,6 +438,7 @@ class CorrelationEngine:
             raise ValueError("Cannot create incident from empty cascade root")
 
         severity = self._determine_severity(cascade.root_events)
+        all_event_ids = cascade.all_event_ids()
 
         affected_sites = list(
             {
@@ -233,9 +479,8 @@ class CorrelationEngine:
         else:
             title = generate_incident_title(cascade.root_events)
 
-        all_event_ids = cascade.all_event_ids()
-
         incident = Incident(
+            incident_id=self._compute_incident_id(all_event_ids),
             title=title,
             severity=severity,
             status=IncidentStatus.OPEN,
@@ -245,7 +490,9 @@ class CorrelationEngine:
             related_event_ids=all_event_ids,
         )
 
-        confidence = calculate_confidence_score(cascade.root_events + cascade.symptom_events)
+        confidence = calculate_confidence_score(
+            cascade.root_events + cascade.symptom_events
+        )
         incident.confidence_score = confidence
 
         logger.debug(
@@ -265,6 +512,10 @@ class CorrelationEngine:
         """
         Create an Incident from a group of correlated events (Stage 1).
 
+        Uses a deterministic incident_id derived from the sorted
+        event IDs, so re-processing the same events produces the
+        same incident (ON CONFLICT DO UPDATE deduplicates).
+
         Args:
             events: List of correlated UnifiedEvent objects
 
@@ -274,6 +525,7 @@ class CorrelationEngine:
         if not events:
             raise ValueError("Cannot create incident from empty event list")
 
+        event_ids = [e.event_id for e in events]
         title = generate_incident_title(events)
         severity = self._determine_severity(events)
 
@@ -288,13 +540,14 @@ class CorrelationEngine:
         )
 
         incident = Incident(
+            incident_id=self._compute_incident_id(event_ids),
             title=title,
             severity=severity,
             status=IncidentStatus.OPEN,
             affected_sites=affected_sites,
             affected_devices=affected_devices,
             affected_clients=affected_clients,
-            related_event_ids=[e.event_id for e in events],
+            related_event_ids=event_ids,
         )
 
         confidence = calculate_confidence_score(events)
@@ -330,7 +583,9 @@ class CorrelationEngine:
         ]
         return await self.process_events(site_events)
 
-    def group_by_site(self, events: List[UnifiedEvent]) -> Dict[str, List[UnifiedEvent]]:
+    def group_by_site(
+        self, events: List[UnifiedEvent]
+    ) -> Dict[str, List[UnifiedEvent]]:
         """Group events by site_id for inspection."""
         groups: Dict[str, List[UnifiedEvent]] = {}
         for event in events:
@@ -341,14 +596,51 @@ class CorrelationEngine:
                 groups[site_id].append(event)
         return groups
 
+    def _update_cycle_telemetry(
+        self, events_this_cycle: int, incidents_this_cycle: int, cycle_start: float
+    ) -> None:
+        """Record per-cycle telemetry after every process_events call.
+
+        Called from both the normal processing path and the early-return
+        path (all events already processed) so telemetry is always
+        up to date.
+        """
+        self._last_duration_ms = (time.monotonic() - cycle_start) * 1000.0
+        self._last_cycle_events = events_this_cycle
+        self._last_cycle_incidents = incidents_this_cycle
+
     def reset(self) -> None:
-        """Reset the processed events tracker."""
+        """Reset the processed events tracker and telemetry."""
         self._processed_events.clear()
+        self._processed_loaded = False
+        self._cycle_count = 0
+        self._total_events_processed = 0
+        self._total_incidents_created = 0
+        self._total_cascade_incidents = 0
+        self._total_residual_incidents = 0
+        self._last_duration_ms = 0.0
+        self._last_cycle_events = 0
+        self._last_cycle_incidents = 0
         logger.info("Correlation engine reset")
 
     def get_processed_count(self) -> int:
-        """Return count of processed event IDs."""
+        """Return count of event IDs currently in the processed tracker."""
         return len(self._processed_events)
+
+    def get_stats(self) -> Dict[str, object]:
+        """Return engine telemetry counters for monitoring."""
+        return {
+            "cycle_count": self._cycle_count,
+            "total_events_processed": self._total_events_processed,
+            "total_incidents_created": self._total_incidents_created,
+            "cascade_incidents": self._total_cascade_incidents,
+            "residual_incidents": self._total_residual_incidents,
+            "processed_set_size": len(self._processed_events),
+            "last_duration_ms": self._last_duration_ms,
+            "last_cycle_events": self._last_cycle_events,
+            "last_cycle_incidents": self._last_cycle_incidents,
+            "cascade_enabled": self._topology_cascade is not None,
+        }
 
     @staticmethod
     def _determine_severity(events: List[UnifiedEvent]) -> IncidentSeverity:

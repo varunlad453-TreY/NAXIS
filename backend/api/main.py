@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import APIKeyHeader
 from fastapi.exceptions import HTTPException
 
+from api.routes.correlation import router as correlation_router
 from api.routes.devices import router as devices_router
 from api.routes.events import router as events_router
 from api.routes.incidents import health_router, router as incidents_router
@@ -83,6 +84,7 @@ async def add_process_time_header(request, call_next):
 _auth = [Depends(_require_api_key)]
 
 app.include_router(health_router)
+app.include_router(correlation_router, dependencies=_auth)
 app.include_router(incidents_router, dependencies=_auth)
 app.include_router(events_router, dependencies=_auth)
 app.include_router(devices_router, dependencies=_auth)

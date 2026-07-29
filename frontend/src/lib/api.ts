@@ -22,6 +22,8 @@ import type {
   TopologySummaryResponse,
   TopologyNodeDetail,
   BlastRadiusResponse,
+  NodeHealthHistoryResponse,
+  SiteSummaryResponse,
 } from "@/types/topology";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -266,6 +268,22 @@ export const api = {
   },
 
   /**
+   * Get backbone topology — site nodes + inter-site edges only.
+   * Default landing view — lightweight, fast.
+   */
+  getTopologyBackbone: () => fetchAPI<TopologyGraphResponse>("/topology/backbone"),
+
+  /**
+   * Get internal topology for a single site — all nodes + edges inside a site.
+   * Called when user clicks a site in the backbone view.
+   */
+  getSiteTopology: (siteId: string) =>
+    fetchAPI<TopologyGraphResponse>(`/topology/sites/${encodeURIComponent(siteId)}/internal`),
+
+  getSiteSummary: (siteId: string) =>
+    fetchAPI<SiteSummaryResponse>(`/topology/sites/${encodeURIComponent(siteId)}/summary`),
+
+  /**
    * Get topology summary
    */
   getTopologySummary: () => fetchAPI<TopologySummaryResponse>("/topology/summary"),
@@ -281,6 +299,19 @@ export const api = {
    */
   getBlastRadius: (incidentId: string) =>
     fetchAPI<BlastRadiusResponse>(`/topology/blast-radius/${encodeURIComponent(incidentId)}`),
+
+  /**
+   * Get health history timeline for a topology node
+   */
+  getNodeHealthHistory: (nodeId: string, params?: { hours_back?: number; limit?: number }) => {
+    const searchParams = new URLSearchParams();
+    if (params?.hours_back) searchParams.set("hours_back", String(params.hours_back));
+    if (params?.limit) searchParams.set("limit", String(params.limit));
+    const query = searchParams.toString();
+    return fetchAPI<NodeHealthHistoryResponse>(
+      `/topology/nodes/${encodeURIComponent(nodeId)}/health-history${query ? `?${query}` : ""}`,
+    );
+  },
 };
 
 export type MistLifecycleEvent =
