@@ -205,7 +205,7 @@ export function AggregatedView({ data, onContextSelect, onFlatView }: Aggregated
   }, [globalSearch, nonSiteNodes]);
 
   const handleGlobalResultClick = useCallback((node: TopologyNode) => {
-    const cat = getDeviceCategory(node);
+    const cat = getDeviceCategory(node.node_type);
     setSelectedCategory(cat);
     setGlobalSearch("");
     // Search for the specific device name within the browser
@@ -251,7 +251,7 @@ export function AggregatedView({ data, onContextSelect, onFlatView }: Aggregated
           {globalResults.length > 0 && (
             <div className="absolute right-0 top-full z-50 mt-1 w-72 rounded-lg border border-border/40 bg-surface shadow-surface-lg">
               {globalResults.map((n) => {
-                const cat = getDeviceCategory(n);
+                const cat = getDeviceCategory(n.node_type);
                 const cMeta = CATEGORY_META[cat];
                 return (
                   <button
@@ -310,7 +310,7 @@ export function AggregatedView({ data, onContextSelect, onFlatView }: Aggregated
         {/* Device browser panel */}
         {selectedCategory && selectedCluster && (
           <DeviceBrowser
-            nodes={nonSiteNodes.filter((n) => getDeviceCategory(n) === selectedCategory)}
+            nodes={nonSiteNodes.filter((n) => getDeviceCategory(n.node_type) === selectedCategory)}
             cluster={selectedCluster}
             onSelect={handleDeviceSelect}
             onClose={handleBack}

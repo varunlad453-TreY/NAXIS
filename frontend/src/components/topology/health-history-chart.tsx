@@ -168,7 +168,7 @@ export function HealthHistoryChart({ nodeId }: HealthHistoryChartProps) {
             />
             <YAxis hide />
             <Tooltip
-              content={({ active, payload }) => {
+              content={({ active, payload }: { active?: boolean; payload?: Array<{ payload?: unknown }> }) => {
                 if (!active || !payload?.length) return null;
                 const data = payload[0]?.payload as ChartDataPoint | undefined;
                 if (!data) return null;
