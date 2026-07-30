@@ -641,6 +641,7 @@ class VeloCloudCollector:
         self._api_key = settings.velocloud_api_key
         self._enterprise_id_override = (settings.velocloud_enterprise_id or "").strip()
         self._enabled = settings.velocloud_enabled
+        self._verify_ssl = settings.velocloud_verify_ssl
         self._client: Optional[httpx.AsyncClient] = None
 
     @property
@@ -762,7 +763,7 @@ class VeloCloudCollector:
             async with httpx.AsyncClient(
                 headers={"Authorization": f"Token {self._api_key}", "Content-Type": "application/json"},
                 timeout=httpx.Timeout(15.0),
-                verify=False,
+                verify=self._verify_ssl,
             ) as client:
                 eid = await self._get_enterprise_id(client)
                 return bool(eid)

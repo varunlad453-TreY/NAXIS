@@ -2,6 +2,7 @@
 """Naxis API entry point for development (uvicorn api.main:app)."""
 
 import logging
+import secrets
 from contextlib import asynccontextmanager
 from datetime import datetime
 
@@ -30,7 +31,7 @@ _api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 async def _require_api_key(api_key: str = Security(_api_key_header)) -> None:
     if not _settings.api_key:
         return
-    if api_key != _settings.api_key:
+    if not api_key or not secrets.compare_digest(api_key, _settings.api_key):
         raise HTTPException(status_code=403, detail="Forbidden")
 
 
@@ -63,12 +64,15 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+_cors_origins = _settings.api_cors_origins_list
+_cors_wildcard = "*" in _cors_origins
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=_settings.api_cors_origins_list,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=_cors_origins,
+    allow_credentials=not _cors_wildcard,
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-API-Key"],
 )
 
 

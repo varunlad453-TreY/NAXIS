@@ -53,6 +53,7 @@ from worker.collectors.snmp_poller import SnmpPoller
 from shared.monitoring.collector_health import check_collector_health
 from shared.monitoring.notifier import dispatch_alerts
 from shared.database.retention import run_retention
+from shared.utils.redaction import redact_url_password
 
 logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO").upper(),
@@ -117,7 +118,7 @@ class WorkerDaemon:
         if _settings.redis_enabled:
             logger.info(
                 "Redis pub/sub: enabled (channel=naxis:incidents, url=%s)",
-                _settings.redis_url,
+                redact_url_password(_settings.redis_url),
             )
         else:
             logger.info(
@@ -144,6 +145,13 @@ class WorkerDaemon:
             message += f", {len(failures)} failed"
 
         await record_worker_heartbeat(self._worker_id, cycle_status, message)
+
+        # Liveness marker for the container healthcheck (`ps` is absent from the image).
+        try:
+            with open("/tmp/naxis-worker-alive", "w") as fh:
+                fh.write(str(int(time.time())))
+        except OSError:
+            logger.debug("Could not write liveness marker")
 
         # Persist events
         all_events = []

@@ -93,6 +93,10 @@ async def stream_incidents():
                 logger.warning("SSE: Redis subscribe failed — falling back to heartbeat: %s", exc)
                 pubsub = None
 
+        # Emit an immediate event so the client confirms the stream is live
+        # instead of waiting up to 30s for the first heartbeat/incident.
+        yield f"data: {json.dumps({'type': 'connected'})}\n\n"
+
         try:
             while True:
                 if pubsub:

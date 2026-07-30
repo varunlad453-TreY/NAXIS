@@ -7,8 +7,8 @@ Polls the Mist REST API for:
   - Per-site device stats     (/api/v1/sites/{site_id}/stats/devices)
 
 Auth: Bearer token in Authorization header (MIST_API_KEY).
-All responses are normalized to UnifiedEvent via the same logic used by
-MistMockGenerator so the rest of the pipeline stays vendor-agnostic.
+All responses are normalized to UnifiedEvent so the rest of the pipeline
+stays vendor-agnostic.
 """
 
 import logging

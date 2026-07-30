@@ -71,6 +71,7 @@ class Settings(BaseSettings):
     velocloud_api_key: str = Field(default="", description="VeloCloud API key")
     velocloud_enterprise_id: str = Field(default="", description="VeloCloud enterprise ID (skip auto-discover)")
     velocloud_enabled: bool = Field(default=False, description="Enable VeloCloud integration")
+    velocloud_verify_ssl: bool = Field(default=True, description="Verify SSL for VeloCloud requests")
 
     # Arista WLC
     arista_wlc_host: str = Field(default="", description="Arista WLC host")

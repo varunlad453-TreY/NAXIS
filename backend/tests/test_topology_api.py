@@ -488,9 +488,11 @@ class TestBlastRadius:
             ap1_node = _mock_node_row("ap-sfo-101", "ap", "ap-101")
             ap2_node = _mock_node_row("ap-sfo-102", "ap", "ap-102")
 
-            # Patch resolve_topology_node_id to return the same device_id as node_id
-            with patch("api.routes.topology.resolve_topology_node_id") as mock_resolve:
-                mock_resolve.side_effect = lambda did: did
+            # Batch-resolve returns each device_id mapped to an identical node_id.
+            with patch(
+                "api.routes.topology._topology_provider.batch_resolve_node_ids",
+                new=AsyncMock(side_effect=lambda dids: {did: did for did in dids}),
+            ):
 
                 # Note: parent_nodes query is SKIPPED because all edges reference
                 # nodes already in the resolved set (parent_node_ids is empty).
