@@ -10,8 +10,8 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
-lib64/
+/lib/
+/lib64/
 parts/
 sdist/
 var/
@@ -69,8 +69,25 @@ Thumbs.db
 
 # Temporary files
 tmp/
+
+# Tooling artifacts
+.codex/
+.graphify/
+graphify-out/
+
+# Screenshots / random
+*.png
+
+# Script executables (uv, pip shims)
+scripts/*.exe
 temp/
 *.tmp
 
 # Claude Code local settings
 .claude/
+
+# Windows reserved device names
+nul
+NUL
+Nul
+.~lock.*#

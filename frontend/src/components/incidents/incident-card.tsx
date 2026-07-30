@@ -28,7 +28,7 @@ export function IncidentCard({ incident }: IncidentCardProps) {
         <div className={cn("mt-2 h-2 w-2 rounded-full flex-shrink-0", severityColors.dot)} />
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
-            <SeverityBadge severity={incident.severity} showDot={false} />
+            <SeverityBadge severity={incident.severity} label={incident.severity_label} showDot={false} />
             <StatusBadge status={incident.status} />
           </div>
           <h3 className="mt-1.5 text-sm font-medium leading-snug text-foreground transition-colors group-hover:text-primary">

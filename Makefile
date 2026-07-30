@@ -1,15 +1,16 @@
-.PHONY: help setup build up down logs clean rebuild ollama test init-db
+.PHONY: help setup build up dev down logs clean rebuild prune test init-db
 
 help:
 	@echo "Naxis Development Commands:"
 	@echo "  make setup     - Create .env file from .env.example"
 	@echo "  make build     - Build the backend Docker image"
 	@echo "  make up        - Start all services"
+	@echo "  make dev       - Start the full dev stack with hot reload"
 	@echo "  make down      - Stop all services"
 	@echo "  make logs      - View logs (all services)"
 	@echo "  make clean     - Remove all containers and volumes"
 	@echo "  make rebuild   - Rebuild and restart services"
-	@echo "  make ollama    - Pull Llama 3.1 8B model"
+	@echo "  make prune     - Delete dangling images + build cache (safe, keeps volumes)"
 	@echo "  make test      - Run all tests"
 	@echo "  make init-db   - Manually re-run database schema (auto on first start)"
 
@@ -23,13 +24,21 @@ setup:
 
 build:
 	docker compose build
+	@$(MAKE) --no-print-directory prune
 
 up:
-	docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+	docker compose --env-file config/.env -f docker-compose.yml -f docker-compose.dev.yml up -d
 	@echo "Services starting... Check logs with: make logs"
 	@echo "API:      http://localhost:8000"
 	@echo "Frontend: http://localhost:3000"
 	@echo "Adminer:  http://localhost:8080"
+
+# Build + prune before `up` because `up` runs in the foreground — pruning after it
+# would only fire on Ctrl-C.
+dev:
+	docker compose --env-file config/.env -f docker-compose.yml -f docker-compose.dev.yml build
+	@$(MAKE) --no-print-directory prune
+	docker compose --env-file config/.env -f docker-compose.yml -f docker-compose.dev.yml up
 
 down:
 	docker compose down
@@ -44,12 +53,16 @@ clean:
 rebuild:
 	docker compose down
 	docker compose build --no-cache
+	@$(MAKE) --no-print-directory prune
 	docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
 
-ollama:
-	@echo "Pulling Llama 3.1 8B model..."
-	docker compose exec ollama ollama pull llama3.1:8b
-	@echo "Model ready!"
+# Only untagged (superseded) images and unused build cache. Never -a or --volumes:
+# those would take the Postgres data volume and images for stopped services.
+prune:
+	@echo "Removing superseded images and build cache..."
+	-docker image prune -f
+	-docker builder prune -f
+	@docker system df
 
 test:
 	@echo "Running backend tests..."

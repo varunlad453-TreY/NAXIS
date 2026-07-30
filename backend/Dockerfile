@@ -10,13 +10,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY backend/shared /tmp/shared
-RUN pip install --no-cache-dir -e /tmp/shared
+RUN pip install --retries 5 --timeout 30 --no-cache-dir -e /tmp/shared
 
 COPY backend/api/requirements.txt /tmp/api-requirements.txt
 COPY backend/worker/requirements.txt /tmp/worker-requirements.txt
 RUN grep -v '^\-e' /tmp/api-requirements.txt > /tmp/api-req-clean.txt && \
     grep -v '^\-e' /tmp/worker-requirements.txt > /tmp/worker-req-clean.txt && \
-    pip install --no-cache-dir -r /tmp/api-req-clean.txt -r /tmp/worker-req-clean.txt && \
+    pip install --retries 5 --timeout 30 --no-cache-dir -r /tmp/api-req-clean.txt -r /tmp/worker-req-clean.txt && \
     rm /tmp/api-requirements.txt /tmp/worker-requirements.txt /tmp/api-req-clean.txt /tmp/worker-req-clean.txt
 
 COPY backend/shared /app/shared
@@ -41,13 +41,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY backend/shared /tmp/shared
-RUN pip install --no-cache-dir /tmp/shared && rm -rf /tmp/shared
+RUN pip install --retries 5 --timeout 30 --no-cache-dir /tmp/shared && rm -rf /tmp/shared
 
 COPY backend/api/requirements.txt /tmp/api-requirements.txt
 COPY backend/worker/requirements.txt /tmp/worker-requirements.txt
 RUN grep -v '^\-e' /tmp/api-requirements.txt > /tmp/api-req-clean.txt && \
     grep -v '^\-e' /tmp/worker-requirements.txt > /tmp/worker-req-clean.txt && \
-    pip install --no-cache-dir -r /tmp/api-req-clean.txt -r /tmp/worker-req-clean.txt && \
+    pip install --retries 5 --timeout 30 --no-cache-dir -r /tmp/api-req-clean.txt -r /tmp/worker-req-clean.txt && \
     rm /tmp/api-requirements.txt /tmp/worker-requirements.txt /tmp/api-req-clean.txt /tmp/worker-req-clean.txt
 
 COPY backend/shared /app/shared

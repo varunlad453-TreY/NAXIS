@@ -7,6 +7,7 @@ Pulls the full AP inventory from:
   - /api/v1/sites/{site_id}/stats/devices     → live stats (clients, uptime, IP)
 
 Upserts into the `inventory` table every collection cycle.
+Returns a ``CollectorOutcome`` with structured telemetry metadata.
 """
 
 import logging
@@ -16,12 +17,22 @@ from typing import Any, Dict, List, Optional
 import httpx
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
-from config.settings import get_settings
-from shared.database.client import db
+try:
+    from backend.config.settings import get_settings
+    from backend.shared.models.collector_outcome import CollectorOutcome
+except ImportError:  # pragma: no cover - supports both entry-point styles
+    from config.settings import get_settings
+    from shared.models.collector_outcome import CollectorOutcome
+try:
+    from backend.shared.database.client import db
+except ImportError:  # pragma: no cover - supports both entry-point styles
+    from shared.database.client import db
 
 logger = logging.getLogger(__name__)
 
 _PAGE_LIMIT = 100
+COLLECTOR_ID = "mist-inventory"
+SOURCE_SYSTEM = "mist"
 
 
 class MistInventoryCollector:
@@ -36,25 +47,42 @@ class MistInventoryCollector:
             "Content-Type": "application/json",
         }
 
-    async def collect(self) -> int:
-        """Fetch full inventory and upsert into DB. Returns number of devices upserted."""
+    async def collect(self) -> CollectorOutcome:
+        """Fetch full inventory and upsert into DB. Returns CollectorOutcome."""
+        outcome = CollectorOutcome(
+            collector_id=COLLECTOR_ID,
+            source_system=SOURCE_SYSTEM,
+        )
+
         if not self._enabled or not self._api_key or not self._org_id:
-            return 0
+            outcome.mark_skipped("Mist inventory not configured")
+            return outcome
 
-        async with httpx.AsyncClient(
-            headers=self._headers,
-            timeout=httpx.Timeout(60.0),
-            follow_redirects=True,
-        ) as client:
-            site_map = await self._fetch_site_map(client)
-            devices = await self._fetch_inventory(client)
-            stats_map = await self._fetch_all_stats(client, list(site_map.keys()))
+        try:
+            async with httpx.AsyncClient(
+                headers=self._headers,
+                timeout=httpx.Timeout(60.0),
+                follow_redirects=True,
+            ) as client:
+                site_map = await self._fetch_site_map(client)
+                devices = await self._fetch_inventory(client)
+                stats_map = await self._fetch_all_stats(client, list(site_map.keys()))
 
-        rows = _build_rows(devices, site_map, stats_map, self._org_id)
-        if rows:
-            await _upsert_inventory(rows)
-        logger.info("Mist inventory: upserted %d devices", len(rows))
-        return len(rows)
+            rows = _build_rows(devices, site_map, stats_map, self._org_id)
+            if rows:
+                await _upsert_inventory(rows)
+
+            outcome.rows_written = len(rows)
+            outcome.metadata["devices_found"] = len(devices)
+            outcome.metadata["sites_found"] = len(site_map)
+            outcome.metadata["stats_found"] = len(stats_map)
+            outcome.mark_success(rows_written=len(rows))
+            logger.info("Mist inventory: upserted %d devices", len(rows))
+        except Exception as exc:
+            outcome.mark_error(str(exc))
+            logger.exception("Mist inventory collection failed")
+
+        return outcome
 
     async def _fetch_site_map(self, client: httpx.AsyncClient) -> Dict[str, str]:
         """Returns {site_id: site_name}."""

@@ -9,6 +9,7 @@ Key endpoints used:
   POST /portal/rest/enterprise/getEnterpriseEdges → all edge devices
 """
 
+import json
 import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List
@@ -18,8 +19,12 @@ from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_ex
 
 from config.settings import get_settings
 from shared.database.client import db
+from shared.models.collector_outcome import CollectorOutcome
 
 logger = logging.getLogger(__name__)
+
+COLLECTOR_ID = "velocloud-inventory"
+SOURCE_SYSTEM = "velocloud"
 
 
 class VelocloudInventoryCollector:
@@ -28,31 +33,42 @@ class VelocloudInventoryCollector:
         self._base_url = settings.velocloud_url.rstrip("/")
         self._api_key = settings.velocloud_api_key
         self._enabled = settings.velocloud_enabled
+        self._verify_ssl = settings.velocloud_verify_ssl
         self._headers = {
             "Authorization": f"Token {self._api_key}",
             "Content-Type": "application/json",
         }
 
-    async def collect(self) -> int:
-        """Fetch all edges and upsert into DB. Returns number of devices upserted."""
+    async def collect(self) -> CollectorOutcome:
+        """Fetch all edges and upsert into DB. Returns CollectorOutcome."""
+        outcome = CollectorOutcome(
+            collector_id=COLLECTOR_ID,
+            source_system=SOURCE_SYSTEM,
+        )
         if not self._enabled or not self._api_key or not self._base_url:
-            return 0
+            outcome.mark_skipped("VeloCloud inventory not configured")
+            return outcome
 
-        async with httpx.AsyncClient(
-            headers=self._headers,
-            timeout=httpx.Timeout(60.0),
-            follow_redirects=True,
-            verify=False,  # VCO often uses self-signed certs in enterprise environments
-        ) as client:
-            enterprise = await self._fetch_enterprise(client)
-            enterprise_id = enterprise.get("id") if enterprise else None
-            edges = await self._fetch_edges(client, enterprise_id)
+        try:
+            async with httpx.AsyncClient(
+                headers=self._headers,
+                timeout=httpx.Timeout(60.0),
+                follow_redirects=True,
+                verify=self._verify_ssl,
+            ) as client:
+                enterprise = await self._fetch_enterprise(client)
+                enterprise_id = enterprise.get("id") if enterprise else None
+                edges = await self._fetch_edges(client, enterprise_id)
 
-        rows = _build_rows(edges)
-        if rows:
-            await _upsert_inventory(rows)
-        logger.info("VeloCloud inventory: upserted %d edges", len(rows))
-        return len(rows)
+            rows = _build_rows(edges)
+            if rows:
+                await _upsert_inventory(rows)
+            outcome.mark_success(rows_written=len(rows))
+            logger.info("VeloCloud inventory: upserted %d edges", len(rows))
+        except Exception as exc:
+            outcome.mark_error(str(exc))
+            logger.exception("VeloCloud inventory collection failed")
+        return outcome
 
     async def _fetch_enterprise(self, client: httpx.AsyncClient) -> Dict:
         try:
@@ -120,13 +136,23 @@ def _build_rows(edges: List[Dict]) -> List[Dict[str, Any]]:
         else:
             reachability = "unreachable"
 
-        # WAN links for primary IP
+        # WAN links for primary IP + topology props
         ip_address = ""
+        link_list: List[Dict[str, Any]] = []
         recent_links = e.get("recentLinks") or []
-        for link in recent_links:
-            ip_address = link.get("ipAddress", "") or ""
-            if ip_address:
-                break
+        for lnk in recent_links:
+            ip_address = ip_address or (lnk.get("ipAddress", "") or "")
+            link_list.append({
+                "interface": lnk.get("interface", ""),
+                "name": lnk.get("displayName", "") or lnk.get("name", ""),
+                "isp": lnk.get("displayName", "") or lnk.get("name", ""),
+                "public_ip": lnk.get("ipAddress", "") or "",
+                "state": lnk.get("state", ""),
+                "internal_id": lnk.get("internalId", "") or "",
+                "netmask": lnk.get("netmask", "") or "",
+                "upstream_mbps": lnk.get("bwUpstreamMbps"),
+                "downstream_mbps": lnk.get("bwDownstreamMbps"),
+            })
 
         rows.append({
             "device_id": logical_id,
@@ -145,6 +171,7 @@ def _build_rows(edges: List[Dict]) -> List[Dict[str, Any]]:
             "uptime_seconds": 0,
             "firmware_version": e.get("buildNumber", "") or e.get("softwareVersion", "") or "",
             "last_seen": datetime.now(timezone.utc),
+            "props": {"links": link_list, "velobrain_score": 0.0},
         })
     return rows
 
@@ -154,11 +181,13 @@ async def _upsert_inventory(rows: List[Dict[str, Any]]) -> None:
         INSERT INTO inventory (
             device_id, platform, hostname, mac, serial, model, device_type,
             ip_address, site_id, site_name, connected, reachability,
-            num_clients, uptime_seconds, firmware_version, last_seen, updated_at
+            num_clients, uptime_seconds, firmware_version, last_seen,
+            props, updated_at
         ) VALUES (
             $1, $2, $3, $4, $5, $6, $7,
             $8, $9, $10, $11, $12,
-            $13, $14, $15, $16, NOW()
+            $13, $14, $15, $16,
+            $17::jsonb, NOW()
         )
         ON CONFLICT (device_id) DO UPDATE SET
             hostname         = EXCLUDED.hostname,
@@ -171,6 +200,7 @@ async def _upsert_inventory(rows: List[Dict[str, Any]]) -> None:
             uptime_seconds   = EXCLUDED.uptime_seconds,
             firmware_version = EXCLUDED.firmware_version,
             last_seen        = EXCLUDED.last_seen,
+            props            = EXCLUDED.props,
             updated_at       = NOW()
     """
     for row in rows:
@@ -182,4 +212,5 @@ async def _upsert_inventory(rows: List[Dict[str, Any]]) -> None:
             row["connected"], row["reachability"],
             row["num_clients"], row["uptime_seconds"], row["firmware_version"],
             row["last_seen"],
+            json.dumps(row["props"]),
         )

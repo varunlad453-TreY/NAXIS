@@ -5,10 +5,12 @@
 ---
 
 **Document Type:** Strategic White Paper & Definitive Blueprint
-**Version:** 1.0
-**Date:** May 2026
-**Status:** Internal — Founding Team Review
+**Version:** 1.1
+**Date:** May 2026 (updated July 2026 with implementation status)
+**Status:** Reference — strategic vision used to guide implementation
 **Audience:** Engineering Leadership, Product Strategy, Founding Team
+
+> **Implementation status:** Most of the architecture and modules described here have been built. The correlation engine (Stages 1+2), multi-vendor API integrations (Mist, DNAC, VeloCloud), PostgreSQL-only persistence, and topology sync are all live. See [docs/DEVELOPER_GUIDE.md](DEVELOPER_GUIDE.md) for current state. Items still pending: structured RCA with reasoning paths, real-time SSE, notification service, auth/RBAC, DB-driven correlation rules.
 
 ---
 
@@ -156,11 +158,11 @@ If leadership perceives Naxis as "another dashboard," it dies in budget review. 
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-### Components Deliberately Rejected
+### Components Deliberately Rejected (or Deferred)
 
-| Rejected | Reason |
-|---|---|
-| **Redis** | One process, single host, low event rate. PostgreSQL `LISTEN/NOTIFY` plus a queue table covers this for ≥12 months. Adding Redis is +1 dependency for zero current value. |
+| Rejected/Deferred | Reason | Current Status |
+|---|---|---|
+| **Redis** | One process, single host, low event rate. PostgreSQL `LISTEN/NOTIFY` plus a queue table covers this for ≥12 months. Adding Redis is +1 dependency for zero current value. | **Adopted as optional** in Session 15 for real-time incident pub/sub. `REDIS_ENABLED=false` by default — graceful degradation when disabled. |
 | **Kafka / Event Bus** | A Postgres outbox plus cron-tick correlator is sufficient for thousands of events per second at this scale. |
 | **Celery** | A FastAPI background task runner with APScheduler covers the workload. Celery is over-spec'd. |
 | **Microservices** | The team has 1.5 developers. Microservices solve an organizational problem that does not exist here. |
@@ -332,6 +334,8 @@ Path-aware correlation, blast radius computation, and topology-aware RCA are all
 ---
 
 ## 7. Correlation Engine Roadmap
+
+> **Implementation status:** Stages 1 (domain-aware/site+time-window) and 2 (infrastructure-aware/topology cascade) are **implemented and live** as of Session 15. See `docs/CORRELATION_ARCHITECTURE.md` for current design. Stages 3–5 remain pending.
 
 ### Honest Assessment of Current State
 
@@ -903,6 +907,8 @@ The UI is downstream of the data and the reasoning. **Fix those first.** Everyth
 ---
 
 ## 23. API Integration Strategy (SD-WAN, Cisco DNAC, Wireless)
+
+> **Implementation status:** All three vendor families are implemented. Mist (events + inventory), DNAC (devices, alarms, topology, clients, interfaces), and VeloCloud (edges + events) collectors are live. Arista WLC remains planned.
 
 This section was added after the initial blueprint to reflect a committed product decision: **Naxis will integrate directly with vendor APIs**, not rely solely on CSV imports or syslog forwarding. The integration surface spans three vendor families:
 

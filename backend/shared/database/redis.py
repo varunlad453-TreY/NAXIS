@@ -11,7 +11,10 @@ from typing import Any, Dict, Optional
 
 import redis.asyncio as aioredis
 
-from backend.config.settings import get_settings
+try:
+    from backend.config.settings import get_settings
+except ImportError:
+    from config.settings import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -52,8 +55,31 @@ class RedisClient:
             logger.warning("Redis health check failed: %s", exc)
             return False
 
+    async def warm_up(self) -> bool:
+        """Pre-connect to Redis and verify reachability.
+
+        Call during worker startup so the first publish is not delayed
+        by connection setup.  Returns True if connected, False otherwise
+        (the caller should log the decision, not this method).
+        """
+        healthy = await self.health()
+        if healthy:
+            return True
+        # Connection failed ― log a clear warning so operators know
+        logger.warning(
+            "Redis is configured (REDIS_ENABLED=true) but unreachable at %s "
+            "— running without pub/sub.  Incidents will be persisted to the "
+            "database but live push notifications will not be available.",
+            self._settings.redis_url,
+        )
+        return False
+
     async def publish_incident(self, incident: Dict[str, Any]) -> None:
-        """Publish a new or updated incident to the live feed channel."""
+        """Publish a new or updated incident to the live feed channel.
+
+        Failures are logged and swallowed — the worker must continue
+        even if Redis is down.
+        """
         if not self._settings.redis_enabled:
             return
         try:

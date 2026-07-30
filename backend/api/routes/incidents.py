@@ -8,6 +8,7 @@ from typing import List
 
 from fastapi import APIRouter, HTTPException, Query, status
 
+from shared.database.topology import resolve_node_id as resolve_topology_node_id
 from shared.models.incident import Incident
 from ..models.incident_models import (
     HealthResponse,
@@ -34,6 +35,7 @@ def _incident_to_summary(incident: Incident) -> IncidentSummary:
         incident_id=incident.incident_id,
         title=incident.title,
         severity=incident.severity.value,
+        severity_label=incident.severity.label,
         status=incident.status.value,
         event_count=incident.event_count(),
         affected_sites_count=len(incident.affected_sites),
@@ -44,15 +46,33 @@ def _incident_to_summary(incident: Incident) -> IncidentSummary:
     )
 
 
-def _incident_to_detail(incident: Incident) -> IncidentDetail:
+async def _resolve_affected_device_ids(device_ids: List[str]) -> List[str]:
+    """Resolve incident device_ids to topology node_ids."""
+    if not device_ids:
+        return []
+    resolved: List[str] = []
+    for did in device_ids:
+        nid = await resolve_topology_node_id(did)
+        if nid:
+            resolved.append(nid)
+    if not resolved:
+        # Fallback: use device_ids as node_ids
+        resolved = list(device_ids)
+    return resolved
+
+
+async def _incident_to_detail(incident: Incident) -> IncidentDetail:
+    topology_node_ids = await _resolve_affected_device_ids(list(incident.affected_devices))
     return IncidentDetail(
         incident_id=incident.incident_id,
         title=incident.title,
         severity=incident.severity.value,
+        severity_label=incident.severity.label,
         status=incident.status.value,
         affected_sites=list(incident.affected_sites),
         affected_devices=list(incident.affected_devices),
         affected_clients=list(incident.affected_clients),
+        topology_node_ids=topology_node_ids,
         related_event_ids=list(incident.related_event_ids),
         event_count=incident.event_count(),
         probable_cause=incident.probable_cause,
@@ -101,7 +121,7 @@ async def get_incident(incident_id: str) -> IncidentDetail:
         incident = await incident_service.get_incident(incident_id)
         if not incident:
             raise HTTPException(status_code=404, detail=f"Incident not found: {incident_id}")
-        return _incident_to_detail(incident)
+        return await _incident_to_detail(incident)
     except HTTPException:
         raise
     except Exception as e:

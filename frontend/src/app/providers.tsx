@@ -40,22 +40,16 @@ function resolveTheme(theme: Theme): ResolvedTheme {
 }
 
 function getStoredTheme(): Theme {
-  if (typeof window === "undefined") return "system";
+  if (typeof window === "undefined") return "dark";
   try {
     const stored = window.localStorage.getItem(STORAGE_KEY) as Theme | null;
-    if (stored && ["light", "dark", "system"].includes(stored)) return stored;
+    if (stored === "light" || stored === "dark") return stored;
   } catch {}
-  return "system";
-}
-
-function getInitialResolvedTheme(): ResolvedTheme {
-  if (typeof window === "undefined") return "dark";
-  const stored = getStoredTheme();
-  return resolveTheme(stored);
+  return "dark";
 }
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
-  const [theme, setThemeState] = useState<Theme>("system");
+  const [theme, setThemeState] = useState<Theme>("dark");
   const [resolvedTheme, setResolvedTheme] = useState<ResolvedTheme>("dark");
   const [mounted, setMounted] = useState(false);
 
@@ -77,18 +71,6 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     } catch {}
   }, [theme]);
 
-  useEffect(() => {
-    if (theme !== "system") return;
-    const media = window.matchMedia("(prefers-color-scheme: dark)");
-    const handler = () => {
-      const resolved = media.matches ? "dark" : "light";
-      setResolvedTheme(resolved);
-      document.documentElement.setAttribute("data-theme", resolved);
-    };
-    media.addEventListener("change", handler);
-    return () => media.removeEventListener("change", handler);
-  }, [theme]);
-
   const setTheme = (next: Theme) => {
     setThemeState(next);
   };
@@ -96,8 +78,8 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   return (
     <ThemeContext.Provider
       value={{
-        theme: mounted ? theme : "system",
-        resolvedTheme: mounted ? resolvedTheme : getInitialResolvedTheme(),
+        theme: mounted ? theme : "dark",
+        resolvedTheme: mounted ? resolvedTheme : "dark",
         setTheme,
       }}
     >

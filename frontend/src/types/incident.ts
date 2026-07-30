@@ -11,6 +11,7 @@ export interface IncidentSummary {
   incident_id: string;
   title: string;
   severity: IncidentSeverity;
+  severity_label: string;
   status: IncidentStatus;
   event_count: number;
   affected_sites_count: number;
@@ -26,6 +27,7 @@ export interface IncidentDetail extends IncidentSummary {
   affected_clients: string[];
   related_event_ids: string[];
   probable_cause: string | null;
+  topology_node_ids: string[];
 }
 
 export interface IncidentListResponse {

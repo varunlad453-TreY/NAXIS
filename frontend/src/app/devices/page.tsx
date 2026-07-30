@@ -20,6 +20,7 @@ import {
   Zap,
 } from "lucide-react";
 import { api } from "@/lib/api";
+import { Badge } from "@/components/ui/badge";
 import { DeviceFilterBar, DeviceListView } from "@/components/devices";
 import type { DeviceReachability, DeviceSummary } from "@/types/device";
 

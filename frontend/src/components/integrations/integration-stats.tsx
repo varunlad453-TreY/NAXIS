@@ -1,49 +1,43 @@
 "use client";
 
 import { cn } from "@/lib/utils";
-import type { Integration } from "./integration";
+import type { Integration } from "@/types/integration";
 
 interface IntegrationStatsProps {
   integrations: Integration[];
 }
 
 export function IntegrationStats({ integrations }: IntegrationStatsProps) {
+  const connected = integrations.filter((integration) => integration.status === "connected").length;
+  const disconnected = integrations.filter((integration) => integration.status === "disconnected").length;
+  const notConfigured = integrations.filter((integration) => integration.status === "not_configured").length;
+  const totalEvents = integrations.reduce((sum, integration) => sum + (integration.eventsCollected ?? 0), 0);
+  const healthValues = integrations.map((integration) => integration.healthScore).filter((value): value is number => value !== null);
+  const averageHealth = healthValues.length > 0 ? Math.round(healthValues.reduce((sum, value) => sum + value, 0) / healthValues.length) : null;
+
   const stats = [
+    { label: "Connected", value: connected, color: "text-success" },
+    { label: "Disconnected", value: disconnected, color: "text-critical" },
+    { label: "Not configured", value: notConfigured, color: "text-foreground-subtle" },
+    { label: "Events collected", value: totalEvents, color: "text-foreground" },
     {
-      label: "Connected",
-      value: integrations.filter((i) => i.status === "connected").length,
-      color: "text-success",
-    },
-    {
-      label: "Disconnected",
-      value: integrations.filter((i) => i.status === "disconnected").length,
-      color: "text-critical",
-    },
-    {
-      label: "Not configured",
-      value: integrations.filter((i) => i.status === "not_configured").length,
-      color: "text-foreground-subtle",
-    },
-    {
-      label: "Events last hour",
-      value: integrations.reduce((s, i) => s + i.eventsLastHour, 0),
-      color: "text-foreground",
+      label: "Average health",
+      value: averageHealth === null ? "—" : `${averageHealth}%`,
+      color: "text-info",
     },
   ];
 
   return (
-    <div className="flex flex-wrap items-baseline gap-x-6 gap-y-2">
+    <div className="flex flex-wrap items-end gap-x-8 gap-y-4 border-y border-border/40 py-4">
       {stats.map((stat, index) => (
-        <div key={stat.label} className="flex items-baseline gap-2">
-          <span className={cn("text-2xl font-semibold tabular-nums", stat.color)}>
+        <div key={stat.label} className="flex items-end gap-2">
+          <div className={cn("text-3xl font-semibold leading-none tabular-nums", stat.color)}>
             {stat.value}
-          </span>
-          <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-foreground-subtle">
+          </div>
+          <div className="pb-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-foreground-subtle">
             {stat.label}
-          </span>
-          {index < stats.length - 1 && (
-            <span className="ml-2 hidden h-4 w-px bg-border sm:block" />
-          )}
+          </div>
+          {index < stats.length - 1 && <span className="ml-3 hidden h-5 w-px bg-border/60 sm:block" />}
         </div>
       ))}
     </div>

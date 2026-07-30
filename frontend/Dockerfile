@@ -6,12 +6,15 @@ RUN apk add --no-cache libc6-compat
 WORKDIR /app
 
 COPY package.json package-lock.json* ./
-RUN npm ci
+# Use npm install (not ci) so platform-native binaries
+# (@next/swc-linux-x64-musl) resolve correctly on Alpine/musl
+RUN npm install
 
 # Development
 FROM base AS development
 WORKDIR /app
-COPY --from=deps /app/node_modules ./node_modules
+COPY package.json package-lock.json* ./
+RUN npm install
 COPY . .
 EXPOSE 3000
 ENV PORT=3000

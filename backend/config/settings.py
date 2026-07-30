@@ -33,13 +33,13 @@ class Settings(BaseSettings):
     )
 
     # API
+    api_key: str = Field(default="", description="API key for authentication (empty = no auth)")
     api_host: str = Field(default="0.0.0.0", description="API bind host")
     api_port: int = Field(default=8000, description="API bind port")
     api_cors_origins: str = Field(
-        default="*",
-        description="Comma-separated allowed CORS origins, or * to allow all",
+        default="http://localhost:3000,http://localhost:8000",
+        description="Comma-separated allowed CORS origins",
     )
-    api_key: str = Field(default="", description="API key required in X-API-Key header")
 
     # PostgreSQL
     postgres_host: str = Field(default="localhost", description="PostgreSQL host")
@@ -53,31 +53,47 @@ class Settings(BaseSettings):
     redis_enabled: bool = Field(default=False, description="Enable Redis pub/sub")
     redis_max_connections: int = Field(default=10, description="Redis connection pool size")
 
-    # Ollama
-    ollama_base_url: str = Field(default="http://localhost:11434", description="Ollama API URL")
-    ollama_model: str = Field(default="llama3.1:8b", description="Ollama model name")
-
     # Juniper Mist
     mist_api_key: str = Field(default="", description="Mist API token")
     mist_org_id: str = Field(default="", description="Mist organization UUID")
     mist_base_url: str = Field(default="https://api.mist.com", description="Mist API base URL")
     mist_enabled: bool = Field(default=False, description="Enable Mist collector")
 
-    # VeloCloud (Arista SD-WAN)
-    velocloud_url: str = Field(default="", description="VeloCloud Orchestrator base URL")
-    velocloud_api_key: str = Field(default="", description="VeloCloud API key / JWT token")
-    velocloud_enabled: bool = Field(default=False, description="Enable VeloCloud collector")
+    # Cisco DNA Center
+    dnac_host: str = Field(default="", description="DNAC base host")
+    dnac_username: str = Field(default="", description="DNAC username")
+    dnac_password: str = Field(default="", description="DNAC password")
+    dnac_enabled: bool = Field(default=False, description="Enable DNAC integration")
+    dnac_verify_ssl: bool = Field(default=True, description="Verify SSL for DNAC requests")
 
-    # SNMP polling
-    snmp_enabled: bool = Field(default=False, description="Enable SNMP polling collector")
-    snmp_community: str = Field(default="public", description="SNMP v2c community string")
-    snmp_port: int = Field(default=161, description="SNMP target port")
-    snmp_timeout: float = Field(default=5.0, description="SNMP request timeout seconds")
-    snmp_retries: int = Field(default=2, description="SNMP request retries")
-    # Comma-separated list of device IPs to SNMP-poll for interface stats + LLDP topology
-    snmp_targets: str = Field(default="", description="Comma-separated IPs to poll via SNMP")
+    # VeloCloud
+    velocloud_url: str = Field(default="", description="VeloCloud orchestrator URL")
+    velocloud_api_key: str = Field(default="", description="VeloCloud API key")
+    velocloud_enterprise_id: str = Field(default="", description="VeloCloud enterprise ID (skip auto-discover)")
+    velocloud_enabled: bool = Field(default=False, description="Enable VeloCloud integration")
+    velocloud_verify_ssl: bool = Field(default=True, description="Verify SSL for VeloCloud requests")
 
-    # SNMP Trap receiver
+    # Arista WLC
+    arista_wlc_host: str = Field(default="", description="Arista WLC host")
+    arista_wlc_username: str = Field(default="", description="Arista WLC username")
+    arista_wlc_password: str = Field(default="", description="Arista WLC password")
+    arista_wlc_enabled: bool = Field(default=False, description="Enable Arista WLC integration")
+    arista_wlc_verify_ssl: bool = Field(default=True, description="Verify SSL for Arista WLC requests")
+
+    # SNMP
+    snmp_enabled: bool = Field(default=False, description="Enable SNMP polling of switch/AP topology")
+    snmp_community: str = Field(default="public", description="SNMP v2c read-only community string")
+    snmp_port: int = Field(default=161, description="SNMP agent UDP port")
+    snmp_timeout: int = Field(default=10, description="SNMP poll timeout in seconds")
+    snmp_retries: int = Field(default=2, description="SNMP poll retry count")
+    snmp_targets: str = Field(default="", description="Comma-separated switch IPs to poll via SNMP")
+
+    @property
+    def snmp_targets_list(self) -> List[str]:
+        """Parse comma-separated SNMP target IPs from env var."""
+        return [ip.strip() for ip in self.snmp_targets.split(",") if ip.strip()]
+
+    # SNMP trap receiver
     snmp_trap_enabled: bool = Field(default=False, description="Enable SNMP trap receiver")
     snmp_trap_host: str = Field(default="0.0.0.0", description="SNMP trap listener bind address")
     snmp_trap_port: int = Field(default=162, description="SNMP trap listener UDP port")
@@ -94,6 +110,22 @@ class Settings(BaseSettings):
     # Correlation
     correlation_time_window: int = Field(default=300, description="Correlation time window in seconds")
     correlation_min_events: int = Field(default=2, description="Minimum events to form an incident")
+    correlation_topology_cascade: bool = Field(
+        default=True, description="Enable Stage 2 infrastructure-aware topology cascade"
+    )
+
+    # Notifications — collector health alerts
+    notification_enabled: bool = Field(default=False, description="Enable push notification alerts")
+    notification_slack_webhook: str = Field(default="", description="Slack webhook URL for collector alerts")
+    notification_smtp_host: str = Field(default="", description="SMTP host for email alerts")
+    notification_smtp_port: int = Field(default=587, description="SMTP port")
+    notification_smtp_user: str = Field(default="", description="SMTP username")
+    notification_smtp_password: str = Field(default="", description="SMTP password")
+    notification_smtp_from: str = Field(default="naxis@localhost", description="SMTP from address")
+    notification_email_to: str = Field(default="", description="Comma-separated recipient emails for alerts")
+    notification_dedup_minutes: int = Field(default=15, description="Minutes before re-sending the same alert")
+    notification_min_failures: int = Field(default=3, description="Minimum failures before alerting")
+    notification_min_skips: int = Field(default=10, description="Minimum skips before alerting")
 
     @property
     def postgres_url(self) -> str:
@@ -106,15 +138,8 @@ class Settings(BaseSettings):
         )
 
     @property
-    def snmp_targets_list(self) -> List[str]:
-        """Return SNMP target IPs as a list."""
-        return [t.strip() for t in self.snmp_targets.split(",") if t.strip()]
-
-    @property
     def api_cors_origins_list(self) -> List[str]:
-        """Return CORS origins as a list. '*' allows all origins."""
-        if self.api_cors_origins.strip() == "*":
-            return ["*"]
+        """Return CORS origins as a list."""
         return [part.strip() for part in self.api_cors_origins.split(",") if part.strip()]
 
     @property

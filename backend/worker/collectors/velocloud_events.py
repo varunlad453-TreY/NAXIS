@@ -50,6 +50,7 @@ class VelocloudEventsCollector:
         self._base_url = settings.velocloud_url.rstrip("/")
         self._api_key = settings.velocloud_api_key
         self._enabled = settings.velocloud_enabled
+        self._verify_ssl = settings.velocloud_verify_ssl
         self._headers = {
             "Authorization": f"Token {self._api_key}",
             "Content-Type": "application/json",
@@ -66,7 +67,7 @@ class VelocloudEventsCollector:
             headers=self._headers,
             timeout=httpx.Timeout(30.0),
             follow_redirects=True,
-            verify=False,
+            verify=self._verify_ssl,
         ) as client:
             enterprise_id = await self._fetch_enterprise_id(client)
             if not enterprise_id:

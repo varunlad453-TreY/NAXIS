@@ -1,5 +1,6 @@
 "use client";
 
+import { ThemeToggle } from "@/components/ui/theme-toggle";
 import { useQuery } from "@tanstack/react-query";
 import { Circle } from "lucide-react";
 import { api } from "@/lib/api";
@@ -33,6 +34,9 @@ export function Header() {
           <div className="h-4 w-px bg-border" />
           <ThemeToggle />
         </div>
+      </div>
+      <div className="border-l border-border/30 pl-4">
+        <ThemeToggle />
       </div>
     </header>
   );

@@ -2,34 +2,56 @@ services:
   postgres:
     image: postgres:16-alpine
     container_name: naxis-postgres
+    ports:
+      # Loopback-only: containers reach Postgres over naxis-net, so nothing needs
+      # this on 0.0.0.0. Prevents LAN exposure of the datastore.
+      - "127.0.0.1:${POSTGRES_HOST_PORT:-5432}:5432"
     environment:
       POSTGRES_DB: naxis
       POSTGRES_USER: naxis
-      POSTGRES_PASSWORD: naxis_password
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in config/.env}
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./schemas/postgres:/docker-entrypoint-initdb.d:ro
+    shm_size: 256mb
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U naxis -d naxis"]
       interval: 10s
       timeout: 5s
       retries: 3
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
     networks:
       - naxis-net
 
   redis:
     image: redis:7-alpine
     container_name: naxis-redis
-    command: redis-server --requirepass "${REDIS_PASSWORD}"
+    command: >
+      redis-server
+      --requirepass ${REDIS_PASSWORD:?REDIS_PASSWORD must be set in config/.env}
+    ports:
+      # Loopback-only; Redis has no ACLs beyond the shared password.
+      - "127.0.0.1:${REDIS_HOST_PORT:-6379}:6379"
     volumes:
       - redis_data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" --no-auth-warning ping"]
       interval: 10s
       timeout: 5s
       retries: 3
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD must be set in config/.env}
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
     networks:
       - naxis-net
 
@@ -38,10 +60,10 @@ services:
       context: .
       dockerfile: backend/Dockerfile
       target: production
-    image: naxis-backend
+    image: naxis-worker
     container_name: naxis-worker
     command: python -u -m worker.main
-    env_file: .env
+    env_file: config/.env
     environment:
       SERVICE_NAME: naxis-worker
       LOG_LEVEL: INFO
@@ -59,7 +81,23 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    healthcheck:
+      # `ps` is absent from the slim image; check the worker's own heartbeat file,
+      # which _record_heartbeat() touches every cycle.
+      test: ["CMD-SHELL", "python -c \"import os,time,sys; sys.exit(0 if time.time()-os.path.getmtime('/tmp/naxis-worker-alive') < 600 else 1)\""]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     restart: unless-stopped
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
     networks:
       - naxis-net
     deploy:
@@ -68,16 +106,19 @@ services:
           memory: 1G
 
   api:
-    image: naxis-backend
+    image: naxis-api
     container_name: naxis-api
     command: uvicorn main:app --host 0.0.0.0 --port 8000 --workers 2
     ports:
-      - "8000:8000"
-    env_file: .env
+      - "${API_HOST_PORT:-8000}:8000"
+    env_file: config/.env
     environment:
       SERVICE_NAME: naxis-api
       LOG_LEVEL: INFO
       PYTHONPATH: /app
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
     depends_on:
       postgres:
         condition: service_healthy
@@ -89,6 +130,11 @@ services:
       timeout: 5s
       retries: 3
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
     networks:
       - naxis-net
     deploy:
@@ -101,24 +147,34 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
       args:
-        NEXT_PUBLIC_API_URL: http://localhost:8000
-        NEXT_PUBLIC_API_KEY: 14fc7a8b6c6b608652192b2f68cc1dfa12a3bfe559651c0fe9092843c3c9573f
+        # NEXT_PUBLIC_* is inlined at build time, so these must be build args —
+        # setting them only at runtime never reaches the browser bundle.
+        NEXT_PUBLIC_API_URL: http://localhost:${API_HOST_PORT:-8000}
+        NEXT_PUBLIC_API_KEY: ${API_KEY:-}
     container_name: naxis-web
     ports:
-      - "3000:3000"
+      - "${WEB_HOST_PORT:-3000}:3000"
     environment:
-      NEXT_PUBLIC_API_URL: http://localhost:8000
-      NEXT_PUBLIC_API_KEY: 14fc7a8b6c6b608652192b2f68cc1dfa12a3bfe559651c0fe9092843c3c9573f
+      NEXT_PUBLIC_API_URL: http://localhost:${API_HOST_PORT:-8000}
+      NEXT_PUBLIC_API_KEY: ${API_KEY:-}
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
     depends_on:
       api:
         condition: service_healthy
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
     networks:
       - naxis-net
     deploy:
       resources:
         limits:
-          memory: 512M
+          memory: 2G
 
 volumes:
   postgres_data:

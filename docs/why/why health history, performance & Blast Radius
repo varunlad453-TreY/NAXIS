@@ -1,0 +1,17 @@
+
+*Blast Radius Side Panel*
+- What it gives: When you're looking at the topology with highlighted nodes, you see incident context inline — severity, affected devices count, timeline — without switching back to the incidents page.
+- Who benefits: NOC operators triaging live incidents. They stay on one screen instead of flipping tabs.
+- Gain: Cuts mean-time-to-diagnose. Right now the flow is "see highlight → wonder what incident → go back → read → come back". Side panel removes that loop.
+
+*Health History Timeline*
+- What it gives: Trend data per node — was this device green all day or did it start flashing red 20 minutes ago?
+- Who benefits: Network engineers doing root cause analysis. Managers tracking reliability.
+- Gain: Answers "is this flapping?" and "did this start after the last change window?" Without it, health is a useless snapshot — you can't distinguish a transient blip from a degrading trend.
+
+*Performance* (1000+ nodes)
+
+- What it gives: The app doesn't crash or freeze on real-world networks.
+- Who benefits: Every single user with a network >200 devices — i.e., your actual target audience.
+- Gain: It's not a feature, it's a gate. Without it, the topology page is a demo toy, not a production tool.
+Summary: Placeholder pages = cosmetic. These three = actual operational value. Pick one and we'll go.

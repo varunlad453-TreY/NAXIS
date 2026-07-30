@@ -7,7 +7,10 @@ Uses asyncpg driver and asyncio session maker.
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import declarative_base
 
-from backend.config.settings import get_settings
+try:
+    from backend.config.settings import get_settings
+except ImportError:
+    from config.settings import get_settings
 
 Base = declarative_base()
 

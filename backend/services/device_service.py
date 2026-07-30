@@ -8,7 +8,10 @@ import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
-from backend.config.settings import get_settings
+try:
+    from backend.config.settings import get_settings
+except ImportError:
+    from config.settings import get_settings
 from backend.db.base import init_db
 from backend.db.models import Device as DeviceORM
 from backend.db.models import Site as SiteORM

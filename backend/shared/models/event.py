@@ -16,9 +16,9 @@ class EventSource(str, Enum):
     """Vendor sources for events"""
     DNAC = "dnac"
     MIST = "mist"
+    VELOCLOUD = "velocloud"
     ARISTA_SDWAN = "arista_sdwan"
     ARISTA_WLC = "arista_wlc"
-    VELOCLOUD = "velocloud"
     SNMP = "snmp"
     SNMP_TRAP = "snmp_trap"
     SYSLOG = "syslog"
@@ -150,7 +150,7 @@ class UnifiedEvent(BaseModel):
     """
     Unified event schema that normalizes events from all vendors.
 
-    This is the core data model stored in ClickHouse and processed
+    This is the core data model stored in PostgreSQL and processed
     throughout the platform.
     """
 
@@ -207,6 +207,17 @@ class UnifiedEvent(BaseModel):
         """Normalize tags to lowercase"""
         return [tag.lower().strip() for tag in v]
 
+    @staticmethod
+    def _strip_null(value: Any) -> Any:
+        """Recursively remove ``\\u0000`` from strings so PostgreSQL accepts them."""
+        if isinstance(value, str):
+            return value.replace("\u0000", "")
+        if isinstance(value, dict):
+            return {k: UnifiedEvent._strip_null(v) for k, v in value.items()}
+        if isinstance(value, list):
+            return [UnifiedEvent._strip_null(v) for v in value]
+        return value
+
     def to_db_row(self) -> Dict[str, Any]:
         """Convert to database row format"""
         return {
@@ -214,27 +225,27 @@ class UnifiedEvent(BaseModel):
             "timestamp": self.timestamp,
             "received_at": self.received_at,
             "source": self.source.value,
-            "source_event_id": self.source_event_id or "",
+            "source_event_id": self._strip_null(self.source_event_id or ""),
             "severity": self.severity.value,
             "category": self.category.value,
             "event_type": self.event_type.value,
-            "title": self.title,
-            "description": self.description,
-            "device_id": self.device.device_id if self.device else "",
-            "device_name": self.device.device_name if self.device else "",
-            "device_ip": self.device.device_ip if self.device else "",
-            "device_type": self.device.device_type if self.device else "",
-            "site_id": self.device.site_id if self.device else "",
-            "site_name": self.device.site_name if self.device else "",
-            "client_id": self.client.client_id if self.client else "",
-            "client_mac": self.client.client_mac if self.client else "",
-            "client_ip": self.client.client_ip if self.client else "",
-            "interface_name": self.interface.interface_name if self.interface else "",
-            "tags": self.tags,
-            "incident_id": self.incident_id or "",
-            "correlation_key": self.correlation_key or "",
-            "metadata": json.dumps(self.metadata),
-            "raw_event": json.dumps(self.raw_event or {}),
+            "title": self._strip_null(self.title),
+            "description": self._strip_null(self.description),
+            "device_id": self._strip_null(self.device.device_id if self.device else ""),
+            "device_name": self._strip_null(self.device.device_name if self.device else ""),
+            "device_ip": self._strip_null(self.device.device_ip if self.device else ""),
+            "device_type": self._strip_null(self.device.device_type if self.device else ""),
+            "site_id": self._strip_null(self.device.site_id if self.device else ""),
+            "site_name": self._strip_null(self.device.site_name if self.device else ""),
+            "client_id": self._strip_null(self.client.client_id if self.client else ""),
+            "client_mac": self._strip_null(self.client.client_mac if self.client else ""),
+            "client_ip": self._strip_null(self.client.client_ip if self.client else ""),
+            "interface_name": self._strip_null(self.interface.interface_name if self.interface else ""),
+            "tags": self._strip_null(self.tags),
+            "incident_id": self._strip_null(self.incident_id or ""),
+            "correlation_key": self._strip_null(self.correlation_key or ""),
+            "metadata": json.dumps(self._strip_null(self.metadata)),
+            "raw_event": json.dumps(self._strip_null(self.raw_event or {})),
         }
 
     def add_tag(self, tag: str) -> None:

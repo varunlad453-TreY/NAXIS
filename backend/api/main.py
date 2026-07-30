@@ -2,6 +2,7 @@
 """Naxis API entry point for development (uvicorn api.main:app)."""
 
 import logging
+import secrets
 from contextlib import asynccontextmanager
 from datetime import datetime
 
@@ -10,10 +11,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import APIKeyHeader
 from fastapi.exceptions import HTTPException
 
+from api.routes.correlation import router as correlation_router
 from api.routes.devices import router as devices_router
 from api.routes.events import router as events_router
 from api.routes.incidents import health_router, router as incidents_router
+from api.routes.mist import router as mist_router
+from api.routes.mist_clients import router as mist_clients_router
+from api.routes.mist_sle import router as mist_sle_router
 from api.routes.sdwan_chat import router as sdwan_router
+from api.routes.topology import router as topology_router
 from config.settings import get_settings
 from shared.database.client import db
 
@@ -25,7 +31,7 @@ _api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 async def _require_api_key(api_key: str = Security(_api_key_header)) -> None:
     if not _settings.api_key:
         return
-    if api_key != _settings.api_key:
+    if not api_key or not secrets.compare_digest(api_key, _settings.api_key):
         raise HTTPException(status_code=403, detail="Forbidden")
 
 
@@ -58,12 +64,15 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+_cors_origins = _settings.api_cors_origins_list
+_cors_wildcard = "*" in _cors_origins
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=_settings.api_cors_origins_list,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=_cors_origins,
+    allow_credentials=not _cors_wildcard,
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-API-Key"],
 )
 
 
@@ -79,10 +88,15 @@ async def add_process_time_header(request, call_next):
 _auth = [Depends(_require_api_key)]
 
 app.include_router(health_router)
+app.include_router(correlation_router, dependencies=_auth)
 app.include_router(incidents_router, dependencies=_auth)
 app.include_router(events_router, dependencies=_auth)
 app.include_router(devices_router, dependencies=_auth)
+app.include_router(mist_router, dependencies=_auth)
+app.include_router(mist_clients_router, dependencies=_auth)
+app.include_router(mist_sle_router, dependencies=_auth)
 app.include_router(sdwan_router, dependencies=_auth)
+app.include_router(topology_router, dependencies=_auth)
 
 
 @app.get("/", include_in_schema=False)

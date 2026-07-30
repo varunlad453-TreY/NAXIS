@@ -1,12 +1,16 @@
 """
 VeloCloud VeloBrain Link Metrics Collector
 
-Fetches per-link quality metrics from VCO and stores them in the
-`props` JSONB column of each edge row in the inventory table.
+ponytail: DEPRECATED — logic merged into velocloud_inventory._build_rows()
+which stores recentLinks data in inventory.props at insert time using
+the same `{"links": [...], "velobrain_score": 0.0}` shape.
 
-Metrics per link: scoreTx/Rx (0-5), latency ms, jitter ms, loss %,
-bandwidth Rx/Tx bps, link state, plus provisioned capacity from
-edge/getEdgeConfigurationStack (upstreamMbps, downstreamMbps, isp).
+This file is dead code — never imported or wired in worker/main.py.
+It requires a separate API call for each edge's link quality data
+(/sdwan/edge/linkQuality) that provides no additional fields beyond
+what getEnterpriseEdges already returns in recentLinks.
+
+Delete this file after 2 release cycles if no one misses it.
 """
 
 import asyncio
@@ -32,6 +36,7 @@ class VelocloudMetricsCollector:
         self._base_url = settings.velocloud_url.rstrip("/")
         self._api_key = settings.velocloud_api_key
         self._enabled = settings.velocloud_enabled
+        self._verify_ssl = settings.velocloud_verify_ssl
         self._headers = {
             "Authorization": f"Token {self._api_key}",
             "Content-Type": "application/json",
@@ -46,7 +51,7 @@ class VelocloudMetricsCollector:
             headers=self._headers,
             timeout=httpx.Timeout(60.0),
             follow_redirects=True,
-            verify=False,
+            verify=self._verify_ssl,
         ) as client:
             enterprise_id = await self._fetch_enterprise_id(client)
             if not enterprise_id:

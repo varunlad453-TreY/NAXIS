@@ -7,8 +7,8 @@ Polls the Mist REST API for:
   - Per-site device stats     (/api/v1/sites/{site_id}/stats/devices)
 
 Auth: Bearer token in Authorization header (MIST_API_KEY).
-All responses are normalized to UnifiedEvent via the same logic used by
-MistMockGenerator so the rest of the pipeline stays vendor-agnostic.
+All responses are normalized to UnifiedEvent so the rest of the pipeline
+stays vendor-agnostic.
 """
 
 import logging
@@ -19,22 +19,41 @@ from uuid import uuid4
 import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
-from config.settings import get_settings
-from shared.models.event import (
-    ClientInfo,
-    DeviceInfo,
-    EventCategory,
-    EventSeverity,
-    EventSource,
-    EventType,
-    UnifiedEvent,
-)
+try:
+    from backend.config.settings import get_settings
+except ImportError:  # pragma: no cover - supports both entry-point styles
+    from config.settings import get_settings
+try:
+    from backend.shared.models.collector_outcome import CollectorOutcome
+    from backend.shared.models.event import (
+        ClientInfo,
+        DeviceInfo,
+        EventCategory,
+        EventSeverity,
+        EventSource,
+        EventType,
+        UnifiedEvent,
+    )
+except ImportError:  # pragma: no cover - supports both entry-point styles
+    from shared.models.collector_outcome import CollectorOutcome
+    from shared.models.event import (
+        ClientInfo,
+        DeviceInfo,
+        EventCategory,
+        EventSeverity,
+        EventSource,
+        EventType,
+        UnifiedEvent,
+    )
 
 logger = logging.getLogger(__name__)
 
 # Mist API paginates with a `next` cursor; cap to avoid runaway loops
 _MAX_PAGES = 10
 _PAGE_LIMIT = 100  # events per page
+
+COLLECTOR_ID = "mist-events"
+SOURCE_SYSTEM = "mist"
 
 
 class MistApiError(Exception):
@@ -50,8 +69,9 @@ class MistCollector:
 
     Usage (called by the worker daemon each collection cycle):
         collector = MistCollector()
-        events = await collector.collect(since=datetime.utcnow() - timedelta(minutes=5))
-        # events is a list of UnifiedEvent ready to be written to Postgres
+        outcome = await collector.collect(since=datetime.utcnow() - timedelta(minutes=5))
+        # outcome.events is a list of UnifiedEvent ready to be written to Postgres
+        # outcome.to_ledger_row() gives the telemetry ledger entry
     """
 
     def __init__(self):
@@ -66,51 +86,87 @@ class MistCollector:
             "Content-Type": "application/json",
         }
 
+    @property
+    def is_configured(self) -> bool:
+        return bool(self._api_key and self._org_id and self._enabled)
+
+    async def connect(self) -> bool:
+        """Validate Mist credentials with a lightweight API request."""
+        if not self.is_configured:
+            return False
+
+        try:
+            async with httpx.AsyncClient(
+                headers=self._headers,
+                timeout=httpx.Timeout(15.0),
+                follow_redirects=True,
+            ) as client:
+                resp = await client.get(f"{self._base_url}/api/v1/orgs/{self._org_id}")
+                if resp.status_code == 200:
+                    return True
+                logger.warning("Mist connect failed: %s", resp.status_code)
+                return False
+        except Exception:
+            logger.exception("Mist connect failed")
+            return False
+
     # ------------------------------------------------------------------
-    # Public interface
+    # Public interface — returns CollectorOutcome
     # ------------------------------------------------------------------
 
-    async def collect(self, since: Optional[datetime] = None) -> List[UnifiedEvent]:
+    async def collect(self, since: Optional[datetime] = None) -> CollectorOutcome:
         """
         Collect and normalize all available events since `since`.
 
-        Args:
-            since: Lower bound timestamp (UTC). Defaults to last 5 minutes.
-
-        Returns:
-            List of normalized UnifiedEvent objects.
+        Returns a ``CollectorOutcome`` with structured telemetry metadata
+        alongside the normalised events.
         """
+        outcome = CollectorOutcome(
+            collector_id=COLLECTOR_ID,
+            source_system=SOURCE_SYSTEM,
+        )
+
         if not self._enabled:
-            logger.debug("Mist collector disabled — skipping")
-            return []
+            outcome.mark_skipped("Mist collector disabled")
+            return outcome
 
         if not self._api_key or not self._org_id:
-            logger.warning("Mist collector enabled but MIST_API_KEY / MIST_ORG_ID not set")
-            return []
+            outcome.mark_skipped("MIST_API_KEY / MIST_ORG_ID not set")
+            return outcome
 
         if since is None:
             since = datetime.now(timezone.utc) - timedelta(minutes=5)
 
         since_ts = int(since.timestamp())
 
-        async with httpx.AsyncClient(
-            headers=self._headers,
-            timeout=httpx.Timeout(30.0),
-            follow_redirects=True,
-        ) as client:
-            raw_events = await self._fetch_events(client, since_ts)
-            raw_alarms = await self._fetch_alarms(client, since_ts)
+        try:
+            async with httpx.AsyncClient(
+                headers=self._headers,
+                timeout=httpx.Timeout(30.0),
+                follow_redirects=True,
+            ) as client:
+                raw_events = await self._fetch_events(client, since_ts)
+                raw_alarms = await self._fetch_alarms(client, since_ts)
 
-        all_raw = raw_events + raw_alarms
-        events: List[UnifiedEvent] = []
-        for raw in all_raw:
-            try:
-                events.append(self._normalize(raw))
-            except Exception:
-                logger.exception("Failed to normalize Mist event: %s", raw.get("id", "?"))
+            all_raw = raw_events + raw_alarms
+            events: List[UnifiedEvent] = []
+            for raw in all_raw:
+                try:
+                    events.append(self._normalize(raw))
+                except Exception:
+                    logger.exception("Failed to normalize Mist event: %s", raw.get("id", "?"))
 
-        logger.info("Mist collector: %d events collected (%d raw)", len(events), len(all_raw))
-        return events
+            outcome.events = events
+            outcome.mark_success(rows_written=len(events))
+            outcome.metadata["raw_count"] = len(all_raw)
+            outcome.metadata["api_pages"] = 0  # updated by _paginate if needed
+
+            logger.info("Mist collector: %d events collected (%d raw)", len(events), len(all_raw))
+        except Exception as exc:
+            outcome.mark_error(str(exc))
+            logger.exception("Mist collection failed")
+
+        return outcome
 
     # ------------------------------------------------------------------
     # Fetch helpers
@@ -154,12 +210,7 @@ class MistCollector:
         params: Dict[str, Any],
         result_key: str = "results",
     ) -> List[Dict]:
-        """Follow Mist cursor pagination, collecting up to _MAX_PAGES pages.
-
-        Mist returns a `next` field that is a full URL path (e.g.
-        /api/v1/orgs/.../alarms/search?search_after=[...]&start=...).
-        We reconstruct the absolute URL from base_url + next path.
-        """
+        """Follow Mist cursor pagination, collecting up to _MAX_PAGES pages."""
         results: List[Dict] = []
         page = 0
         current_url = url
@@ -181,13 +232,12 @@ class MistCollector:
             results.extend(page_items)
             page += 1
 
-            # Mist `next` is a full path — reconstruct absolute URL
             next_path = body.get("next") if isinstance(body, dict) else None
             if not next_path or len(page_items) < _PAGE_LIMIT:
                 break
 
             current_url = f"{self._base_url}{next_path}"
-            current_params = None  # all params are embedded in the next URL
+            current_params = None
 
         return results
 
@@ -196,22 +246,15 @@ class MistCollector:
     # ------------------------------------------------------------------
 
     def _normalize(self, raw: Dict[str, Any]) -> UnifiedEvent:
-        """
-        Normalize a raw Mist event/alarm dict to UnifiedEvent.
-
-        Handles both org-level events (from /events) and alarms (/alarms).
-        """
-        # Timestamp — Mist uses epoch seconds
+        """Normalize a raw Mist event/alarm dict to UnifiedEvent."""
         ts_raw = raw.get("timestamp") or raw.get("last_seen") or raw.get("created_time")
         if ts_raw:
             timestamp = datetime.fromtimestamp(float(ts_raw), tz=timezone.utc).replace(tzinfo=None)
         else:
             timestamp = datetime.utcnow()
 
-        # Severity — alarms have severity/group; logs are config changes (info)
         severity = _map_severity(raw.get("severity") or raw.get("group", "info"))
 
-        # Device — alarms have aps list; logs are admin actions with no device
         ap_list = raw.get("aps") or []
         ap_id = (ap_list[0] if ap_list else None) or raw.get("ap") or raw.get("ap_id") or raw.get("device_id") or "unknown"
         hostnames = raw.get("hostnames") or []
@@ -227,7 +270,6 @@ class MistCollector:
             site_name=site_name,
         )
 
-        # Client (optional — present on client events)
         client: Optional[ClientInfo] = None
         client_mac = raw.get("client_mac") or raw.get("mac")
         if client_mac:
@@ -238,7 +280,6 @@ class MistCollector:
                 ip_address=raw.get("ip"),
             )
 
-        # Event type mapping
         event_type_str = (
             raw.get("type")
             or raw.get("event_type")
@@ -246,7 +287,6 @@ class MistCollector:
         )
         event_type, category = _map_event_type(event_type_str, raw)
 
-        # Human-readable title / description
         title = event_type_str.replace("_", " ").title()
         description = raw.get("text") or raw.get("message") or title
         if raw.get("retry_pct"):
@@ -299,7 +339,6 @@ def _map_severity(value: str) -> EventSeverity:
         "warn": EventSeverity.WARNING,
         "warning": EventSeverity.WARNING,
         "info": EventSeverity.INFO,
-        # Mist alarm group names
         "infrastructure": EventSeverity.MAJOR,
         "marvis": EventSeverity.INFO,
         "security": EventSeverity.MAJOR,

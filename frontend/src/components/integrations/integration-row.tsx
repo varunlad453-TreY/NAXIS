@@ -1,102 +1,226 @@
 "use client";
 
-import { Globe, MoreHorizontal, RefreshCw, Settings2 } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { useEffect, useState } from "react";
+import { AlertCircle, CheckCircle2, ChevronDown, ChevronUp, Cloud, Network, RefreshCw, Settings2, ShieldCheck } from "lucide-react";
+
+import { cn, formatTimestamp } from "@/lib/utils";
+import type { Integration, IntegrationActionResponse } from "@/types/integration";
 import { IntegrationStatusBadge } from "./integration-status";
-import { getIntegrationIcon, type Integration } from "./integration";
+import { getIntegrationIcon } from "./integration";
 
 interface IntegrationRowProps {
   item: Integration;
   isTesting: boolean;
-  onTest: (id: string) => void;
+  isSyncing: boolean;
+  isOpen: boolean;
+  isCollectorsOpen: boolean;
+  onToggleConfigure: (id: string) => void;
+  onToggleCollectors: (id: string) => void;
+  onTest: (id: string) => Promise<IntegrationActionResponse>;
+  onSync: (id: string) => Promise<IntegrationActionResponse>;
 }
 
-export function IntegrationRow({ item, isTesting, onTest }: IntegrationRowProps) {
-  const icon = getIntegrationIcon(item.id);
+function HealthBar({ value }: { value: number | null }) {
+  const progress = value === null ? 0 : Math.max(0, Math.min(100, value));
 
   return (
-    <div className="group flex flex-col gap-4 border-b border-border/30 py-5 last:border-b-0 lg:flex-row lg:items-center lg:justify-between lg:gap-6">
-      {/* Identity */}
-      <div className="flex min-w-0 items-start gap-4 lg:w-[34%]">
-        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
-          {icon}
-        </div>
-        <div className="min-w-0">
-          <h3 className="font-semibold text-foreground">{item.name}</h3>
-          <p className="text-xs text-foreground-subtle">{item.vendor}</p>
-          <p className="mt-1 hidden text-sm text-foreground-muted lg:block">
-            {item.description}
-          </p>
-        </div>
-      </div>
-
-      {/* Status & metrics */}
-      <div className="grid grid-cols-3 gap-4 text-sm lg:w-[42%]">
-        <div>
-          <div className="text-[10px] font-semibold uppercase tracking-wider text-foreground-subtle">
-            Status
-          </div>
-          <div className="mt-1">
-            <IntegrationStatusBadge status={item.status} />
-          </div>
-        </div>
-        <div>
-          <div className="text-[10px] font-semibold uppercase tracking-wider text-foreground-subtle">
-            Last sync
-          </div>
-          <div className="mt-1 text-foreground">
-            {item.lastSync ? new Date(item.lastSync).toLocaleTimeString() : "—"}
-          </div>
-        </div>
-        <div>
-          <div className="text-[10px] font-semibold uppercase tracking-wider text-foreground-subtle">
-            Health score
-          </div>
-          <div className="mt-1 text-foreground">
-            {item.healthScore !== null ? `${item.healthScore}%` : "—"}
-          </div>
-        </div>
-      </div>
-
-      {/* Actions */}
-      <div className="flex items-center gap-4 lg:w-[24%] lg:justify-end">
-        <button
-          onClick={() => onTest(item.id)}
-          disabled={isTesting}
+    <div className="flex items-center gap-3">
+      <div className="h-2 w-28 overflow-hidden rounded-full bg-border/60 sm:w-36">
+        <div
           className={cn(
-            "inline-flex items-center gap-1.5 text-sm font-medium transition-colors disabled:opacity-60",
-            item.status === "connected"
-              ? "text-foreground hover:text-primary"
-              : "text-primary hover:text-primary-hover"
+            "h-full rounded-full transition-all duration-500",
+            progress >= 80 ? "bg-success" : progress >= 50 ? "bg-info" : "bg-critical"
           )}
-        >
-          {isTesting ? (
-            <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-          ) : item.status === "connected" ? (
-            <RefreshCw className="h-3.5 w-3.5" />
-          ) : (
-            <Globe className="h-3.5 w-3.5" />
+          style={{ width: `${progress}%` }}
+        />
+      </div>
+      <span className="text-sm tabular-nums text-foreground-muted">{value === null ? "—" : `${value}%`}</span>
+    </div>
+  );
+}
+
+export function IntegrationRow({
+  item,
+  isTesting,
+  isSyncing,
+  isOpen,
+  isCollectorsOpen,
+  onToggleConfigure,
+  onToggleCollectors,
+  onTest,
+  onSync,
+}: IntegrationRowProps) {
+  const icon = getIntegrationIcon(item.id);
+  const hasLastSync = Boolean(item.lastSync);
+  const isConnected = item.status === "connected";
+  const [actionFeedback, setActionFeedback] = useState<{ ok: boolean; message: string } | null>(null);
+
+  useEffect(() => {
+    if (!actionFeedback) return;
+    const timer = setTimeout(() => setActionFeedback(null), 6000);
+    return () => clearTimeout(timer);
+  }, [actionFeedback]);
+
+  const runSync = async () => {
+    try {
+      const result = await onSync(item.id);
+      setActionFeedback({ ok: result.success, message: result.message });
+    } catch (err) {
+      setActionFeedback({
+        ok: false,
+        message: err instanceof Error ? err.message : "Sync failed",
+      });
+    }
+  };
+
+  const runTest = async () => {
+    try {
+      const result = await onTest(item.id);
+      setActionFeedback({ ok: result.success, message: result.message });
+    } catch (err) {
+      setActionFeedback({
+        ok: false,
+        message: err instanceof Error ? err.message : "Connection test failed",
+      });
+    }
+  };
+
+  return (
+    <div className="group border-b border-border/40 py-5 transition-colors hover:bg-background-elevated/40 last:border-b-0">
+      <div className="grid gap-5 lg:grid-cols-[minmax(0,1.25fr)_minmax(0,1.3fr)_auto] lg:items-center">
+        <div className="flex min-w-0 items-start gap-4">
+          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-primary/10 text-primary ring-1 ring-inset ring-primary/10">
+            {icon}
+          </div>
+          <div className="min-w-0 space-y-1">
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+              <h3 className="text-base font-semibold text-foreground">{item.name}</h3>
+              <span className="text-xs font-medium uppercase tracking-[0.16em] text-foreground-subtle">
+                {item.vendor}
+              </span>
+              {item.comingSoon && (
+                <span className="rounded-full border border-border/70 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-foreground-subtle">
+                  Coming soon
+                </span>
+              )}
+            </div>
+            <p className="max-w-2xl text-sm leading-6 text-foreground-muted">{item.description}</p>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-x-6 gap-y-3 text-sm">
+          <div className="min-w-[8rem]">
+            <IntegrationStatusBadge
+              status={isTesting ? "testing" : item.status}
+              labelOverride={
+                !isTesting && item.configured ? "Configured" : undefined
+              }
+            />
+          </div>
+          <div>
+            <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-foreground-subtle">
+              Last sync
+            </div>
+            <div className="mt-1 text-foreground">{hasLastSync ? formatTimestamp(item.lastSync!) : "—"}</div>
+          </div>
+          <div>
+            <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-foreground-subtle">
+              Health
+            </div>
+            <div className="mt-2">
+              <HealthBar value={item.healthScore} />
+            </div>
+          </div>
+          <div>
+            <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-foreground-subtle">
+              Events
+            </div>
+            <div className="mt-1 text-foreground tabular-nums">{(item.eventsCollected ?? 0).toLocaleString()}</div>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center justify-start gap-2 lg:justify-end">
+          <button
+            onClick={() => {
+              void runSync();
+            }}
+            disabled={isSyncing || !isConnected}
+            title={!isConnected ? "Connect the integration before syncing" : undefined}
+            className={cn(
+              "inline-flex items-center gap-2 rounded-full border px-4 py-2 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-60",
+              isConnected
+                ? "border-transparent bg-primary/10 text-primary hover:bg-primary/15"
+                : "border-border/70 bg-background-elevated/30 text-foreground-subtle"
+            )}
+          >
+            {isSyncing ? <RefreshCw className="h-4 w-4 animate-spin" /> : <ShieldCheck className="h-4 w-4" />}
+            {isSyncing ? "Syncing" : "Re-sync"}
+          </button>
+
+          <button
+            onClick={() => {
+              void runTest();
+            }}
+            disabled={isTesting}
+            className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-background-elevated/30 px-4 py-2 text-sm font-medium text-foreground transition-colors hover:bg-background-elevated disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {isTesting ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Cloud className="h-4 w-4" />}
+            {isTesting ? "Testing" : "Test connection"}
+          </button>
+
+          {item.collectors.length > 0 && (
+            <button
+              onClick={() => onToggleCollectors(item.id)}
+              className={cn(
+                "inline-flex items-center gap-2 rounded-full border px-4 py-2 text-sm font-medium transition-colors",
+                isCollectorsOpen
+                  ? "border-primary/40 bg-primary/10 text-primary"
+                  : "border-border/70 bg-transparent text-foreground-subtle hover:border-border hover:bg-background-elevated hover:text-foreground"
+              )}
+            >
+              <Network className="h-4 w-4" />
+              Collectors
+              <span className="rounded-full bg-foreground/10 px-1.5 py-0.5 text-[10px] font-semibold tabular-nums">
+                {item.collectors.length}
+              </span>
+              {isCollectorsOpen ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+            </button>
           )}
-          {isTesting ? "Testing..." : item.status === "connected" ? "Re-sync" : "Connect"}
-        </button>
 
-        <button className="inline-flex items-center gap-1.5 text-sm font-medium text-foreground-subtle transition-colors hover:text-foreground">
-          <Settings2 className="h-3.5 w-3.5" />
-          Configure
-        </button>
-
-        <button
-          className="text-foreground-subtle transition-colors hover:text-foreground"
-          aria-label="More options"
-        >
-          <MoreHorizontal className="h-4 w-4" />
-        </button>
+          <button
+            onClick={() => onToggleConfigure(item.id)}
+            className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-transparent px-4 py-2 text-sm font-medium text-foreground-subtle transition-colors hover:border-border hover:bg-background-elevated hover:text-foreground"
+          >
+            <Settings2 className="h-4 w-4" />
+            Configure
+            {isOpen ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+          </button>
+        </div>
       </div>
 
-      {/* Mobile description */}
-      <p className="text-sm leading-relaxed text-foreground-muted lg:hidden">
-        {item.description}
-      </p>
+      {actionFeedback && (
+        <div
+          className={cn(
+            "mt-3 flex items-start gap-2 rounded-lg border px-3 py-2 text-sm",
+            actionFeedback.ok
+              ? "border-success/30 bg-success/5 text-success"
+              : "border-critical/30 bg-critical/5 text-critical"
+          )}
+        >
+          {actionFeedback.ok ? (
+            <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
+          ) : (
+            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+          )}
+          <span>{actionFeedback.message}</span>
+        </div>
+      )}
+
+      {item.errors.length > 0 && (
+        <div className="mt-3 text-sm text-critical">
+          {item.errors[0]}
+        </div>
+      )}
     </div>
   );
 }
