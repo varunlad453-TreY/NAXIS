@@ -733,7 +733,6 @@ Consumers subscribe to `naxis:incidents` and can filter by `severity`, `site_id`
 | `backend/tests/test_correlation_telemetry.py` | 173 | 9 tests for DB persistence layer + API endpoint |
 | `backend/tests/test_correlation_pipeline.py` | 340 | 9 full-pipeline integration tests (incl. 2 Redis pub/sub tests) |
 | `backend/tests/test_redis_client.py` | 195 | 11 unit tests for RedisClient (publish, health, warm_up, close, singleton) |
-| `docs/5_handoff.md` | — | AI session handoff (not for human onboarding) |
 | `docs/why/why-correlation-engine.md` | 216 | Product rationale and business case for the engine |
 
 ---

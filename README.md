@@ -140,7 +140,7 @@ REDIS_ENABLED=false
 - **[docs/TELEMETRY_ARCHITECTURE.md](docs/TELEMETRY_ARCHITECTURE.md)** — Collector → ledger → UI health architecture.
 - **[docs/CORRELATION_ARCHITECTURE.md](docs/CORRELATION_ARCHITECTURE.md)** — Correlation engine (Stage 1 + Stage 2) design.
 - **[docs/FRONTEND_ARCHITECTURE.md](docs/FRONTEND_ARCHITECTURE.md)** — Frontend structure and patterns.
-- **[docs/handoff docs/](docs/handoff%20docs/)** — Per-session change logs (19 sessions).
+- **[docs/why/](docs/why/)** — Product rationale for major features.
 
 ## License
 

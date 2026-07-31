@@ -380,7 +380,6 @@ Current: **300+ tests, 0 failures**.
 | `docs/FRONTEND_ARCHITECTURE.md` | Frontend structure and patterns |
 | `docs/TOPOLOGY_VISUALIZATION.md` | Topology graph rendering |
 | `docs/Plans/` | Session plans (each numbered session has a plan) |
-| `docs/handoff docs/` | AI session handoffs (detailed per-session changes) |
 | `docs/why/` | Product rationale for major features |
 
 ---
