@@ -191,9 +191,20 @@ class VeloCloudLinksCollector:
                 links = edge.get("links", [])
                 if not isinstance(links, list):
                     continue
+                site = edge.get("site") or {}
+                edge_site_id = str(site.get("id", "")) or str(edge.get("siteId", ""))
+                edge_site_name = site.get("name", "") or edge.get("siteName", "")
                 for link in links:
                     try:
-                        events.append(self._normalize_link(link, edge_id, edge_name))
+                        events.append(
+                            self._normalize_link(
+                                link,
+                                edge_id,
+                                edge_name,
+                                site_id=edge_site_id,
+                                site_name=edge_site_name,
+                            )
+                        )
                     except Exception:
                         logger.exception("Failed to normalize VeloCloud link")
 
@@ -206,7 +217,7 @@ class VeloCloudLinksCollector:
             logger.exception("VeloCloud links collection failed")
         return outcome
 
-    def _normalize_link(self, raw: Dict[str, Any], edge_id: str = "", edge_name: str = "") -> UnifiedEvent:
+    def _normalize_link(self, raw: Dict[str, Any], edge_id: str = "", edge_name: str = "", site_id: str = "", site_name: str = "") -> UnifiedEvent:
         link_id = str(raw.get("id", f"vc-link-{uuid4().hex[:8]}"))
         edge_id = str(raw.get("edgeId", "")) or edge_id
         edge_name = raw.get("edgeName", raw.get("edge", "")) or edge_name
@@ -256,8 +267,8 @@ class VeloCloudLinksCollector:
                 device_id=edge_id or link_id,
                 device_name=edge_name or display_name,
                 device_type="edge",
-                site_id="",
-                site_name="",
+                site_id=site_id or None,
+                site_name=site_name or None,
             ),
             tags=["sdwan", "velocloud", "link"],
             metadata={
@@ -296,12 +307,23 @@ class VeloCloudTunnelsCollector:
             for edge in self._edges_data:
                 edge_id = str(edge.get("id", ""))
                 edge_name = edge.get("name", "unknown")
+                site = edge.get("site") or {}
+                edge_site_id = str(site.get("id", "")) or str(edge.get("siteId", ""))
+                edge_site_name = site.get("name", "") or edge.get("siteName", "")
                 tunnels = edge.get("tunnels", edge.get("edgeTunnels", []))
                 if not isinstance(tunnels, list):
                     continue
                 for tunnel in tunnels:
                     try:
-                        events.append(self._normalize_tunnel(tunnel, edge_id, edge_name))
+                        events.append(
+                            self._normalize_tunnel(
+                                tunnel,
+                                edge_id,
+                                edge_name,
+                                site_id=edge_site_id,
+                                site_name=edge_site_name,
+                            )
+                        )
                     except Exception:
                         logger.exception("Failed to normalize VeloCloud tunnel")
 
@@ -314,7 +336,7 @@ class VeloCloudTunnelsCollector:
             logger.exception("VeloCloud tunnels collection failed")
         return outcome
 
-    def _normalize_tunnel(self, raw: Dict[str, Any], edge_id: str = "", edge_name: str = "") -> UnifiedEvent:
+    def _normalize_tunnel(self, raw: Dict[str, Any], edge_id: str = "", edge_name: str = "", site_id: str = "", site_name: str = "") -> UnifiedEvent:
         tunnel_id = str(raw.get("id", f"vc-tunnel-{uuid4().hex[:8]}"))
         edge_id = str(raw.get("edgeId", "")) or edge_id
         edge_name = raw.get("edgeName", raw.get("edge", "")) or edge_name
@@ -359,8 +381,8 @@ class VeloCloudTunnelsCollector:
                 device_id=edge_id or tunnel_id,
                 device_name=edge_name or "unknown",
                 device_type="edge",
-                site_id="",
-                site_name="",
+                site_id=site_id or None,
+                site_name=site_name or None,
             ),
             tags=["sdwan", "velocloud", "tunnel"],
             metadata={

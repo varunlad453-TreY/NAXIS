@@ -15,6 +15,7 @@ from datetime import datetime
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from api.routes.correlation import router as correlation_router
 from api.routes.devices import router as devices_router
 from api.routes.integrations import router as integrations_router
 from api.routes.events import router as events_router
@@ -85,6 +86,7 @@ async def add_process_time_header(request, call_next):
 
 
 app.include_router(health_router)
+app.include_router(correlation_router)
 app.include_router(incidents_router)
 app.include_router(events_router)
 app.include_router(devices_router)

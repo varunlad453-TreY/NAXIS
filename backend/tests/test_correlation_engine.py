@@ -187,12 +187,15 @@ class TestCorrelationEngineProcessEvents:
 
     @pytest.mark.asyncio
     async def test_confidence_score_calculation(self, default_config, site_sfo_events):
-        """Confidence should be a float in [0, 1]."""
+        """Confidence should be a float in [0, 1] with breakdown."""
         engine = CorrelationEngine(config=default_config)
         incidents = await engine.process_events(site_sfo_events)
         assert len(incidents) == 1
-        assert 0.0 <= incidents[0].confidence_score <= 1.0
-        assert incidents[0].confidence_score > 0.5
+        i = incidents[0]
+        assert 0.0 <= i.confidence_score <= 1.0
+        assert i.confidence_score > 0.5
+        assert i.confidence_breakdown is not None
+        assert i.confidence_breakdown["total"] == pytest.approx(i.confidence_score, rel=1e-3)
 
     @pytest.mark.asyncio
     async def test_incident_title_generated(self, default_config, site_sfo_events):
@@ -417,6 +420,19 @@ class TestCorrelationEngineStage2:
         assert "core-switch-01" in i.affected_devices
         assert "ap-sfo-101" in i.affected_devices
 
+        # Root cause / symptom split
+        assert "core-switch-01" in i.root_device_ids
+        assert len(i.root_device_ids) == 1
+        for leaf in ("ap-sfo-101", "ap-sfo-102", "ap-sfo-103"):
+            assert leaf in i.symptom_device_ids
+        assert len(i.symptom_device_ids) == 3
+
+        # Confidence breakdown stored
+        assert i.confidence_breakdown is not None
+        for key in ("event_score", "avg_severity", "device_score", "total"):
+            assert key in i.confidence_breakdown
+            assert isinstance(i.confidence_breakdown[key], float)
+
     @pytest.mark.asyncio
     async def test_cascade_multi_infra_produces_separate_incidents(
         self, cascade_events_multi_infra, mock_topology_provider, topology_aware_config
@@ -486,7 +502,10 @@ class TestCorrelationEngineStage2:
         )
         incidents = await engine.process_events(cascade_events_same_site)
         assert len(incidents) == 1
-        assert incidents[0].confidence_score > 0.5
+        i = incidents[0]
+        assert i.confidence_score > 0.5
+        assert i.confidence_breakdown is not None
+        assert i.confidence_breakdown["total"] == pytest.approx(i.confidence_score, rel=1e-3)
 
     @pytest.mark.asyncio
     async def test_cascade_preserves_stage1_when_no_topology(
@@ -535,6 +554,11 @@ class TestCorrelationEngineStage2:
         i = incidents[0]
         assert len(i.related_event_ids) == 3
         assert i.confidence_score > 0
+        # Flat incident (no cascade) — root is the highest-severity device
+        assert i.root_device_ids == ["edge-sfo-01"]
+        assert i.symptom_device_ids == []
+        assert i.confidence_breakdown is not None
+        assert i.confidence_breakdown["total"] == pytest.approx(i.confidence_score, rel=1e-3)
         assert "SFO" in i.title or "cascade" in i.title.lower() or "dependent" in i.title.lower()
 
     @pytest.mark.asyncio
@@ -800,13 +824,19 @@ class TestConfidenceScore:
     """Tests for calculate_confidence_score."""
 
     def test_empty_events_returns_zero(self):
-        assert calculate_confidence_score([]) == 0.0
+        result = calculate_confidence_score([])
+        assert result.total == 0.0
+        assert result.event_score == 0.0
+        assert result.avg_severity == 0.0
+        assert result.device_score == 0.0
 
     def test_single_event_baseline(self):
         now = datetime.utcnow()
         event = make_event("evt-1", severity=EventSeverity.MAJOR, timestamp=now)
-        score = calculate_confidence_score([event])
-        assert 0.0 <= score <= 1.0
+        result = calculate_confidence_score([event])
+        assert 0.0 <= result.total <= 1.0
+        assert result.event_score > 0.0
+        assert result.avg_severity > 0.0
 
     def test_more_events_higher_confidence(self):
         now = datetime.utcnow()
@@ -818,15 +848,16 @@ class TestConfidenceScore:
         ]
         score_single = calculate_confidence_score(single)
         score_multi = calculate_confidence_score(multi)
-        assert score_multi > score_single
+        assert score_multi.total > score_single.total
 
     def test_critical_events_score_higher(self):
         now = datetime.utcnow()
         critical = [make_event("evt-c", severity=EventSeverity.CRITICAL, timestamp=now)]
         info = [make_event("evt-i", severity=EventSeverity.INFO, timestamp=now)]
-        score_crit = calculate_confidence_score(critical)
-        score_info = calculate_confidence_score(info)
-        assert score_crit > score_info
+        result_crit = calculate_confidence_score(critical)
+        result_info = calculate_confidence_score(info)
+        assert result_crit.total > result_info.total
+        assert result_crit.avg_severity > result_info.avg_severity
 
     def test_multiple_devices_higher_confidence(self):
         now = datetime.utcnow()
@@ -840,7 +871,10 @@ class TestConfidenceScore:
             make_event("evt-4", severity=EventSeverity.CRITICAL, device_id="dev-2",
                       timestamp=now + timedelta(seconds=10)),
         ]
-        assert calculate_confidence_score(multi_device) > calculate_confidence_score(single_device)
+        sd = calculate_confidence_score(single_device)
+        md = calculate_confidence_score(multi_device)
+        assert md.total > sd.total
+        assert md.device_score > sd.device_score
 
     def test_score_clamped_to_range(self):
         now = datetime.utcnow()
@@ -849,8 +883,21 @@ class TestConfidenceScore:
                       timestamp=now + timedelta(seconds=i))
             for i in range(100)
         ]
-        score = calculate_confidence_score(many)
-        assert 0.0 <= score <= 1.0
+        result = calculate_confidence_score(many)
+        assert 0.0 <= result.total <= 1.0
+
+    def test_confidence_breakdown_to_dict_includes_all_factors(self):
+        """to_dict() should return all four factor keys."""
+        now = datetime.utcnow()
+        events = [
+            make_event("evt-1", severity=EventSeverity.CRITICAL, timestamp=now, device_id="dev-1"),
+            make_event("evt-2", severity=EventSeverity.MAJOR, timestamp=now + timedelta(seconds=10), device_id="dev-2"),
+        ]
+        result = calculate_confidence_score(events)
+        d = result.to_dict()
+        for key in ("event_score", "avg_severity", "device_score", "total"):
+            assert key in d
+            assert isinstance(d[key], float)
 
 
 class TestIncidentTitle:
@@ -1176,3 +1223,163 @@ class TestEngineTelemetry:
         assert stats["last_duration_ms"] == 0.0
         assert stats["last_cycle_events"] == 0
         assert stats["last_cycle_incidents"] == 0
+
+
+# ==============================================================================
+# Phase 2: Root-Cause Dedup + Recovery Resolution
+# ==============================================================================
+
+
+class TestRootCauseDedupAndRecovery:
+    """Stable root-cause incident IDs + DEVICE_REACHABLE resolution."""
+
+    @pytest.mark.asyncio
+    async def test_stable_incident_id_for_same_root_cause(self, default_config):
+        """New events for the same device+site+category reuse the incident ID."""
+        engine = CorrelationEngine(config=default_config)
+        now = datetime.utcnow()
+
+        incidents1 = await engine.process_events([
+            make_event("u1", severity=EventSeverity.CRITICAL,
+                       event_type=EventType.DEVICE_UNREACHABLE,
+                       device_id="ap-1", site_id="site-a", timestamp=now),
+        ])
+        assert len(incidents1) == 1
+        assert incidents1[0].root_device_ids == ["ap-1"]
+
+        incidents2 = await engine.process_events([
+            make_event("u2", severity=EventSeverity.CRITICAL,
+                       event_type=EventType.DEVICE_UNREACHABLE,
+                       device_id="ap-1", site_id="site-a",
+                       timestamp=now + timedelta(minutes=2)),
+        ])
+        assert len(incidents2) == 1
+        assert incidents2[0].incident_id == incidents1[0].incident_id
+        assert incidents2[0].affected_sites == ["site-a"]
+
+    @pytest.mark.asyncio
+    async def test_different_devices_get_different_incident_ids(self, default_config):
+        """Different root devices (different sites) → separate incidents."""
+        engine = CorrelationEngine(config=default_config)
+        incidents = await engine.process_events([
+            make_event("d1", severity=EventSeverity.CRITICAL,
+                       device_id="ap-1", site_id="site-a"),
+            make_event("d2", severity=EventSeverity.CRITICAL,
+                       device_id="ap-2", site_id="site-b",
+                       timestamp=datetime.utcnow() + timedelta(seconds=30)),
+        ])
+        assert len(incidents) == 2
+        assert incidents[0].incident_id != incidents[1].incident_id
+
+    @pytest.mark.asyncio
+    async def test_issue_type_is_part_of_key(self, default_config):
+        """Same device, different issue category → separate incidents."""
+        engine = CorrelationEngine(config=default_config)
+        now = datetime.utcnow()
+        incident_system = await engine.process_events([
+            make_event("s1", severity=EventSeverity.CRITICAL,
+                       category=EventCategory.SYSTEM,
+                       event_type=EventType.DEVICE_UNREACHABLE,
+                       device_id="ap-1", site_id="site-a", timestamp=now),
+        ])
+        incident_connectivity = await engine.process_events([
+            make_event("c1", severity=EventSeverity.CRITICAL,
+                       category=EventCategory.CONNECTIVITY,
+                       event_type=EventType.LINK_DOWN,
+                       device_id="ap-1", site_id="site-a",
+                       timestamp=now + timedelta(minutes=5)),
+        ])
+        assert incident_system[0].incident_id != incident_connectivity[0].incident_id
+
+    @pytest.mark.asyncio
+    async def test_recovery_event_resolves_open_incident(self, default_config, monkeypatch):
+        """DEVICE_REACHABLE resolves open incidents for the recovered device."""
+        resolved: List[str] = []
+
+        async def fake_resolve(device_ids):
+            resolved.extend(device_ids)
+            return 1
+
+        monkeypatch.setattr(
+            "backend.shared.database.incidents.resolve_open_incidents_for_devices",
+            fake_resolve,
+        )
+        engine = CorrelationEngine(config=default_config)
+        now = datetime.utcnow()
+        await engine.process_events([
+            make_event("u1", severity=EventSeverity.CRITICAL,
+                       event_type=EventType.DEVICE_UNREACHABLE,
+                       device_id="ap-1", site_id="site-a", timestamp=now),
+        ])
+        await engine.process_events([
+            make_event("r1", severity=EventSeverity.INFO,
+                       event_type=EventType.DEVICE_REACHABLE,
+                       device_id="ap-1", site_id="site-a",
+                       timestamp=now + timedelta(minutes=10)),
+        ])
+        assert resolved == ["ap-1"]
+
+    @pytest.mark.asyncio
+    async def test_recovery_after_outage_in_same_cycle(self, default_config, monkeypatch):
+        """Recovery that arrives with its own outage still resolves it."""
+        resolved: List[str] = []
+
+        async def fake_resolve(device_ids):
+            resolved.extend(device_ids)
+            return 1
+
+        monkeypatch.setattr(
+            "backend.shared.database.incidents.resolve_open_incidents_for_devices",
+            fake_resolve,
+        )
+        engine = CorrelationEngine(config=default_config)
+        now = datetime.utcnow()
+        await engine.process_events([
+            make_event("u1", severity=EventSeverity.CRITICAL,
+                       event_type=EventType.DEVICE_UNREACHABLE,
+                       device_id="ap-1", site_id="site-a", timestamp=now),
+            make_event("r1", severity=EventSeverity.INFO,
+                       event_type=EventType.DEVICE_REACHABLE,
+                       device_id="ap-1", site_id="site-a",
+                       timestamp=now + timedelta(minutes=1)),
+        ])
+        assert resolved == ["ap-1"]
+
+    @pytest.mark.asyncio
+    async def test_recovery_db_failure_does_not_crash(self, default_config, monkeypatch):
+        """DB failure during resolution is swallowed, not propagated."""
+        def boom(*args, **kwargs):
+            raise RuntimeError("db down")
+
+        monkeypatch.setattr(
+            "backend.shared.database.incidents.resolve_open_incidents_for_devices",
+            boom,
+        )
+        engine = CorrelationEngine(config=default_config)
+        await engine.process_events([
+            make_event("r1", severity=EventSeverity.INFO,
+                       event_type=EventType.DEVICE_REACHABLE,
+                       device_id="ap-1", site_id="site-a"),
+        ])
+
+    @pytest.mark.asyncio
+    async def test_recovery_only_cycle_produces_no_incidents(self, default_config, monkeypatch):
+        """INFO recovery events never create incidents themselves."""
+        resolved: List[str] = []
+
+        async def fake_resolve(device_ids):
+            resolved.extend(device_ids)
+            return 0
+
+        monkeypatch.setattr(
+            "backend.shared.database.incidents.resolve_open_incidents_for_devices",
+            fake_resolve,
+        )
+        engine = CorrelationEngine(config=default_config)
+        incidents = await engine.process_events([
+            make_event("r1", severity=EventSeverity.INFO,
+                       event_type=EventType.DEVICE_REACHABLE,
+                       device_id="ap-1", site_id="site-a"),
+        ])
+        assert incidents == []
+        assert resolved == ["ap-1"]

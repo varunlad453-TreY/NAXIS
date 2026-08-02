@@ -52,6 +52,10 @@ except ImportError:  # pragma: no cover - supports both entry-point styles
         EventType,
         UnifiedEvent,
     )
+try:
+    from backend.worker.collectors.mist_ap_history import record_snapshots
+except ImportError:  # pragma: no cover - supports both entry-point styles
+    from worker.collectors.mist_ap_history import record_snapshots
 
 logger = logging.getLogger(__name__)
 
@@ -87,11 +91,15 @@ class MistTopologyApiError(Exception):
 
 class MistApHistoryCollector:
     """
-    Collects AP lifecycle history (firmware changes, site moves, reboots,
-    uptime trends) from ``/api/v1/sites/{site_id}/stats/devices``.
+    Collects AP lifecycle history and emits reachability events only on
+    state transitions.
 
-    Uses the ``history`` / ``last_seen`` / ``uptime`` / ``version`` fields
-    available on the device stats response.
+    Polls ``/api/v1/sites/{site_id}/stats/devices`` and diffs each poll
+    against the ``mist_ap_history`` ledger (diff-on-write). A CRITICAL
+    ``device_unreachable`` event is emitted only when a device flips
+    reachable -> unreachable, and an INFO ``device_reachable`` recovery
+    event when it flips back. A device that stays down across many polls
+    produces exactly one event, not one per poll.
     """
 
     COLLECTOR_ID = "mist-ap-history"
@@ -112,54 +120,110 @@ class MistApHistoryCollector:
         self,
         site_ids: List[str],
         site_devices: Dict[str, List[Dict]],
+        site_map: Optional[Dict[str, str]] = None,
     ) -> CollectorOutcome:
         outcome = CollectorOutcome(
             collector_id=self.COLLECTOR_ID,
             source_system=self.SOURCE_SYSTEM,
         )
         try:
-            events: List[UnifiedEvent] = []
+            snapshots: List[Dict[str, Any]] = []
             for site_id in site_ids:
                 devices = site_devices.get(site_id, [])
                 for dev in devices:
                     try:
-                        event = self._normalize(site_id, dev)
-                        if event is not None:
-                            events.append(event)
+                        snapshot = self._to_snapshot(site_id, dev, site_map)
+                        if snapshot is not None:
+                            snapshots.append(snapshot)
                     except Exception:
                         logger.exception(
-                            "Failed to normalize AP history for %s",
+                            "Failed to snapshot AP history for %s",
                             dev.get("mac", "?"),
                         )
+
+            transitions = await record_snapshots(snapshots)
+
+            events: List[UnifiedEvent] = []
+            for t in transitions:
+                event = self._event_from_transition(t)
+                if event is not None:
+                    events.append(event)
 
             outcome.events = events
             outcome.mark_success(rows_written=len(events))
             outcome.metadata["sites_scanned"] = len(site_ids)
-            logger.info("Mist AP history: %d events from %d sites", len(events), len(site_ids))
+            outcome.metadata["devices_seen"] = len(snapshots)
+            outcome.metadata["transitions"] = len(transitions)
+            logger.info(
+                "Mist AP history: %d transition event(s) from %d devices across %d sites",
+                len(events),
+                len(snapshots),
+                len(site_ids),
+            )
         except Exception as exc:
             outcome.mark_error(str(exc))
             logger.exception("Mist AP history collection failed")
         return outcome
 
-    def _normalize(self, site_id: str, raw: Dict[str, Any]) -> Optional[UnifiedEvent]:
-        """Normalize a device stats entry into an AP lifecycle event."""
+    def _to_snapshot(
+        self,
+        site_id: str,
+        raw: Dict[str, Any],
+        site_map: Optional[Dict[str, str]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Build a ledger snapshot row from a device stats entry."""
         mac = raw.get("mac", "")
-        name = raw.get("name", mac or "unknown")
-        model = raw.get("model", "")
-        uptime = int(raw.get("uptime", 0) or 0)
-        version = raw.get("version", "")
-        connected = raw.get("connected", False)
-
         if not mac:
             return None
 
-        # Severity: unreachable devices are critical
-        if not connected:
+        connected = bool(raw.get("connected", False))
+        site_name = site_map.get(site_id, "") if site_map else ""
+        return {
+            "device_id": mac,
+            "serial": raw.get("serial", "") or mac,
+            "mac": mac,
+            "hostname": raw.get("name", "") or mac,
+            "model": raw.get("model", "") or "",
+            "site_id": site_id,
+            "site_name": site_name or f"site-{site_id[:8]}",
+            "firmware_version": raw.get("version", "") or "",
+            "reachability": "reachable" if connected else "unreachable",
+            "uptime_seconds": int(raw.get("uptime", 0) or 0),
+        }
+
+    def _event_from_transition(
+        self, transition: Dict[str, Any]
+    ) -> Optional[UnifiedEvent]:
+        """Map a ledger reachability transition to a UnifiedEvent.
+
+        Only first-sighting-down, reachable -> unreachable (outage), and
+        unreachable -> reachable (recovery) produce events. First-sighting
+        reachable and steady states produce nothing.
+        """
+        cur = transition.get("cur_reachability")
+        prev = transition.get("prev_reachability")
+        if prev is None:
+            if cur != "unreachable":
+                return None
             severity = EventSeverity.CRITICAL
             event_type = EventType.DEVICE_UNREACHABLE
-        else:
+        elif prev == "reachable" and cur == "unreachable":
+            severity = EventSeverity.CRITICAL
+            event_type = EventType.DEVICE_UNREACHABLE
+        elif prev == "unreachable" and cur == "reachable":
             severity = EventSeverity.INFO
             event_type = EventType.DEVICE_REACHABLE
+        else:
+            return None
+
+        snapshot = transition["snapshot"]
+        mac = snapshot.get("mac", "")
+        name = snapshot.get("hostname", mac or "unknown")
+        model = snapshot.get("model", "")
+        uptime = snapshot.get("uptime_s", 0)
+        version = snapshot.get("firmware", "")
+        site_id = snapshot.get("site_id", "")
+        site_name = snapshot.get("site_name", "") or f"site-{site_id[:8]}"
 
         description = f"AP {name} ({mac}) — uptime: {uptime}s"
         if version:
@@ -183,7 +247,7 @@ class MistApHistoryCollector:
                 device_type="ap",
                 device_model=model,
                 site_id=site_id,
-                site_name=f"site-{site_id[:8]}",
+                site_name=site_name,
             ),
             tags=["wireless", "mist", "history", "topology"],
             metadata={
@@ -191,10 +255,11 @@ class MistApHistoryCollector:
                 "mist_model": model,
                 "mist_uptime_seconds": uptime,
                 "mist_firmware": version,
-                "mist_connected": connected,
+                "mist_connected": cur == "reachable",
                 "mist_site_id": site_id,
+                "reachability_transition": f"{prev} -> {cur}",
             },
-            raw_event=raw,
+            raw_event=snapshot,
         )
 
 
@@ -863,6 +928,7 @@ class MistTopologyCollector:
             "Authorization": f"Token {self._api_key}",
             "Content-Type": "application/json",
         }
+        self._site_map: Dict[str, str] = {}
 
     @property
     def is_configured(self) -> bool:
@@ -902,7 +968,7 @@ class MistTopologyCollector:
             site_devices = await self._fetch_all_site_devices(client, site_ids)
 
             # Run each sub-collector, passing pre-fetched device stats
-            outcomes.append(await ap_history.collect(site_ids, site_devices))
+            outcomes.append(await ap_history.collect(site_ids, site_devices, self._site_map))
             outcomes.append(await ap_rf.collect(site_ids, site_devices))
             outcomes.append(await client_topology.collect())
             outcomes.append(await wired_uplink.collect(site_ids, site_devices))
@@ -934,13 +1000,24 @@ class MistTopologyCollector:
         return result
 
     async def _fetch_site_ids(self, client: httpx.AsyncClient) -> List[str]:
-        """Fetch all site IDs for the org (shared across sub-collectors)."""
+        """Fetch all site IDs (and names) for the org.
+
+        Also populates ``self._site_map`` ({site_id: site_name}) which is
+        shared with the AP history collector so events carry real site
+        names instead of ``site-<uuid8>`` placeholders.
+        """
         try:
             resp = await client.get(
                 f"{self._base_url}/api/v1/orgs/{self._org_id}/sites"
             )
             if resp.status_code == 200:
-                return [s["id"] for s in resp.json() if s.get("id")]
+                sites = resp.json()
+                self._site_map = {
+                    s["id"]: s.get("name", "")
+                    for s in sites
+                    if s.get("id")
+                }
+                return list(self._site_map.keys())
         except Exception:
             logger.exception("Failed to fetch Mist sites for topology")
         return []

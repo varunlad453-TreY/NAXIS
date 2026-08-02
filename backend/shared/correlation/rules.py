@@ -199,26 +199,45 @@ def group_events_by_site_and_time(
     return groups
 
 
-def calculate_confidence_score(events: List[UnifiedEvent]) -> float:
+@dataclass
+class ConfidenceBreakdown:
+    """Individual factor scores that compose the overall confidence score.
+
+    Stored at correlation time so the breakdown is frozen when the incident
+    is created — not recomputed later from potentially-changed source data.
     """
-    Calculate confidence score for a correlated incident.
+    event_score: float       # Logarithmic scale from event count
+    avg_severity: float      # Weighted mean of event severities
+    device_score: float      # Normalized unique device count
+    total: float             # Weighted combination [0.0, 1.0]
+
+    def to_dict(self) -> dict:
+        return {
+            "event_score": round(self.event_score, 4),
+            "avg_severity": round(self.avg_severity, 4),
+            "device_score": round(self.device_score, 4),
+            "total": round(self.total, 4),
+        }
+
+
+def calculate_confidence_score(events: List[UnifiedEvent]) -> ConfidenceBreakdown:
+    """
+    Calculate confidence score + factor breakdown for a correlated incident.
 
     Factors:
-      - Event count (more events = higher confidence)
-      - Severity distribution (more CRITICAL = higher confidence)
-      - Device diversity (more devices = higher confidence)
+      - Event count (more events = higher confidence) — logarithmic scale
+      - Severity distribution (more CRITICAL = higher confidence) — weighted mean
+      - Device diversity (more devices = higher confidence) — normalized by 5
 
-    Returns: float in [0.0, 1.0]
+    Returns: ConfidenceBreakdown with sub-scores and total in [0.0, 1.0]
     """
     if not events:
-        return 0.0
+        return ConfidenceBreakdown(event_score=0.0, avg_severity=0.0, device_score=0.0, total=0.0)
 
-    # Base score from event count (logarithmic scale)
     import math
 
     event_score = min(1.0, math.log(len(events) + 1) / math.log(10))
 
-    # Severity score
     severity_weights = {
         EventSeverity.CRITICAL: 1.0,
         EventSeverity.MAJOR: 0.7,
@@ -231,16 +250,20 @@ def calculate_confidence_score(events: List[UnifiedEvent]) -> float:
         events
     )
 
-    # Device diversity score
     unique_devices = len(
         {e.device.device_id for e in events if e.device and e.device.device_id}
     )
-    device_score = min(1.0, unique_devices / 5.0)  # Normalize by 5 devices
+    device_score = min(1.0, unique_devices / 5.0)
 
-    # Weighted combination
-    confidence = (event_score * 0.4) + (avg_severity * 0.4) + (device_score * 0.2)
+    total = (event_score * 0.4) + (avg_severity * 0.4) + (device_score * 0.2)
+    total = min(1.0, max(0.0, total))
 
-    return min(1.0, max(0.0, confidence))
+    return ConfidenceBreakdown(
+        event_score=event_score,
+        avg_severity=avg_severity,
+        device_score=device_score,
+        total=total,
+    )
 
 
 def generate_incident_title(events: List[UnifiedEvent]) -> str:

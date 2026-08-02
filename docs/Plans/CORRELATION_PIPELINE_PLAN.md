@@ -291,35 +291,46 @@ async def _load_processed_from_db(self) -> None:
         logger.info("No existing incidents found — starting fresh")
 ```
 
-**B. Make incident_id deterministic from its events:**
+**B. Make incident_id deterministic from its root cause (implemented):**
 ```python
-import hashlib
+@staticmethod
+def _compute_incident_id(events: List[UnifiedEvent], root_device_id: str = None) -> str:
+    """Deterministic incident ID from the root-cause key:
+    (site_id, root device, primary issue category).
 
-def _compute_incident_id(event_ids: List[str]) -> str:
-    """Deterministic incident ID from sorted event IDs.
-    Re-processing the same events produces the same incident_id."""
-    sorted_ids = sorted(event_ids)
-    hash_input = ",".join(sorted_ids).encode("utf-8")
-    return f"inc-{hashlib.sha256(hash_input).hexdigest()[:16]}"
+    New events describing the same underlying failure (different cycles,
+    different collectors) produce the same incident_id, so upsert_incident's
+    ON CONFLICT DO UPDATE merges them into one live incident instead of
+    creating duplicates."""
+    site_id = next((e.device.site_id for e in events if e.device and e.device.site_id), "")
+    if not root_device_id:
+        root_device_id = CorrelationEngine._primary_device_id(events)
+    category = Counter(e.category.value for e in events).most_common(1)[0][0]
+    material = f"{site_id}|{root_device_id or 'unknown'}|{category}"
+    return f"inc-{hashlib.sha256(material.encode('utf-8')).hexdigest()[:16]}"
 ```
 
-Update `process_events()` to pass event IDs into `Incident()` constructor:
-```python
-incident = Incident(
-    incident_id=self._compute_incident_id(all_event_ids),
-    title=title,
-    ...
-)
+Flat incidents also set `root_device_ids` (the highest-severity device) so
+recovery matching has a root to match against.
+
+**Recovery resolution:** `DEVICE_REACHABLE` (INFO) events no longer form
+incidents (they are filtered below `min_severity`). Instead `process_events`
+collects them each cycle and resolves OPEN incidents whose root device
+recovered via `resolve_open_incidents_for_devices()`:
+
+```sql
+UPDATE incidents
+SET status = 'resolved', updated_at = NOW()
+WHERE status = 'open' AND root_device_ids && $1::text[];
 ```
 
-**Why deterministic IDs:**
-- Restart produces the same incident_id → `ON CONFLICT DO UPDATE` deduplicates
-- Same events processed twice = one incident, not two
-- No special dedup logic needed
+Only `open` incidents are auto-resolved; operator-managed states
+(INVESTIGATING, MITIGATED, ...) are left alone.
 
-**Verification:**
-- Restart worker, same events flow → incident count doesn't increase
-- Deterministic IDs are reproducible across restarts
+**Verification (Phase 2):**
+- Restart worker, same root cause flows repeatedly → incident count stays flat
+- `device_unreachable` (root set) → `device_reachable` → incident status `resolved`
+- Suite: 364 passed / 10 pre-existing failures
 
 ---
 

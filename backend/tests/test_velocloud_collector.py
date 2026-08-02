@@ -819,6 +819,64 @@ class TestVeloCloudSkippedCollectors:
         assert outcome.status == "skipped"
 
 
+class TestVeloCloudLinkTunnelSite:
+    """Site info stamped from edge into link/tunnel events (Phase 3)."""
+
+    def _edge_with_site(self, **edge_overrides):
+        base = _make_edge_raw(
+            {
+                "site": {"id": 101, "name": "SFO-DC"},
+                "siteId": 101,
+                "siteName": "SFO-DC",
+                "links": [
+                    {
+                        "id": "link-1",
+                        "displayName": "Comcast",
+                        "state": "DOWN",
+                        "edgeId": 42,
+                    }
+                ],
+                "tunnels": [
+                    {
+                        "id": "tun-1",
+                        "state": "DOWN",
+                        "edgeId": 42,
+                        "peerName": "mpls-peer",
+                    }
+                ],
+            }
+        )
+        base.update(edge_overrides)
+        return base
+
+    @pytest.mark.asyncio
+    async def test_link_event_gets_site(self):
+        c = VeloCloudLinksCollector([self._edge_with_site()])
+        outcome = await c.collect()
+        evt = outcome.events[0]
+        assert evt.event_type == EventType.LINK_DOWN
+        assert evt.device.site_id == "101"
+        assert evt.device.site_name == "SFO-DC"
+
+    @pytest.mark.asyncio
+    async def test_tunnel_event_gets_site(self):
+        c = VeloCloudTunnelsCollector([self._edge_with_site()])
+        outcome = await c.collect()
+        evt = outcome.events[0]
+        assert evt.event_type == EventType.TUNNEL_DOWN
+        assert evt.device.site_id == "101"
+        assert evt.device.site_name == "SFO-DC"
+
+    @pytest.mark.asyncio
+    async def test_link_site_falls_back_to_empty(self):
+        edge = self._edge_with_site()
+        edge.pop("site", None)
+        edge.pop("siteId", None)
+        c = VeloCloudLinksCollector([edge])
+        outcome = await c.collect()
+        assert outcome.events[0].device.site_id is None
+
+
 # ======================================================================
 # Section C-3: _map_vc_severity
 # ======================================================================

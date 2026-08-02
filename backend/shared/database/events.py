@@ -3,6 +3,7 @@ Events repository — Postgres CRUD operations.
 """
 
 import logging
+import json
 from datetime import datetime
 from typing import List, Optional
 
@@ -19,6 +20,13 @@ from ..models.event import (
 from .client import db
 
 logger = logging.getLogger(__name__)
+
+
+def _as_json(value):
+    """asyncpg returns jsonb as str; tests may pass dicts."""
+    if value is None:
+        return None
+    return json.loads(value) if isinstance(value, str) else value
 
 
 def _row_to_event(row) -> UnifiedEvent:
@@ -63,8 +71,8 @@ def _row_to_event(row) -> UnifiedEvent:
         tags=list(row["tags"] or []),
         incident_id=row["incident_id"] or None,
         correlation_key=row["correlation_key"] or None,
-        metadata=dict(row["metadata"]) if row["metadata"] else {},
-        raw_event=dict(row["raw_event"]) if row["raw_event"] else None,
+        metadata=_as_json(row["metadata"]) or {},
+        raw_event=_as_json(row["raw_event"]),
     )
 
 

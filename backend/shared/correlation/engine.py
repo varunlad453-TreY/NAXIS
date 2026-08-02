@@ -21,21 +21,26 @@ or device-type heuristics as fallback.
 Restart resilience:
   - On first process_events() call, loads already-linked event IDs from
     the incidents table so past events are not re-processed.
-  - Incident IDs are deterministic (SHA-256 of sorted related event IDs)
-    so re-processing the same events produces the same incident_id.
+  - Incident IDs are deterministic (SHA-256 of the root-cause key: site,
+    root device, issue category), so new events for the same underlying
+    failure merge into the same incident (upsert) and re-processing the
+    same events is idempotent.
+  - DEVICE_REACHABLE recovery events resolve open incidents whose root
+    cause recovered, so incidents don't linger after the outage ends.
 """
 
 import hashlib
 import logging
 import time
-from collections import OrderedDict
+from collections import Counter, OrderedDict
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Set
 
-from ..models.event import EventSeverity, UnifiedEvent
+from ..models.event import EventSeverity, EventType, UnifiedEvent
 from ..models.incident import Incident, IncidentSeverity, IncidentStatus
 from .rules import (
     CascadeGroup,
+    ConfidenceBreakdown,
     CorrelationConfig,
     SiteTimeWindowRule,
     TopologyCascadeRule,
@@ -238,18 +243,54 @@ class CorrelationEngine:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _compute_incident_id(event_ids: List[str]) -> str:
+    def _compute_incident_id(
+        events: List[UnifiedEvent], root_device_id: str = None
+    ) -> str:
         """
-        Deterministic incident ID derived from the sorted, deduplicated
-        set of related event IDs.
+        Deterministic incident ID derived from the root cause:
+        (site_id, root device, primary issue category).
 
-        Re-processing the exact same set of events produces the same
-        incident_id, which means ON CONFLICT DO UPDATE in upsert_incident
-        correctly deduplicates — no duplicate incidents on restart.
+        Events that describe the same underlying failure — even with
+        different event IDs (different cycles, different collectors) —
+        produce the same incident_id, so upsert_incident's ON CONFLICT
+        DO UPDATE merges them into one live incident instead of creating
+        duplicates.
+
+        ponytail: recurrence of the same root cause reopens the same
+        incident row (prior outage history lives in the events table);
+        switch to time-bucketed keys if per-outage history matters.
         """
-        sorted_ids = sorted(set(event_ids))
-        hash_input = ",".join(sorted_ids).encode("utf-8")
-        return f"inc-{hashlib.sha256(hash_input).hexdigest()[:16]}"
+        site_id = next(
+            (e.device.site_id for e in events if e.device and e.device.site_id),
+            "",
+        )
+        if not root_device_id:
+            root_device_id = CorrelationEngine._primary_device_id(events)
+        categories = Counter(
+            e.category.value for e in events if e.category
+        )
+        category = categories.most_common(1)[0][0] if categories else "unknown"
+        material = f"{site_id}|{root_device_id or 'unknown'}|{category}"
+        return f"inc-{hashlib.sha256(material.encode('utf-8')).hexdigest()[:16]}"
+
+    @staticmethod
+    def _primary_device_id(events: List[UnifiedEvent]) -> str:
+        """Device of the highest-severity event (first one on ties)."""
+        severity_rank = {
+            EventSeverity.CRITICAL: 5,
+            EventSeverity.MAJOR: 4,
+            EventSeverity.MINOR: 3,
+            EventSeverity.WARNING: 2,
+            EventSeverity.INFO: 1,
+            EventSeverity.DEBUG: 0,
+        }
+        best: Optional[UnifiedEvent] = None
+        for event in events:
+            if not (event.device and event.device.device_id):
+                continue
+            if best is None or severity_rank[event.severity] > severity_rank[best.severity]:
+                best = event
+        return best.device.device_id if best else ""
 
     # ------------------------------------------------------------------
     # Main correlation pipeline
@@ -396,6 +437,16 @@ class CorrelationEngine:
         for eid in processed_events_in_cycle:
             self._mark_processed(eid)
 
+        # --- Recovery: resolve open incidents whose root cause recovered ---
+        # Runs after incident creation so a recovery event that arrives in
+        # the same cycle as its outage still resolves it.
+        recovery_events = [
+            e for e in new_events
+            if e.event_type == EventType.DEVICE_REACHABLE
+        ]
+        if recovery_events:
+            await self._resolve_recovered_devices(recovery_events)
+
         # Update telemetry
         cascade_count = sum(
             1
@@ -428,6 +479,43 @@ class CorrelationEngine:
         )
         return incidents
 
+    async def _resolve_recovered_devices(
+        self, recovery_events: List[UnifiedEvent]
+    ) -> None:
+        """
+        Resolve OPEN incidents whose root device(s) reported recovery.
+
+        Symptom recovery does NOT resolve — the root cause must be fixed
+        first.  DB failure is swallowed so degraded cycles don't crash
+        the pipeline; recovery events are not marked processed, so a
+        failed attempt is retried on the next cycle.
+        """
+        device_ids = sorted(
+            {
+                e.device.device_id
+                for e in recovery_events
+                if e.device and e.device.device_id
+            }
+        )
+        if not device_ids:
+            return
+        try:
+            from ..database.incidents import resolve_open_incidents_for_devices
+
+            resolved = await resolve_open_incidents_for_devices(device_ids)
+            if resolved:
+                logger.info(
+                    "Recovery: resolved %d open incident(s) for %s",
+                    resolved,
+                    ", ".join(device_ids),
+                )
+        except Exception:
+            logger.warning(
+                "Recovery resolution failed for %s — will retry next cycle",
+                ", ".join(device_ids),
+                exc_info=True,
+            )
+
     def _create_from_cascade(self, cascade: CascadeGroup) -> Incident:
         """
         Create an Incident from a CascadeGroup.
@@ -440,6 +528,7 @@ class CorrelationEngine:
             raise ValueError("Cannot create incident from empty cascade root")
 
         severity = self._determine_severity(cascade.root_events)
+        all_events = cascade.root_events + cascade.symptom_events
         all_event_ids = cascade.all_event_ids()
 
         affected_sites = list(
@@ -481,21 +570,32 @@ class CorrelationEngine:
         else:
             title = generate_incident_title(cascade.root_events)
 
+        symptom_device_ids = list(
+            {
+                e.device.device_id
+                for e in cascade.symptom_events
+                if e.device and e.device.device_id
+            }
+        )
+
         incident = Incident(
-            incident_id=self._compute_incident_id(all_event_ids),
+            incident_id=self._compute_incident_id(all_events, cascade.root_device_id),
             title=title,
             severity=severity,
             status=IncidentStatus.OPEN,
             affected_sites=affected_sites,
             affected_devices=affected_devices,
             affected_clients=affected_clients,
+            root_device_ids=[cascade.root_device_id],
+            symptom_device_ids=symptom_device_ids,
             related_event_ids=all_event_ids,
         )
 
         confidence = calculate_confidence_score(
             cascade.root_events + cascade.symptom_events
         )
-        incident.confidence_score = confidence
+        incident.confidence_score = confidence.total
+        incident.confidence_breakdown = confidence.to_dict()
 
         logger.debug(
             "Created cascade incident: %s | root=%s | severity=%s | "
@@ -527,9 +627,9 @@ class CorrelationEngine:
         if not events:
             raise ValueError("Cannot create incident from empty event list")
 
-        event_ids = [e.event_id for e in events]
         title = generate_incident_title(events)
         severity = self._determine_severity(events)
+        primary_device = self._primary_device_id(events)
 
         affected_sites = list(
             {e.device.site_id for e in events if e.device and e.device.site_id}
@@ -542,18 +642,20 @@ class CorrelationEngine:
         )
 
         incident = Incident(
-            incident_id=self._compute_incident_id(event_ids),
+            incident_id=self._compute_incident_id(events, primary_device),
             title=title,
             severity=severity,
             status=IncidentStatus.OPEN,
             affected_sites=affected_sites,
             affected_devices=affected_devices,
             affected_clients=affected_clients,
-            related_event_ids=event_ids,
+            root_device_ids=[primary_device] if primary_device else [],
+            related_event_ids=[e.event_id for e in events],
         )
 
         confidence = calculate_confidence_score(events)
-        incident.confidence_score = confidence
+        incident.confidence_score = confidence.total
+        incident.confidence_breakdown = confidence.to_dict()
 
         logger.debug(
             "Created incident: %s | severity=%s | "

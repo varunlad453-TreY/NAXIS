@@ -14,7 +14,7 @@ from enum import Enum
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class IncidentSeverity(str, Enum):
@@ -85,19 +85,33 @@ class Incident(BaseModel):
     affected_devices: List[str] = Field(default_factory=list, description="Device IDs impacted")
     affected_clients: List[str] = Field(default_factory=list, description="Client IDs impacted")
 
+    # Correlation — root cause vs symptom split (cascade incidents only)
+    root_device_ids: List[str] = Field(
+        default_factory=list,
+        description="Infrastructure device IDs identified as root cause(s) of the cascade",
+    )
+    symptom_device_ids: List[str] = Field(
+        default_factory=list,
+        description="Leaf device IDs that failed as downstream consequences of the root cause",
+    )
+
     # Correlation
     related_event_ids: List[str] = Field(
         default_factory=list,
         description="UnifiedEvent IDs grouped into this incident",
     )
 
-    # RCA enrichment (populated by AI stage; remain None until enrichment runs)
+    # RCA enrichment (populated by correlation engine or AI stage)
     probable_cause: Optional[str] = Field(
         None, description="AI-generated probable root cause (free text)",
     )
     confidence_score: float = Field(
         default=0.0, ge=0.0, le=1.0,
         description="RCA confidence in [0.0, 1.0]; 0.0 means not yet enriched",
+    )
+    confidence_breakdown: Optional[Dict[str, float]] = Field(
+        None,
+        description="Factor breakdown of confidence_score: {event_score, avg_severity, device_score, total}",
     )
 
     # Temporal
@@ -116,7 +130,7 @@ class Incident(BaseModel):
             return v
         return v.astimezone(None).replace(tzinfo=None)
 
-    @field_validator("affected_sites", "affected_devices", "affected_clients", "related_event_ids")
+    @field_validator("affected_sites", "affected_devices", "affected_clients", "related_event_ids", "root_device_ids", "symptom_device_ids")
     @classmethod
     def _dedupe_preserve_order(cls, v: List[str]) -> List[str]:
         """Drop duplicates while preserving first-seen order."""
@@ -202,12 +216,12 @@ class Incident(BaseModel):
     # ------------------------------------------------------------------
 
     def to_db_dict(self) -> Dict[str, Any]:
-        """Convert to a database row dict (matches schemas/postgres/001_init.sql).
+        """Convert to a database row dict (matches schemas/postgres/).
 
         Notes:
           - event_count is intentionally excluded — it is computed from
             len(related_event_ids) and is NOT a column in the incidents
-            table (001_init.sql).
+            table.
           - probable_cause preserves None so the frontend can distinguish
             "RCA not yet run" (null) from "RCA found nothing" (empty string).
         """
@@ -219,9 +233,12 @@ class Incident(BaseModel):
             "affected_sites": list(self.affected_sites),
             "affected_devices": list(self.affected_devices),
             "affected_clients": list(self.affected_clients),
+            "root_device_ids": list(self.root_device_ids),
+            "symptom_device_ids": list(self.symptom_device_ids),
             "related_event_ids": list(self.related_event_ids),
             "probable_cause": self.probable_cause,
             "confidence_score": float(self.confidence_score),
+            "confidence_breakdown": self.confidence_breakdown,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }
@@ -237,6 +254,8 @@ class Incident(BaseModel):
             "event_count": self.event_count(),
             "affected_sites": len(self.affected_sites),
             "affected_devices": len(self.affected_devices),
+            "root_device_count": len(self.root_device_ids),
+            "symptom_device_count": len(self.symptom_device_ids),
             "confidence_score": self.confidence_score,
             "created_at": self.created_at.isoformat(),
             "updated_at": self.updated_at.isoformat(),
@@ -292,6 +311,8 @@ if __name__ == "__main__":
     demo = Incident(
         title="Site SFO-01 uplink degraded",
         severity=IncidentSeverity.MAJOR,
+        root_device_ids=["core-switch-sfo-01"],
+        symptom_device_ids=["ap-sfo-101", "ap-sfo-102"],
     )
     demo.add_event("evt-1001", device_id="dev-001", site_id="site-sfo-01")
     demo.add_event("evt-1002", device_id="dev-002", site_id="site-sfo-01")

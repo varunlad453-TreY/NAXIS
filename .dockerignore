@@ -1,0 +1,13 @@
+**/__pycache__/
+**/.pytest_cache/
+.venv/
+**/node_modules/
+.git/
+.github/
+.graphify/
+graphify-out/
+docs/
+schemas/
+scripts/
+.env
+nul

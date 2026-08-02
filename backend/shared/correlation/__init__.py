@@ -12,6 +12,7 @@ Flow:
 from .engine import CorrelationEngine, correlate_events
 from .rules import (
     CascadeGroup,
+    ConfidenceBreakdown,
     CorrelationConfig,
     CorrelationRule,
     SiteTimeWindowRule,
@@ -31,6 +32,7 @@ __all__ = [
     "TopologyCascadeRule",
     "TopologyProvider",
     "CascadeGroup",
+    "ConfidenceBreakdown",
     "calculate_confidence_score",
     "generate_incident_title",
     "group_events_by_site_and_time",

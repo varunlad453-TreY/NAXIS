@@ -27,6 +27,7 @@ import { SeverityBadge } from "@/components/incidents/severity-badge";
 import { StatusBadge } from "@/components/incidents/status-badge";
 import { EventRow } from "@/components/events/event-row";
 import { EventListSkeleton } from "@/components/events/event-list-skeleton";
+import { CorrelationReasoning } from "@/components/incidents/correlation-reasoning";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   formatTimestamp,
@@ -249,6 +250,9 @@ export default function IncidentDetailPage() {
                 </p>
               </section>
             )}
+
+            {/* Correlation Reasoning */}
+            <CorrelationReasoning incident={incident} />
 
             {/* Timeline */}
             <section className="space-y-4">
