@@ -287,7 +287,7 @@ class IncidentQuery(BaseModel):
 # )
 #
 # incident = Incident(
-#     title="Site SFO-01 uplink degraded",
+#     title="SFO-01 · edge-sfo-01 link down — 2 devices affected",
 #     severity=IncidentSeverity.MAJOR,
 # )
 #
@@ -309,7 +309,7 @@ if __name__ == "__main__":
     import json
 
     demo = Incident(
-        title="Site SFO-01 uplink degraded",
+        title="SFO-01 · edge-sfo-01 link down — 2 devices affected",
         severity=IncidentSeverity.MAJOR,
         root_device_ids=["core-switch-sfo-01"],
         symptom_device_ids=["ap-sfo-101", "ap-sfo-102"],

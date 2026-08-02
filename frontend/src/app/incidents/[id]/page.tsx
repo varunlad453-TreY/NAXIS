@@ -20,7 +20,6 @@ import {
   Layers,
 } from "lucide-react";
 
-const CASCADE_PATTERN = /failure cascading to (\d+) dependent devices/i;
 import Link from "next/link";
 import { api } from "@/lib/api";
 import { SeverityBadge } from "@/components/incidents/severity-badge";
@@ -177,7 +176,7 @@ export default function IncidentDetailPage() {
               </div>
               <h1 className="text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
                 {incident.title}
-                {CASCADE_PATTERN.test(incident.title) && (
+                {incident.symptom_device_ids.length > 0 && (
                   <span className="ml-3 inline-flex items-center gap-1 rounded-full bg-amber/10 px-2.5 py-0.5 align-middle text-[10px] font-semibold uppercase tracking-[0.12em] text-amber">
                     <Layers className="h-3 w-3" />
                     Cascade

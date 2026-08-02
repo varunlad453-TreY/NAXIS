@@ -55,7 +55,7 @@ From `docs/NAXIS_WHITEPAPER.md`:
 | **Stage 4** | Live blast radius computation | "3 sites, 12 devices, 42 clients affected" |
 | **Stage 5** | Deterministic RCA with scored hypotheses | "82% confident: MPLS BGP flap on edge-sfo-01" |
 
-**Stage 1 alone transforms the product.** It takes the same events and turns them into structured incidents with titles like *"Site SFO-01 — connectivity issues affecting 3 devices"*, confidence scores, and blast radius. This is the minimum viable step to stop being a dashboard.
+**Stage 1 alone transforms the product.** It takes the same events and turns them into structured incidents with titles like *"SFO-01 · edge-sfo-01 link down — 2 devices affected"*, confidence scores, and blast radius. This is the minimum viable step to stop being a dashboard.
 
 ### 4. Without Correlation, Every Future Feature Is Built on Sand
 
@@ -124,7 +124,7 @@ Where:
 ### 1. The Product Stops Being a Dashboard
 
 Today: "Here are 200 events, good luck."
-With correlation: "Here are 3 active incidents. Site SFO-01 has a connectivity issue affecting 3 devices with 82% confidence."
+With correlation: "Here are 3 active incidents. SFO-01 · edge-sfo-01 link down — 2 devices affected, 82% confidence."
 
 ### 2. The Incident Model Comes to Life
 

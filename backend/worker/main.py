@@ -167,7 +167,7 @@ class WorkerDaemon:
             if incidents:
                 cascade_count = sum(
                     1 for i in incidents
-                    if "failure cascading" in i.title.lower()
+                    if i.symptom_device_ids
                 )
                 residual_count = len(incidents) - cascade_count
 

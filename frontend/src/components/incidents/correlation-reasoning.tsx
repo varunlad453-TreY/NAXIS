@@ -15,14 +15,12 @@ import { api } from "@/lib/api";
 import { ConfidenceBreakdown } from "./confidence-breakdown";
 import { Skeleton } from "@/components/ui/skeleton";
 
-const CASCADE_PATTERN = /failure cascading to (\d+) dependent devices/i;
-
 interface CorrelationReasoningProps {
   incident: IncidentDetail;
 }
 
 export function CorrelationReasoning({ incident }: CorrelationReasoningProps) {
-  const isCascade = CASCADE_PATTERN.test(incident.title);
+  const isCascade = incident.symptom_device_ids.length > 0;
   const hasRootSymptoms =
     incident.root_device_ids.length > 0 || incident.symptom_device_ids.length > 0;
 

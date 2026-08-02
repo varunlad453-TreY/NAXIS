@@ -36,7 +36,7 @@ class IncidentSummary(BaseModel):
         json_schema_extra = {
             "example": {
                 "incident_id": "inc-abc123def456",
-                "title": "Site SFO-01 - connectivity issues affecting 3 devices",
+                "title": "SFO-01 · edge-sfo-01 link down — 2 devices affected",
                 "severity": "critical",
                 "status": "open",
                 "event_count": 5,
@@ -98,7 +98,7 @@ class IncidentDetail(BaseModel):
         json_schema_extra = {
             "example": {
                 "incident_id": "inc-abc123def456",
-                "title": "Site SFO-01 - connectivity issues affecting 3 devices",
+                "title": "SFO-01 · edge-sfo-01 link down — 2 devices affected",
                 "severity": "critical",
                 "status": "investigating",
                 "affected_sites": ["site-sfo-01"],
@@ -137,7 +137,7 @@ class IncidentListResponse(BaseModel):
                 "incidents": [
                     {
                         "incident_id": "inc-abc123",
-                        "title": "Site SFO-01 WAN degradation",
+                        "title": "SFO-01 · edge-sfo-01 link down — 2 devices affected",
                         "severity": "critical",
                         "status": "open",
                         "event_count": 5,

@@ -570,10 +570,7 @@ class TestGetTopologyBackbone:
                 [],               # 5: _HEALTH_INVENTORY_QUERY (child enrich)
                 [],               # 6: _HEALTH_NODE_PROPS_QUERY (child enrich)
                 [],               # 7: _SITE_NAME_QUERY (enrich_site_names)
-                [],               # 8: _HEALTH_EVENTS_QUERY (backbone enrich)
-                [],               # 9: _HEALTH_INVENTORY_QUERY (backbone enrich)
-                [],               # 10: _HEALTH_NODE_PROPS_QUERY (backbone enrich)
-                edge_rows,        # 11: _INTER_SITE_EDGES_QUERY
+                edge_rows,        # 8: _INTER_SITE_EDGES_QUERY
             ]
 
             response = client.get("/topology/backbone")
@@ -608,10 +605,7 @@ class TestGetTopologyBackbone:
                 [],               # 5: _HEALTH_INVENTORY_QUERY (child enrich — skipped)
                 [],               # 6: _HEALTH_NODE_PROPS_QUERY (child enrich — skipped)
                 [],               # 7: _SITE_NAME_QUERY
-                [],               # 8: _HEALTH_EVENTS_QUERY (backbone enrich)
-                [],               # 9: _HEALTH_INVENTORY_QUERY (backbone enrich)
-                [],               # 10: _HEALTH_NODE_PROPS_QUERY (backbone enrich)
-                [],               # 11: _INTER_SITE_EDGES_QUERY (no inter-site edges)
+                [],               # 8: _INTER_SITE_EDGES_QUERY (no inter-site edges)
             ]
 
             response = client.get("/topology/backbone")

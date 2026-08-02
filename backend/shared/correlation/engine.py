@@ -448,11 +448,7 @@ class CorrelationEngine:
             await self._resolve_recovered_devices(recovery_events)
 
         # Update telemetry
-        cascade_count = sum(
-            1
-            for i in incidents
-            if "failure cascading" in i.title.lower()
-        )
+        cascade_count = sum(1 for i in incidents if i.symptom_device_ids)
         residual_count = len(incidents) - cascade_count
         self._total_events_processed += len(processed_events_in_cycle)
         self._total_incidents_created += len(incidents)
@@ -553,22 +549,9 @@ class CorrelationEngine:
             }
         )
 
-        # Build a title that identifies the root cause
-        root_device_names = {
-            e.device.device_name or e.device.device_id
-            for e in cascade.root_events
-            if e.device
-        }
-        root_device_str = ", ".join(sorted(root_device_names)) or cascade.root_device_id
-
+        # Build a title that identifies the root cause and blast radius
         symptom_count = len(cascade.symptom_events)
-        if symptom_count > 0:
-            title = (
-                f"{root_device_str} — failure cascading to "
-                f"{symptom_count} dependent {'device' if symptom_count == 1 else 'devices'}"
-            )
-        else:
-            title = generate_incident_title(cascade.root_events)
+        title = generate_incident_title(cascade.root_events + cascade.symptom_events)
 
         symptom_device_ids = list(
             {

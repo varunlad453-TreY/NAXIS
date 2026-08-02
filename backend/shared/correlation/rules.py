@@ -11,7 +11,12 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Protocol, Set
 
-from ..models.event import EventSeverity, UnifiedEvent
+from ..models.event import (
+    EventCategory,
+    EventSeverity,
+    EventType,
+    UnifiedEvent,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -266,41 +271,186 @@ def calculate_confidence_score(events: List[UnifiedEvent]) -> ConfidenceBreakdow
     )
 
 
+_EVENT_TYPE_LABELS: Dict[EventType, str] = {
+    # Connectivity
+    EventType.LINK_DOWN: "link down",
+    EventType.LINK_UP: "back online",
+    EventType.INTERFACE_DOWN: "link down",
+    EventType.INTERFACE_UP: "back online",
+    EventType.BGP_DOWN: "link down",
+    EventType.BGP_UP: "back online",
+    EventType.OSPF_NEIGHBOR_DOWN: "link down",
+    EventType.OSPF_NEIGHBOR_UP: "back online",
+    EventType.TUNNEL_DOWN: "link down",
+    EventType.TUNNEL_UP: "back online",
+    # Performance
+    EventType.HIGH_CPU: "degraded",
+    EventType.HIGH_MEMORY: "degraded",
+    EventType.HIGH_BANDWIDTH: "degraded",
+    EventType.HIGH_LATENCY: "degraded",
+    EventType.PACKET_LOSS: "degraded",
+    EventType.JITTER: "degraded",
+    # Security
+    EventType.AUTH_FAILURE: "auth failures",
+    EventType.UNAUTHORIZED_ACCESS: "unauthorized access",
+    EventType.ROGUE_AP: "rogue AP",
+    EventType.DOS_ATTACK: "DOS attack",
+    EventType.SECURITY_VIOLATION: "security violation",
+    # Configuration
+    EventType.CONFIG_CHANGE: "configuration change",
+    EventType.FIRMWARE_UPGRADE: "firmware upgrade",
+    EventType.POLICY_CHANGE: "policy change",
+    # Hardware
+    EventType.POWER_SUPPLY_FAILURE: "power failure",
+    EventType.FAN_FAILURE: "fan failure",
+    EventType.TEMPERATURE_HIGH: "overheating",
+    EventType.HARDWARE_ERROR: "hardware fault",
+    # Application
+    EventType.APP_UNAVAILABLE: "app unavailable",
+    EventType.APP_SLOW: "degraded",
+    # Client
+    EventType.CLIENT_CONNECTED: "client reconnect",
+    EventType.CLIENT_DISCONNECTED: "client disconnect surge",
+    EventType.CLIENT_ROAM: "roaming issues",
+    EventType.CLIENT_AUTH_FAILED: "client auth failures",
+    # System
+    EventType.DEVICE_UNREACHABLE: "unreachable",
+    EventType.DEVICE_REACHABLE: "back online",
+    EventType.DEVICE_REBOOT: "rebooted",
+    EventType.SYSTEM_ERROR: "system error",
+}
+
+_CATEGORY_LABELS: Dict[EventCategory, str] = {
+    EventCategory.CONNECTIVITY: "connectivity issue",
+    EventCategory.PERFORMANCE: "degraded",
+    EventCategory.SECURITY: "security issue",
+    EventCategory.CONFIGURATION: "configuration issue",
+    EventCategory.HARDWARE: "hardware issue",
+    EventCategory.APPLICATION: "application issue",
+    EventCategory.CLIENT: "client issue",
+    EventCategory.SYSTEM: "system issue",
+}
+
+_EVENT_SEVERITY_RANK: Dict[EventSeverity, int] = {
+    EventSeverity.CRITICAL: 5,
+    EventSeverity.MAJOR: 4,
+    EventSeverity.MINOR: 3,
+    EventSeverity.WARNING: 2,
+    EventSeverity.INFO: 1,
+    EventSeverity.DEBUG: 0,
+}
+
+
+def _issue_label(event: UnifiedEvent) -> str:
+    """Plain-language issue phrase for an event (event type, else category)."""
+    label = _EVENT_TYPE_LABELS.get(event.event_type)
+    if label:
+        return label
+    return _CATEGORY_LABELS.get(event.category, "incident")
+
+
+def _primary_device_event(events: List[UnifiedEvent]) -> Optional[UnifiedEvent]:
+    """The highest-severity event that carries a device (first device wins ties)."""
+    best: Optional[UnifiedEvent] = None
+    for event in events:
+        if not (event.device and event.device.device_id):
+            continue
+        if best is None or _EVENT_SEVERITY_RANK.get(
+            event.severity, 0
+        ) > _EVENT_SEVERITY_RANK.get(best.severity, 0):
+            best = event
+    return best
+
+
+def _site_label(events: List[UnifiedEvent]) -> str:
+    """Real site name for the incident (falls back to the site ID)."""
+    for event in events:
+        if event.device and event.device.site_name:
+            return event.device.site_name
+    for event in events:
+        if event.device and event.device.site_id:
+            return event.device.site_id
+    return ""
+
+
+def _primary_device_label(events: List[UnifiedEvent]) -> str:
+    """Display name (hostname preferred over ID) of the primary device."""
+    primary = _primary_device_event(events)
+    if not primary:
+        return ""
+    return primary.device.device_name or primary.device.device_id
+
+
+def _primary_issue_label(events: List[UnifiedEvent]) -> str:
+    """
+    Plain-language issue label for the incident.
+
+    Prefers events on the primary (root-cause) device, then picks the most
+    common event-type label among them, tie-broken by severity.
+    """
+    from collections import Counter
+
+    primary = _primary_device_event(events)
+    candidates = events
+    if primary:
+        primary_events = [
+            e
+            for e in events
+            if e.device and e.device.device_id == primary.device.device_id
+        ]
+        if primary_events:
+            candidates = primary_events
+
+    label_counts = Counter(_issue_label(e) for e in candidates)
+    worst_severity: Dict[str, int] = {}
+    for event in candidates:
+        label = _issue_label(event)
+        rank = _EVENT_SEVERITY_RANK.get(event.severity, 0)
+        if rank > worst_severity.get(label, -1):
+            worst_severity[label] = rank
+
+    return max(
+        label_counts,
+        key=lambda label: (label_counts[label], worst_severity.get(label, 0)),
+    )
+
+
 def generate_incident_title(events: List[UnifiedEvent]) -> str:
     """
     Generate a human-readable incident title from events.
 
-    Format: "{Site/Device} - {Primary Issue Type} affecting {N} devices"
+    Format: "{Site Name} · {primary device} {issue} — {N} devices affected"
+
+    Uses the real site name, the root-cause device's hostname, and a
+    plain-language issue phrase instead of raw category codes:
+
+        "Pimpri Plant · AP32-02 unreachable — 5 devices affected"
+        "SFO-01 · naxis-core-01 link down"
+
+    The device count is omitted when only one device is involved.
     """
     if not events:
         return "Unknown incident"
 
-    # Get site/location
-    sites = {e.device.site_name for e in events if e.device and e.device.site_name}
-    site_ids = {e.device.site_id for e in events if e.device and e.device.site_id}
+    site = _site_label(events)
+    device = _primary_device_label(events)
+    issue = _primary_issue_label(events)
 
-    if sites:
-        location = f"Site {list(sites)[0]}"
-    elif site_ids:
-        location = f"Site {list(site_ids)[0]}"
+    if site and device:
+        head = f"{site} · {device} {issue}"
+    elif site:
+        head = f"{site} · {issue}"
+    elif device:
+        head = f"{device} {issue}"
     else:
-        location = "Multiple locations"
+        head = issue.capitalize()
 
-    # Get primary issue type (most common category)
-    from collections import Counter
-
-    categories = [e.category.value for e in events]
-    primary_category = Counter(categories).most_common(1)[0][0]
-
-    # Count affected devices
-    device_count = len(
-        {e.device.device_id for e in events if e.device and e.device.device_id}
-    )
-
-    if device_count > 1:
-        return f"{location} - {primary_category} issues affecting {device_count} devices"
-    else:
-        return f"{location} - {primary_category} issue"
+    affected_devices = {
+        e.device.device_id for e in events if e.device and e.device.device_id
+    }
+    if len(affected_devices) > 1:
+        return f"{head} — {len(affected_devices)} devices affected"
+    return head
 
 
 # ==============================================================================

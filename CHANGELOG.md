@@ -1,5 +1,20 @@
 # Changelog
 
+## [24] — 2026-08-03 — Close out pre-existing test failures + live-verify
+- Fixed 10 failing tests previously written off as "pre-existing/env": they were stale tests, not environment issues:
+  - VeloCloud `collect_all_*` tests asserted the pre-Phase-3 orchestrator (1 outcome, `velocloud-auth` id, "[edges, events, links, tunnels, apps]" order, all links/tunnels/apps "skipped"). Now assert the real fan-out: 5 outcomes in orchestration order, links/tunnels extract from the single pre-fetched edges payload, apps falls back/skips when no endpoint works. Removed the obsolete "sub-collectors always skipped" tests; added `TestVeloCloudAppsCollector` (success + skip paths). New `_mock_client_factory` helper for the direct-`httpx.AsyncClient(...)` binding path in `collect_all`.
+  - Topology backbone tests supplied 11 db.fetch results but the endpoint performs 8; the inter-site edges query silently consumed an unrelated `[]`. Fixed both fixtures to the real call sequence (edges query is now the 8th fetch).
+  - `test_pipeline_does_not_publish_when_redis_disabled` now pins `wm._settings.redis_enabled=False` (env enables Redis) and asserts `get_redis_client` is never called.
+- Full suite: `384 passed` (up from 375 passed / 10 failed), 0 failures.
+- Live-verify (H1): worker restarted on the dev stack; ran the correlation engine against the live DB and got the new-format incident title `"Verify LAB DC · Verify-Access-Point-01 unreachable — 2 devices affected"`. Also fixed a real ops bug found while verifying: the worker healthcheck used `ps` which does not exist in the image (worker was `unhealthy` for hours) → replaced with `grep -q worker.main /proc/1/cmdline`; worker is now `healthy`.
+
+## [23] — 2026-08-03 — Phase 3: Human Incident Titles
+- `generate_incident_title()` rewritten to read "{Real Site Name} · {Root Device Hostname} {plain-language issue} — {N} devices affected", e.g. "Pimpri Plant · AP32-02 unreachable — 5 devices affected" (was "Site SFO-01 - connectivity issues affecting N devices")
+- Event types map to plain-language issue phrases ("unreachable", "link down", "degraded", …) with category-level fallbacks; real `site_name` (fallback `site_id`) and the root device's hostname replace raw codes/IDs
+- Cascade incidents get the same human title: `generate_incident_title()` runs over root + symptom events, naming the root cause and counting the full blast radius (root + symptoms)
+- Cascade detection is now structural: engine + worker count cascade/residual incidents and the frontend renders the "Cascade" badge from `symptom_device_ids` instead of parsing the "failure cascading to N" title string — removed the hand-built cascade titles, raw device-ID fallbacks, and brittle regex in both frontend files
+- 12 title unit tests (8 new, 4 reworked) cover the exact spec phrase, plain-language labels, site-name fallback, single-device behavior, and device-less events
+
 ## [22] — 2026-08-02 — Correlation Noise Fix: Root-Cause Merge + Recovery Resolution
 - Phase 1: mist AP reachability events only on ledger-backed state transitions — per-poll CRITICAL flood eliminated
 - Phase 2: incident ID is now a root-cause key `SHA256(site_id | root device | issue category)`; recurring failures merge via `ON CONFLICT DO UPDATE` (incident count flat ~8,845 through link_down floods)

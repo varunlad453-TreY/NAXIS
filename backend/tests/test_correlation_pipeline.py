@@ -143,9 +143,12 @@ async def test_topology_cascade_root_cause_incident():
     assert wm.upsert_incident.call_count == 1, (
         f"Expected 1 cascade incident, got {wm.upsert_incident.call_count}")
     inc = wm.upsert_incident.call_args[0][0]
-    title = inc.title.lower()
-    assert "failure cascading" in title, (
-        f"Cascade title should mention cascading: {title}")
+    title = inc.title
+    assert "SFO-01" in title
+    assert "naxis-core-01" in title
+    assert "link down" in title
+    assert "4 devices affected" in title, (
+        f"Cascade title should include the blast radius: {title}")
     assert inc.severity == IncidentSeverity.CRITICAL
     assert "core-switch-01" in inc.affected_devices
     for leaf in ("ap-sfo-101", "ap-sfo-102", "ap-sfo-103"):
@@ -175,7 +178,9 @@ async def test_flat_incident_when_no_topology_match():
     await daemon.run_once()
 
     inc = wm.upsert_incident.call_args[0][0]
-    assert "failure cascading" not in inc.title.lower()
+    assert "Site-A" in inc.title
+    assert "2 devices affected" in inc.title
+    assert inc.symptom_device_ids == []
     assert len(inc.related_event_ids) == 2
     assert "site-a" in inc.affected_sites
 
@@ -197,8 +202,8 @@ async def test_residual_incident_for_unassigned_events():
     await daemon.run_once()
 
     upserted = [call[0][0] for call in wm.upsert_incident.call_args_list]
-    cascade_inc = [i for i in upserted if "failure cascading" in i.title.lower()]
-    residual_inc = [i for i in upserted if "failure cascading" not in i.title.lower()]
+    cascade_inc = [i for i in upserted if i.symptom_device_ids]
+    residual_inc = [i for i in upserted if not i.symptom_device_ids]
     assert len(cascade_inc) == 1, f"Expected 1 cascade, got {len(cascade_inc)}"
     assert len(residual_inc) == 1, f"Expected 1 residual, got {len(residual_inc)}"
     assert "int-orphan" in residual_inc[0].related_event_ids
@@ -325,13 +330,17 @@ async def test_pipeline_publishes_incidents_to_redis_when_enabled():
 async def test_pipeline_does_not_publish_when_redis_disabled():
     """Worker skips Redis publishing when redis_enabled=False (default)."""
     import worker.main as wm
-    daemon = _build_worker(_make_events_for_cascade(),
-                           cascade_map=TEST_CASCADE_MAP)
-    wm.upsert_incident.reset_mock()
 
-    assert daemon._redis_client is None
-    # No Redis client should be created — no side effects to check beyond
-    # the reference being None, which proves the guard works.
+    # The environment's settings enable Redis; pin it off for this test so the
+    # daemon guard is exercised deterministically.
+    with patch.object(wm._settings, "redis_enabled", False):
+        with patch("worker.main.get_redis_client") as mock_get_redis:
+            daemon = _build_worker(_make_events_for_cascade(),
+                                   cascade_map=TEST_CASCADE_MAP)
+            wm.upsert_incident.reset_mock()
+
+            assert daemon._redis_client is None
+            mock_get_redis.assert_not_called()
 
 
 # ======================================================================

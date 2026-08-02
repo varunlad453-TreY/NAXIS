@@ -25,7 +25,7 @@
 The correlation engine is the core intelligence layer of Naxis. It takes raw `UnifiedEvent` objects from network collectors (Mist, VeloCloud, DNAC, Arista) and turns them into structured `Incident` objects — grouped by site, time, and network topology.
 
 **Without correlation:** "Here are 500 events, good luck."
-**With correlation:** "Site SFO-01 — core-switch-01 failure cascading to 3 dependent devices. 82% confidence."
+**With correlation:** "SFO-01 · naxis-core-01 link down — 4 devices affected. 82% confidence."
 
 The engine is **deterministic** — same events in, same incidents out. No ML, no probabilities, no black boxes. Every decision is traceable to configurable thresholds and defined topology relationships.
 
@@ -33,8 +33,8 @@ The engine is **deterministic** — same events in, same incidents out. No ML, n
 
 | Stage | What It Does | Output |
 |-------|-------------|--------|
-| **Stage 1** (stable) | Groups events by site + 5-minute time window | Flat incidents: "SFO-01 — connectivity issues affecting 3 devices" |
-| **Stage 2** (new) | Restructures Stage 1 groups using topology: infra device = root, leaf devices = symptoms | Cascade incidents: "core-switch-01 — failure cascading to 3 dependent devices" |
+| **Stage 1** (stable) | Groups events by site + 5-minute time window | Flat incidents: "SFO-01 · edge-sfo-01 link down — 2 devices affected" |
+| **Stage 2** (new) | Restructures Stage 1 groups using topology: infra device = root, leaf devices = symptoms | Cascade incidents: "SFO-01 · naxis-core-01 link down — 4 devices affected" |
 
 ---
 
@@ -80,19 +80,26 @@ Stage 1 is the foundation. It groups events by spatial proximity (same site) and
 
 ### What Gets an Incident Title
 
+Phase 3 produces a human-readable title in a single consistent format:
+
 ```
-"{Site Name} — {Most Common Category} affecting {N} devices"
+"{Site Name} · {root device} {plain-language issue} — {N} devices affected"
 ```
 
-Example: `"SFO-01 — connectivity issues affecting 3 devices"`
+- **Site Name** — the real site name (e.g. "Pimpri Plant"), falling back to the site ID.
+- **Root device** — hostname of the highest-severity device (fallback to ID).
+- **Plain-language issue** — a human phrase mapped from the dominant event type: "unreachable", "link down", "degraded", etc.
+- **Affected count** — omitted when only one device is involved.
+
+Example: `"SFO-01 · edge-sfo-01 link down — 2 devices affected"`
 
 ### Relevant Code
 
 | File | Key Function |
 |------|-------------|
-| `rules.py` | `group_events_by_site_and_time()` (line 149) |
-| `rules.py` | `SiteTimeWindowRule.should_correlate()` (line 85) |
-| `rules.py` | `generate_incident_title()` (line 243) |
+| `rules.py` | `group_events_by_site_and_time()` (line 157) |
+| `rules.py` | `SiteTimeWindowRule.should_correlate()` (line 93) |
+| `rules.py` | `generate_incident_title()` (line 418) |
 | `engine.py` | `CorrelationEngine.process_events()` (line 73) — lines 97-101 run Stage 1 |
 
 ---
@@ -106,7 +113,7 @@ Stage 2 is the infrastructure-aware upgrade. It takes each Stage 1 group and reo
 In a typical network, one infrastructure failure (switch dies) causes many downstream symptoms (5 APs lose connectivity). Without Stage 2, all 6 events become one flat incident. With Stage 2, the switch events become the **root incident** and the AP events become **symptoms** — yielding a title like:
 
 ```
-"naxis-core-01 — failure cascading to 3 dependent devices"
+"SFO-01 · naxis-core-01 link down — 4 devices affected"
 ```
 
 This tells an operator what actually broke, not just what's wrong.
@@ -147,13 +154,17 @@ class CascadeGroup:
 
 ### Cascade Incident Title
 
+Cascade incidents use the same Phase 3 title format as flat incidents — `generate_incident_title()` runs over the root + symptom events, so the title names the root-cause device and includes the full blast radius:
+
 ```
-"{root_device_name} — failure cascading to {N} dependent devices"
+"SFO-01 · naxis-core-01 link down — 4 devices affected"
 ```
 
-Example: `"naxis-core-01 — failure cascading to 3 dependent devices"`
+The root device (highest-severity events) becomes the named device and ALL affected devices (root + symptoms) are counted.
 
-If no symptom events exist (infra-only group), falls back to the standard Stage 1 title.
+### Retrieving "Cascade" Incidents
+
+Incidents are identified as cascades by their **structure**, not their title text: an incident is a cascade when `symptom_device_ids` is non-empty. The engine and worker count cascade/residual incidents from this field, and the frontend uses it to render the "Cascade" badge.
 
 ### TopologyProvider Protocol
 
@@ -715,7 +726,7 @@ The `naxis:incidents` channel carries JSON payloads matching the incident DB sch
 ```json
 {
   "incident_id": "inc-a1b2c3d4e5f6g7h8",
-  "title": "core-switch-01 — failure cascading to 3 dependent devices",
+  "title": "SFO-01 · naxis-core-01 link down — 4 devices affected",
   "severity": "critical",
   "status": "open",
   "affected_sites": ["site-sfo-01"],

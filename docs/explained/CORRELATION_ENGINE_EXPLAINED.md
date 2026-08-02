@@ -22,7 +22,7 @@ Event 5:  Client X disconnected      ← (maybe unrelated)
 **With correlation:**
 
 ```
-Incident: core-switch-01 — failure cascading to 3 dependent devices
+Incident: SFO-01 · naxis-core-01 link down — 4 devices affected
   ↳ Root cause: core-switch-01 uplink down (CRITICAL)
   ↳ Symptoms: AP-101, AP-102, AP-103 unreachable (MAJOR)
   ↳ 82% confidence · 2 sites · 4 devices
@@ -59,7 +59,7 @@ Looks at the **topology graph** (which device connects to which) and finds the *
 
 It creates:
 
-- **One root-cause incident** — e.g., "core-switch-01 — failure cascading to 3 dependent devices"
+- **One root-cause incident** — e.g., "SFO-01 · naxis-core-01 link down — 4 devices affected"
 - **A confidence score** — how sure we are about this correlation (0.0–1.0)
 - **Blast radius** — all affected devices, sites, and clients
 
@@ -228,7 +228,7 @@ We built 7 end-to-end integration tests in `backend/tests/test_correlation_pipel
 | Test | What It Proves |
 |------|---------------|
 | `test_pipeline_produces_incidents_with_cascade` | The full pipeline produces valid incidents with proper IDs, titles, severities, and confidence scores |
-| `test_topology_cascade_root_cause_incident` | Cascade mode creates a single incident that names the root cause and lists all symptoms — title says "failure cascading to 3 dependent devices" |
+| `test_topology_cascade_root_cause_incident` | Cascade mode creates a single incident that names the root cause and lists all symptoms — title reads "SFO-01 · naxis-core-01 link down — 4 devices affected" |
 | `test_heuristic_fallback_no_topology` | When topology is empty, engine still creates a flat incident — never silently drops events |
 | `test_residual_incident_for_unassigned_events` | Events that don't fit any cascade group get their own residual incident — nothing is lost |
 | `test_cross_cycle_correlation` | Events from 3 collection cycles merge into 1 incident (not 3 separate ones) |

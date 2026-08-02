@@ -56,7 +56,7 @@ services:
       redis:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "ps aux | grep -q '[w]orker.main' || exit 1"]
+      test: ["CMD-SHELL", "grep -q worker.main /proc/1/cmdline"]
       interval: 30s
       timeout: 10s
       retries: 3

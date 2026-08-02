@@ -203,8 +203,8 @@ class TestCorrelationEngineProcessEvents:
         engine = CorrelationEngine(config=default_config)
         incidents = await engine.process_events(site_sfo_events)
         title = incidents[0].title
-        assert "SFO" in title
-        assert "connectivity" in title.lower() or "issue" in title.lower()
+        assert "SFO-01" in title
+        assert "link down" in title or "degraded" in title
 
     @pytest.mark.asyncio
     async def test_severity_determination_highest_wins(self, default_config):
@@ -413,8 +413,11 @@ class TestCorrelationEngineStage2:
         # Severity should be CRITICAL (from root event)
         assert i.severity == IncidentSeverity.CRITICAL
 
-        # Title should mention cascading
-        assert "cascade" in i.title.lower() or "dependent" in i.title.lower() or "failure" in i.title.lower()
+        # Title names the root cause with plain language + blast radius
+        assert "SFO-01" in i.title
+        assert "naxis-core-01" in i.title
+        assert "link down" in i.title
+        assert "4 devices affected" in i.title
 
         # Blast radius includes all devices
         assert "core-switch-01" in i.affected_devices
@@ -559,7 +562,7 @@ class TestCorrelationEngineStage2:
         assert i.symptom_device_ids == []
         assert i.confidence_breakdown is not None
         assert i.confidence_breakdown["total"] == pytest.approx(i.confidence_score, rel=1e-3)
-        assert "SFO" in i.title or "cascade" in i.title.lower() or "dependent" in i.title.lower()
+        assert "SFO-01" in i.title
 
     @pytest.mark.asyncio
     async def test_cross_vendor_with_cascade(
@@ -901,22 +904,132 @@ class TestConfidenceScore:
 
 
 class TestIncidentTitle:
-    """Tests for generate_incident_title."""
+    """Tests for generate_incident_title (Phase 3: human titles)."""
 
     def test_empty_events_returns_fallback(self):
         assert generate_incident_title([]) == "Unknown incident"
 
-    def test_single_site_in_title(self, site_sfo_events):
+    def test_real_site_name_in_title(self, site_sfo_events):
+        """Uses the real site name, not a prefixed code."""
         title = generate_incident_title(site_sfo_events)
-        assert "SFO-01" in title or "site-sfo-01" in title
+        assert "SFO-01" in title
+        assert not title.startswith("Site ")
 
-    def test_category_in_title(self, site_sfo_events):
+    def test_plain_language_issue_label(self, site_sfo_events):
+        """Issue is a plain-language phrase, not a raw category code."""
         title = generate_incident_title(site_sfo_events)
-        assert "connectivity" in title.lower()
+        assert "link down" in title
 
-    def test_device_count_in_title(self, site_sfo_events):
+    def test_root_device_named(self, site_sfo_events):
         title = generate_incident_title(site_sfo_events)
-        assert "2" in title
+        assert "edge-sfo-01" in title
+
+    def test_affected_device_count_in_title(self, site_sfo_events):
+        title = generate_incident_title(site_sfo_events)
+        assert "2 devices affected" in title
+
+    def test_spec_example_phrase(self):
+        """Matches the Phase 3 target: 'Site · RootDevice unreachable — N devices affected'."""
+        now = datetime.utcnow()
+        events = [
+            make_event(
+                f"pune-{i}",
+                severity=(
+                    EventSeverity.CRITICAL if i == 0 else EventSeverity.MAJOR
+                ),
+                event_type=EventType.DEVICE_UNREACHABLE,
+                device_id=f"ap-pune-{i:02d}",
+                device_name="AP32-02" if i == 0 else f"ap-pune-{i:02d}",
+                site_id="site-pimpri",
+                site_name="Pimpri Plant",
+                timestamp=now + timedelta(seconds=10 * i),
+            )
+            for i in range(5)
+        ]
+        assert generate_incident_title(events) == (
+            "Pimpri Plant · AP32-02 unreachable — 5 devices affected"
+        )
+
+    def test_unreachable_label(self):
+        now = datetime.utcnow()
+        event = make_event(
+            "uv-1",
+            severity=EventSeverity.CRITICAL,
+            event_type=EventType.DEVICE_UNREACHABLE,
+            device_id="ap-101",
+            device_name="AP101",
+            site_name="Pune Plant",
+            timestamp=now,
+        )
+        assert generate_incident_title([event]) == "Pune Plant · AP101 unreachable"
+
+    def test_degraded_label_multiple_devices(self):
+        now = datetime.utcnow()
+        events = [
+            make_event(
+                "dg-1", severity=EventSeverity.CRITICAL,
+                event_type=EventType.PACKET_LOSS,
+                device_id="edge-1", device_name="edge-A",
+                site_name="Pim Plant", timestamp=now,
+            ),
+            make_event(
+                "dg-2", severity=EventSeverity.MAJOR,
+                event_type=EventType.HIGH_LATENCY,
+                device_id="edge-2", device_name="edge-B",
+                site_name="Pim Plant",
+                timestamp=now + timedelta(seconds=10),
+            ),
+        ]
+        assert generate_incident_title(events) == (
+            "Pim Plant · edge-A degraded — 2 devices affected"
+        )
+
+    def test_single_device_omits_count(self):
+        now = datetime.utcnow()
+        event = make_event(
+            "sd-1", severity=EventSeverity.CRITICAL,
+            event_type=EventType.LINK_DOWN,
+            device_id="core-1", device_name="core-01",
+            site_name="SFO", timestamp=now,
+        )
+        assert generate_incident_title([event]) == "SFO · core-01 link down"
+
+    def test_site_falls_back_to_site_id(self):
+        now = datetime.utcnow()
+        event = make_event(
+            "sf-1", severity=EventSeverity.MAJOR,
+            event_type=EventType.HIGH_CPU,
+            device_id="sw-1", device_name="sw-1",
+            site_id="site-nyc-01", site_name=None,
+            timestamp=now,
+        )
+        assert generate_incident_title([event]) == "site-nyc-01 · sw-1 degraded"
+
+    def test_no_device_falls_back_to_category(self):
+        now = datetime.utcnow()
+        event = UnifiedEvent(
+            event_id="nd-1",
+            timestamp=now,
+            source=EventSource.MIST,
+            severity=EventSeverity.MAJOR,
+            category=EventCategory.CONNECTIVITY,
+            event_type=EventType.OTHER,
+            title="t",
+            description="d",
+            device=None,
+        )
+        assert generate_incident_title([event]) == "Connectivity issue"
+
+    def test_category_fallback_when_type_unknown(self):
+        now = datetime.utcnow()
+        event = make_event(
+            "cf-1", severity=EventSeverity.CRITICAL,
+            event_type=EventType.OTHER,
+            category=EventCategory.PERFORMANCE,
+            device_id="sw-1", device_name="sw-1",
+            site_name="SFO", timestamp=now,
+        )
+        assert generate_incident_title([event]) == "SFO · sw-1 degraded"
 
 
 # ==============================================================================
