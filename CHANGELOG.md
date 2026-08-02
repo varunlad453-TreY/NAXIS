@@ -1,5 +1,12 @@
 # Changelog
 
+## [22] — 2026-08-02 — Correlation Noise Fix: Root-Cause Merge + Recovery Resolution
+- Phase 1: mist AP reachability events only on ledger-backed state transitions — per-poll CRITICAL flood eliminated
+- Phase 2: incident ID is now a root-cause key `SHA256(site_id | root device | issue category)`; recurring failures merge via `ON CONFLICT DO UPDATE` (incident count flat ~8,845 through link_down floods)
+- Recovery resolution: `DEVICE_REACHABLE` events auto-resolve OPEN incidents whose root device recovered (only OPEN; operator states untouched); backfilled 7,909 legacy open incidents with `root_device_ids`
+- Fixed `events.py` jsonb decode and `confidence_breakdown` serialization — 315 incidents now persist breakdown
+- Phase 3 start: VeloCloud link/tunnel events now stamp per-edge site (titles become per-site instead of "Multiple locations")
+
 ## [21] — 2026-07-30 — Stage 2 Topology Cascade: Kill Heuristic Fallback, Wire Real Edges
 - Fixed identifier mismatch: `get_parent_child_map()` now returns event device_ids (not node_ids) via reverse index — cascade previously never matched, silently fell back to heuristics on every production run
 - Removed heuristic fallback: `topology_fallback_to_device_type` defaults to `False`; cascade with a provider returns topology results only (fails visible instead of substituting fake data)

@@ -163,9 +163,18 @@ These are added to the current batch before correlation runs.
 
 1. **Load from DB on startup:** The engine runs `SELECT DISTINCT unnest(related_event_ids) FROM incidents` to load all event IDs that are already linked to incidents. These are immediately marked as processed.
 
-2. **Deterministic incident IDs:** Instead of random UUIDs, incident IDs are computed as `inc-{sha256(sorted_event_ids)[:16]}`. The same set of events always produces the same incident ID, across any worker instance or restart.
+2. **Deterministic incident IDs (root-cause key):** Instead of random UUIDs, incident IDs are computed as `inc-{sha256(site_id | root device | primary issue category)[:16]}`. The same underlying failure — even when described by *different* event IDs across cycles and collectors — produces the same incident ID, so `ON CONFLICT DO UPDATE` merges recurrence into one live incident instead of inflating the incident table per poll.
 
 **Result:** Restart is zero-cost. Re-processing the same events produces the same IDs, and the database deduplicates them. No duplicate incidents, ever.
+
+### Phase 2 (Aug 2026) — Root-cause dedup + recovery resolution
+
+The event-ID-hash formulation was still leaking: *recurring* failures with new event IDs every poll (a VeloCloud `link_down` flood = 942 events/cycle across 69 devices) kept minting new incidents each cycle.
+
+- **`_compute_incident_id`** now keys on the **root cause** — `SHA256(site_id | root device | primary issue category)` — so recurrence of the same failure merges into one incident row (`ON CONFLICT DO UPDATE`). Live: incident count stayed flat (~8,845) through repeated `link_down` floods.
+- **Recovery resolution:** `DEVICE_REACHABLE` events no longer form incidents (below `min_severity`); instead `_resolve_recovered_devices()` → `resolve_open_incidents_for_devices()` runs `UPDATE incidents SET status='resolved' WHERE status='open' AND root_device_ids && $1`. Only OPEN is auto-resolved. Legacy open incidents backfilled `root_device_ids` so recovery resolves them too.
+
+**Result:** ~4,973 of ~8,844 incidents auto-resolved by recovery events; title count stable — the flood became a handful of living incidents that resolve when the device returns.
 
 ### Fix 6 — Prefix Expansion (Node Resolution)
 

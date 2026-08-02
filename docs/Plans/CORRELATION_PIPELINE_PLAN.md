@@ -692,8 +692,9 @@ Update with the complete, accurate pipeline that now exists:
    - Edge direction conventions
 
 3. **Deterministic incident_id strategy**:
-   - `inc-{sha256(sorted_event_ids)[:16]}` — reproducible
-   - Why: restart resilience, idempotency
+   - `inc-{sha256(site_id | root device | primary issue category)[:16]}` — root-cause key, implemented in Phase 2
+   - Recurring failures (new event IDs each poll) merge into one incident via `ON CONFLICT DO UPDATE` instead of flooding the table
+   - Recovery: `DEVICE_REACHABLE` events auto-resolve OPEN incidents whose root device recovered (`resolve_open_incidents_for_devices`)
 
 4. **Processed event tracking**:
    - `OrderedDict[str, datetime]` with TTL + capacity cap

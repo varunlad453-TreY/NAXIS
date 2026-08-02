@@ -194,7 +194,7 @@ In tests, `MockTopologyProvider` is seeded with known relationships. In producti
 
 ```python
 class Incident(BaseModel):
-    incident_id: str                       # Auto-generated: "inc-{uuid}"
+    incident_id: str                       # Deterministic root-cause key: "inc-{sha256(site_id|root device|category)[:16]}"
     title: str                             # Human-readable summary
     severity: IncidentSeverity             # CRITICAL / MAJOR / MINOR / WARNING / INFO
     status: IncidentStatus                 # OPEN / INVESTIGATING / MITIGATED / RESOLVED / CLOSED / SUPPRESSED
@@ -527,7 +527,22 @@ The engine tracks `event_id` values in `_processed_events: OrderedDict[str, date
 
 On worker restart, the engine loads all event IDs already linked to existing incidents from the database (`SELECT DISTINCT unnest(related_event_ids) FROM incidents`), so past events are never re-processed.
 
-This is a belt-and-suspenders approach: deterministic incident IDs (`inc-{sha256}...`) ensure even if an event somehow sneaks through, `ON CONFLICT DO UPDATE` at the DB level prevents duplicate rows.
+This is a belt-and-suspenders approach: deterministic incident IDs ensure even if an event somehow slips through, `ON CONFLICT DO UPDATE` at the DB level prevents duplicate rows.
+
+### How does incident deduplication work across cycles?
+
+Incident IDs are a **root-cause key**, not a hash of the event IDs: `SHA256(site_id | root device | primary issue category)` (`_compute_incident_id` in `engine.py`). Events describing the same underlying failure — even with different event IDs, from different cycles or different collectors — produce the same `incident_id`, so `ON CONFLICT DO UPDATE` merges them into one live incident instead of inflating the incident table every poll. Flat (non-cascade) incidents derive their root device via `_primary_device_id()` (highest-severity event; CRITICAL → INFO order).
+
+### How are incidents resolved when a device recovers?
+
+`DEVICE_REACHABLE` (INFO) events do **not** form incidents — they are filtered below `min_severity`. Each cycle, `process_events` collects them and calls `_resolve_recovered_devices()` → `resolve_open_incidents_for_devices()` in `shared/database/incidents.py`, which runs:
+
+```sql
+UPDATE incidents SET status = 'resolved', updated_at = NOW()
+WHERE status = 'open' AND root_device_ids && $1::text[];
+```
+
+Only `open` incidents are auto-resolved — operator-managed states (investigating, mitigated, ...) are left untouched. Legacy open incidents were backfilled with `root_device_ids = ARRAY[affected_devices[1]]` so recovery events can also resolve pre-dating incidents.
 
 ### Can events from different vendors be correlated together?
 

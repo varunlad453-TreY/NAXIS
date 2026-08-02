@@ -53,7 +53,7 @@ Also unblocked the incident pipeline with two latent bugs:
 
 | # | Item | Why |
 |---|------|-----|
-| H1 | **Phase 3: site mapping for VeloCloud events** | ~6,000 "Multiple locations - connectivity issue" incidents come from VeloCloud link/tunnel/edge events carrying no `site_id` (`velocloud.py` collectors L259, L362, L590), so titles can't be per-site. |
+| H1 | **Phase 3: verify + finish per-site VeloCloud titles** | Initial fix done: link/tunnel emitters on `velocloud.py` base now stamp per-edge site (verified in code + 3 new tests). Pending: restart worker (done in-session), and confirm live — plus the riched `velocloud_events.py` events collector has its own `_normalize` and may still emit empty `site_id`; check which collector feeds the live "Multiple locations" incidents. ~6,000 legacy `multiple locations` rows stay as-is (new incidents form per-site going forward). |
 | M1 | `health_snapshot.py` periodic SQL error (worker log, "syntax error near '2'") | Pre-existing, nonfatal, fires every 5 min — root-cause when touching health features |
 | L1 | 8_handoff.md is stale (correct resting place is this file's updated content) — superseded by this file |
 
@@ -61,7 +61,7 @@ Also unblocked the incident pipeline with two latent bugs:
 
 ## 4. How to Pick Up — Next Developer
 
-1. Phase 3: stamp `site_id`/`site_name` into the VeloCloud link/tunnel/edge event emitters (already have `site` in edges_data). See H1.
+1. Phase 3: confirm per-site titles live after restart; check `velocloud_events.py` event emitter stamps site. See H1.
 2. Revert 8_handoff (restored, no diff) — any stale "column" check there (the `worker_heartbeat` schema uses `cycle_status`, not `status`).
 3. Resolve M1 (health_snapshot) opportunistically.
 
