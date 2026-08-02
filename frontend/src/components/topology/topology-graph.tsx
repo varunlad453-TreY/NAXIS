@@ -496,10 +496,12 @@ export function TopologyGraph({
     reactFlowInstance?.fitView({ padding: 0.2 });
   }, [reactFlowInstance]);
 
-  const onExportPng = useCallback(async () => {
+const onExportPng = useCallback(async () => {
     if (!reactFlowInstance) return;
     try {
-      const dataUrl = reactFlowInstance.toImage();
+      const dataUrl = (reactFlowInstance as ReactFlowInstance & {
+        toImage: () => string | Promise<string>;
+      }).toImage();
       const link = document.createElement("a");
       link.download = `topology-${new Date().toISOString().slice(0, 19).replace(/[:-]/g, "")}.png`;
       link.href = await dataUrl;

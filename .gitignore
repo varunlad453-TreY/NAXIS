@@ -41,6 +41,7 @@ env/
 .DS_Store
 
 # Next.js
+node_modules/
 frontend/.next/
 frontend/out/
 frontend/node_modules/
