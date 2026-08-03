@@ -15,6 +15,7 @@ import {
   X,
 } from "lucide-react";
 import { api } from "@/lib/api";
+import { buildStats } from "@/lib/incident-stats";
 import { Skeleton } from "@/components/ui/skeleton";
 import { IncidentCard } from "@/components/incidents/incident-card";
 import type { IncidentSeverity, IncidentSummary } from "@/types/incident";
@@ -31,6 +32,12 @@ export default function CorrelationEnginePage() {
     refetchInterval: 15000,
   });
 
+  const { data: kpiData } = useQuery({
+    queryKey: ["incident-stats"],
+    queryFn: () => api.getIncidentStats(),
+    refetchInterval: 30000,
+  });
+
   const { data: engineStats } = useQuery({
     queryKey: ["correlation-stats"],
     queryFn: () => api.getCorrelationStats(),
@@ -40,14 +47,14 @@ export default function CorrelationEnginePage() {
   const engineHealth = engineStats as { status?: string; stats?: Record<string, unknown> } | undefined;
 
   const incidents = data?.incidents ?? [];
+  const totalIncidents = data?.total ?? incidents.length;
 
-  const stats = useMemo(() => ({
-    critical: incidents.filter((i) => i.severity === "critical").length,
-    major: incidents.filter((i) => i.severity === "major").length,
-    minor: incidents.filter((i) => i.severity === "minor").length,
-    total: incidents.length,
-    active: incidents.filter((i) => ["open", "investigating", "mitigated"].includes(i.status)).length,
-  }), [incidents]);
+  // Truthful KPIs — SQL aggregates from GET /incidents/stats; the list page
+  // (limit 500) never becomes the headline number.
+  const stats = useMemo(
+    () => buildStats(kpiData, incidents, totalIncidents),
+    [kpiData, incidents, totalIncidents]
+  );
 
   const filteredIncidents = useMemo(() => {
     const term = search.toLowerCase();
@@ -62,9 +69,6 @@ export default function CorrelationEnginePage() {
       })
       .sort((a, b) => severityOrder[b.severity] - severityOrder[a.severity] || new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
   }, [incidents, severityFilter, search]);
-
-  const totalConfidence = incidents.reduce((sum, i) => sum + i.confidence_score, 0);
-  const avgConfidence = incidents.length > 0 ? totalConfidence / incidents.length : 0;
 
   return (
     <div className="min-h-screen px-4 py-10 sm:px-6 lg:px-8">
@@ -112,8 +116,16 @@ export default function CorrelationEnginePage() {
               <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-foreground-subtle mt-0.5">Total incidents</div>
             </div>
             <div>
-              <div className="text-3xl font-semibold text-foreground">{(avgConfidence * 100).toFixed(0)}%</div>
+              <div className="text-3xl font-semibold text-foreground">{(stats.avgConfidence * 100).toFixed(0)}%</div>
               <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-foreground-subtle mt-0.5">Avg confidence</div>
+            </div>
+            <div>
+              <div className="text-3xl font-semibold text-foreground">{stats.distinctSites}</div>
+              <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-foreground-subtle mt-0.5">Sites affected</div>
+            </div>
+            <div>
+              <div className="text-3xl font-semibold text-foreground">{stats.distinctDevices}</div>
+              <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-foreground-subtle mt-0.5">Devices affected</div>
             </div>
           </div>
         </div>
@@ -288,7 +300,7 @@ export default function CorrelationEnginePage() {
 
             {filteredIncidents.length > 0 && (
               <p className="text-xs text-foreground-subtle text-center pt-2">
-                Showing {filteredIncidents.length} of {incidents.length} incidents
+                Showing {filteredIncidents.length} of {totalIncidents} incidents
               </p>
             )}
           </div>

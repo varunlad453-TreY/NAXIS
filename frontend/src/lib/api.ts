@@ -5,6 +5,7 @@
 import type {
   IncidentListResponse,
   IncidentDetail,
+  IncidentStats,
   HealthResponse,
   IncidentSeverity,
 } from "@/types/incident";
@@ -125,6 +126,11 @@ export const api = {
    * Get incident by ID
    */
   getIncident: (id: string) => fetchAPI<IncidentDetail>(`/incidents/${id}`),
+
+  /**
+   * Truthful incident KPIs — SQL aggregates, never page length
+   */
+  getIncidentStats: () => fetchAPI<IncidentStats>("/incidents/stats"),
 
   /**
    * List events with optional filters

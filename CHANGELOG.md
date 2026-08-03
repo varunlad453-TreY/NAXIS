@@ -1,5 +1,20 @@
 # Changelog
 
+## [25] — 2026-08-03 — Phase 4: Truthful KPIs (API)
+- New `GET /incidents/stats` — single-pass SQL aggregates: `total`, `active` (open/investigating/mitigated), `by_severity` (zero-filled), `distinct_sites`/`distinct_devices` (`COUNT(DISTINCT unnest(...))`), `avg_confidence`
+- Replaced the service's N+1 `get_stats()` (one COUNT query per status) with the one aggregate query in `shared/database/incidents.py`; `ACTIVE_STATUS_VALUES` is now a single source of truth shared by the repo layer and service
+- Correlation page (`/correlation`) KPIs now render from `/incidents/stats` + the list response's true `total` — previously every KPI was computed from `incidents.length` of a 500-row page, silently capping headline numbers at 500
+- Added "Sites affected" / "Devices affected" KPI cells (distinct counts) and truthful "Showing X of Y" footer (`data.total`)
+- 5 new API tests (`test_incident_stats_api.py`): aggregates, active-status SQL param, severity zero-fill, route-ordering (never swallowed by `/{incident_id}`), 500 on DB error
+- Full suite: `389 passed / 0 failed`; `npm run type-check` clean
+- **Follow-up (pending items L1–L3 cleared):**
+  - Live-verified on the docker stack: API image rebuilt + restarted; `stats.total` == list `total` (11,025), `stats.active` == `?status=open` (5,986) against the live DB; web container built, `/correlation` renders the full KPI row; CORS OK
+  - `GET /incidents` now accepts `status` filter (`List[IncidentStatus]`) — it was silently ignored before (service/repo already supported it); invalid values → 422; 3 new tests (`test_incidents_api.py`)
+  - Deleted unused `stats-panel.tsx` (dead code summing `affected_*_count`)
+  - KPI fallback extracted to pure `buildStats()` (`frontend/src/lib/incident-stats.ts`) + 5 vitest cases; frontend suite: `105 passed` (`npm test`)
+  - Backfilled `docs/handoff docs/24_handoff.md` (session 24 was CHANGELOG-only, no handoff doc existed)
+- Full suite after follow-up: `392 backend passed / 0 failed` + `105 frontend passed`
+
 ## [24] — 2026-08-03 — Close out pre-existing test failures + live-verify
 - Fixed 10 failing tests previously written off as "pre-existing/env": they were stale tests, not environment issues:
   - VeloCloud `collect_all_*` tests asserted the pre-Phase-3 orchestrator (1 outcome, `velocloud-auth` id, "[edges, events, links, tunnels, apps]" order, all links/tunnels/apps "skipped"). Now assert the real fan-out: 5 outcomes in orchestration order, links/tunnels extract from the single pre-fetched edges payload, apps falls back/skips when no endpoint works. Removed the obsolete "sub-collectors always skipped" tests; added `TestVeloCloudAppsCollector` (success + skip paths). New `_mock_client_factory` helper for the direct-`httpx.AsyncClient(...)` binding path in `collect_all`.

@@ -155,6 +155,36 @@ class IncidentListResponse(BaseModel):
         }
 
 
+class IncidentStats(BaseModel):
+    """
+    Truthful incident KPIs computed as SQL aggregates — never page-length.
+
+    Used by GET /incidents/stats endpoint.
+    """
+
+    total: int = Field(..., description="Total number of incidents")
+    active: int = Field(..., description="Incidents in an actionable state (open/investigating/mitigated)")
+    by_severity: Dict[str, int] = Field(
+        ...,
+        description="Incident counts per severity (all five severities, zero-filled)",
+    )
+    distinct_sites: int = Field(..., description="Distinct site IDs across all incidents")
+    distinct_devices: int = Field(..., description="Distinct device IDs across all incidents")
+    avg_confidence: float = Field(..., ge=0.0, le=1.0, description="Mean confidence score (0.0 when empty)")
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "total": 42,
+                "active": 7,
+                "by_severity": {"critical": 2, "major": 4, "minor": 8, "warning": 0, "info": 28},
+                "distinct_sites": 3,
+                "distinct_devices": 15,
+                "avg_confidence": 0.62,
+            }
+        }
+
+
 class HealthResponse(BaseModel):
     """Health check response."""
 

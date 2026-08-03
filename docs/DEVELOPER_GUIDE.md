@@ -322,7 +322,7 @@ Topology is stored in PostgreSQL (`topology_nodes` + `topology_edges`). The sync
 pytest backend\tests -v
 ```
 
-Current: **300+ tests, 0 failures**.
+Current: **392 backend tests, 0 failures** + **105 frontend tests** (`cd frontend && npm test`).
 
 ### Test files
 
@@ -332,6 +332,9 @@ Current: **300+ tests, 0 failures**.
 | `test_correlation_engine.py` | 87 | CorrelationEngine Stage 1 + Stage 2, rules, confidence, titles |
 | `test_correlation_pipeline.py` | 11 | Full pipeline: collector → event → correlation → incident |
 | `test_correlation_telemetry.py` | 9 | DB persistence + API endpoint for correlation stats |
+| `test_incident_stats_api.py` | 5 | `GET /incidents/stats` SQL aggregates, zero-fill, route ordering |
+| `test_incidents_api.py` | 3 | `GET /incidents` status filter reaches SQL; invalid status → 422 |
+| `incident-stats.test.ts` (frontend) | 5 | `buildStats()` KPI fallback: SQL passthrough, true total, confidence mean, zero-fill |
 | `test_redis_client.py` | 11 | RedisClient: publish, health, warm_up, close |
 | `test_topology_sync.py` | 13 | `_sync_velocloud_topology`, `_sync_mist_topology` |
 | `test_topology_api.py` | Var | Topology API endpoints |

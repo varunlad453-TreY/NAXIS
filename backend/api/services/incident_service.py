@@ -10,19 +10,17 @@ from typing import Dict, List, Optional
 from shared.database import (
     count_incidents,
     get_incident,
+    get_incident_stats,
     insert_incident,
     list_incidents,
     upsert_incident,
 )
+from shared.database.incidents import ACTIVE_STATUS_VALUES
 from shared.models.incident import Incident, IncidentStatus
 
 logger = logging.getLogger(__name__)
 
-_ACTIVE_STATUSES = [
-    IncidentStatus.OPEN,
-    IncidentStatus.INVESTIGATING,
-    IncidentStatus.MITIGATED,
-]
+_ACTIVE_STATUSES = [IncidentStatus(v) for v in ACTIVE_STATUS_VALUES]
 
 
 class IncidentService:
@@ -79,14 +77,15 @@ class IncidentService:
             severity_filter=severity_filter,
         )
 
-    async def get_stats(self) -> Dict[str, int]:
-        total = await count_incidents()
-        by_status = {}
-        for status in IncidentStatus:
-            cnt = await count_incidents(status_filter=[status])
-            if cnt:
-                by_status[status.value] = cnt
-        return {"total": total, "by_status": by_status}
+    async def get_stats(self) -> dict:
+        """
+        Truthful incident KPIs from a single SQL aggregate pass.
+
+        Unlike the old per-status loop (N+1 queries) this returns counts the
+        DB computed directly — total, active, by_severity, distinct
+        sites/devices, avg_confidence — independent of any list page size.
+        """
+        return await get_incident_stats()
 
 
 # Global singleton

@@ -5,6 +5,7 @@ from .incidents import (
     get_incident,
     list_incidents,
     count_incidents,
+    get_incident_stats,
 )
 from .events import (
     insert_event,
@@ -23,6 +24,7 @@ __all__ = [
     "get_incident",
     "list_incidents",
     "count_incidents",
+    "get_incident_stats",
     # events
     "insert_event",
     "insert_events",

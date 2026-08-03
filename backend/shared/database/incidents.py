@@ -12,6 +12,14 @@ from .client import db
 
 logger = logging.getLogger(__name__)
 
+# Single source of truth for "active" — shared by the service layer and the
+# stats aggregate so KPI definitions can never drift apart.
+ACTIVE_STATUS_VALUES = [
+    IncidentStatus.OPEN.value,
+    IncidentStatus.INVESTIGATING.value,
+    IncidentStatus.MITIGATED.value,
+]
+
 
 def _row_to_incident(row) -> Incident:
     """Convert an asyncpg Row to an Incident model."""
@@ -215,3 +223,47 @@ async def count_incidents(
         *params,
     )
     return int(row["cnt"])
+
+
+async def get_incident_stats() -> dict:
+    """
+    Single-pass SQL aggregates for incident KPIs.
+
+    Returns truthful totals regardless of any page size:
+      total           — all incidents
+      active          — incidents in an actionable (non-terminal) state
+      by_severity     — counts per severity
+      distinct_sites  — distinct site_ids across all affected_sites arrays
+      distinct_devices— distinct device_ids across all affected_devices arrays
+      avg_confidence  — mean confidence_score (0.0 when no incidents)
+    """
+    row = await db.fetchrow(
+        """
+        SELECT
+            COUNT(*)                                          AS total,
+            COUNT(*) FILTER (WHERE status = ANY($1::text[]))  AS active,
+            (SELECT COUNT(DISTINCT s)
+               FROM incidents AS i2, unnest(i2.affected_sites) AS s)   AS distinct_sites,
+            (SELECT COUNT(DISTINCT d)
+               FROM incidents AS i2, unnest(i2.affected_devices) AS d) AS distinct_devices,
+            COALESCE(AVG(confidence_score), 0.0)              AS avg_confidence
+        FROM incidents
+        """,
+        ACTIVE_STATUS_VALUES,
+    )
+
+    severity_rows = await db.fetch(
+        "SELECT severity, COUNT(*) AS cnt FROM incidents GROUP BY severity"
+    )
+    by_severity = {s.value: 0 for s in IncidentSeverity}
+    for r in severity_rows:
+        by_severity[r["severity"]] = int(r["cnt"])
+
+    return {
+        "total": int(row["total"]),
+        "active": int(row["active"]),
+        "by_severity": by_severity,
+        "distinct_sites": int(row["distinct_sites"]),
+        "distinct_devices": int(row["distinct_devices"]),
+        "avg_confidence": float(row["avg_confidence"]),
+    }

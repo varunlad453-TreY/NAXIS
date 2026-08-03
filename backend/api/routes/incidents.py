@@ -9,11 +9,12 @@ from typing import List
 from fastapi import APIRouter, HTTPException, Query, status
 
 from shared.database.topology import resolve_node_id as resolve_topology_node_id
-from shared.models.incident import Incident
+from shared.models.incident import Incident, IncidentStatus
 from ..models.incident_models import (
     HealthResponse,
     IncidentDetail,
     IncidentListResponse,
+    IncidentStats,
     IncidentSummary,
 )
 from ..services.incident_service import incident_service
@@ -90,14 +91,21 @@ async def _incident_to_detail(incident: Incident) -> IncidentDetail:
 @router.get("", response_model=IncidentListResponse, summary="List incidents")
 async def list_incidents(
     severity: List[str] = Query(None, description="Filter by severity"),
+    status: List[IncidentStatus] = Query(None, description="Filter by status"),
     limit: int = Query(100, ge=1, le=1000),
     offset: int = Query(0, ge=0),
 ) -> IncidentListResponse:
     try:
         incidents = await incident_service.list_incidents(
-            severity_filter=severity, limit=limit, offset=offset
+            severity_filter=severity,
+            status_filter=status,
+            limit=limit,
+            offset=offset,
         )
-        total = await incident_service.count_incidents(severity_filter=severity)
+        total = await incident_service.count_incidents(
+            severity_filter=severity,
+            status_filter=status,
+        )
         summaries = [_incident_to_summary(i) for i in incidents]
         return IncidentListResponse(incidents=summaries, total=total, page=1, page_size=limit)
     except Exception as e:
@@ -117,6 +125,24 @@ async def list_active_incidents(
         return IncidentListResponse(incidents=summaries, total=total, page=1, page_size=limit)
     except Exception as e:
         logger.error(f"Error listing active incidents: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@router.get(
+    "/stats",
+    response_model=IncidentStats,
+    summary="Incident KPIs",
+    description=(
+        "Truthful incident aggregates computed in SQL — total, active, "
+        "by severity, distinct sites/devices, average confidence. Never "
+        "derived from a list page length."
+    ),
+)
+async def get_incident_stats() -> IncidentStats:
+    try:
+        return IncidentStats(**await incident_service.get_stats())
+    except Exception as e:
+        logger.error(f"Error computing incident stats: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Internal server error")
 
 

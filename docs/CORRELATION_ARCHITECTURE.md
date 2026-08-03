@@ -650,6 +650,32 @@ No cascade incidents created — topology may be empty or cascade rule misconfig
 
 Returns `{"status": "no_data", "message": "..."}` when the worker hasn't run yet, and `{"status": "inactive"}` when the engine has zero cycles.
 
+### Incident KPIs (Phase 4 — Truthful KPIs)
+
+`GET /incidents/stats` (`backend/api/routes/incidents.py`) returns **SQL aggregates** computed directly by Postgres — never derived from a list page length:
+
+```json
+{
+  "total": 42,
+  "active": 7,
+  "by_severity": {"critical": 2, "major": 4, "minor": 8, "warning": 0, "info": 28},
+  "distinct_sites": 3,
+  "distinct_devices": 15,
+  "avg_confidence": 0.62
+}
+```
+
+| Field | SQL | Notes |
+|-------|-----|-------|
+| `total` | `COUNT(*)` | All incidents |
+| `active` | `COUNT(*) FILTER (WHERE status = ANY(active))` | Single source of truth: `ACTIVE_STATUS_VALUES` in `backend/shared/database/incidents.py` (open/investigating/mitigated) |
+| `by_severity` | `GROUP BY severity` | Zero-filled for all five severities |
+| `distinct_sites` | `COUNT(DISTINCT unnest(affected_sites))` | Distinct site IDs across all incidents |
+| `distinct_devices` | `COUNT(DISTINCT unnest(affected_devices))` | Distinct device IDs across all incidents |
+| `avg_confidence` | `AVG(confidence_score)` | 0.0 when empty |
+
+The correlation page (`/correlation`) renders its KPI row from this endpoint and from the list response's `total` — the previous behavior computed headline numbers from `incidents.length` of a 500-row page, which silently capped every KPI at 500.
+
 ### How to Alert
 
 | Condition | Recommended Alert |
@@ -757,6 +783,7 @@ Consumers subscribe to `naxis:incidents` and can filter by `severity`, `site_id`
 | `backend/shared/database/redis.py` | 98 | `RedisClient` singleton — async pub/sub for live incident notifications |
 | `backend/worker/main.py` | 370 | `WorkerDaemon` — pipeline: collect → persist → topology sync → correlate → publish → telemetry |
 | `backend/api/routes/correlation.py` | 59 | `GET /correlation/stats` — latest engine telemetry for monitoring |
+| `backend/api/routes/incidents.py` | 170 | `GET /incidents`, `/incidents/stats`, `/incidents/active`, `/incidents/{id}` — list, truthful KPI aggregates, detail |
 | `schemas/postgres/006_correlation_telemetry.sql` | 30 | Correlation telemetry table schema |
 | `backend/tests/conftest.py` | 537 | `make_event()`, `MockTopologyProvider`, all fixtures |
 | `backend/tests/test_correlation_engine.py` | 1220 | 87 tests across 15 test classes (incl. 8 telemetry tests) |

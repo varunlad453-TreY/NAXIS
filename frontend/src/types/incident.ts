@@ -49,6 +49,15 @@ export interface IncidentListResponse {
   page_size: number;
 }
 
+export interface IncidentStats {
+  total: number;
+  active: number;
+  bySeverity: Record<IncidentSeverity | "warning", number>;
+  distinctSites: number;
+  distinctDevices: number;
+  avgConfidence: number;
+}
+
 export interface HealthResponse {
   status: string;
   version: string;
