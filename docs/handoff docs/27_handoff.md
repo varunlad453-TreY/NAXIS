@@ -2,7 +2,7 @@
 
 > **Handoff Date:** Aug 4, 2026
 > **Session Goal:** Turn the "Correlation Engine" page into an operator-first **Alerts** page: real KPIs (Active outages / Sites affected / Devices affected / Avg confidence), alerts grouped by root cause with "ongoing for 2h 14m" durations, root device + site name per row, Outage/Degraded/Attention labels, and engine telemetry demoted to a footnote. Backend enrichment so rows carry real names — migration-free.
-> **Status:** Done. Full suite: **397 backend passed / 0 failed** + **114 frontend passed**; `npm run type-check` clean; live-verified on the docker stack.
+> **Status:** Done. Full suite: **399 backend passed / 0 failed** + **114 frontend passed**; `npm run type-check` clean; live-verified on the docker stack.
 
 ---
 
@@ -41,7 +41,7 @@ Resolution is best-effort: unresolvable ids leave the field empty; the UI falls 
 
 | File | Coverage |
 |------|----------|
-| `backend/tests/test_incident_enrichment.py` (new, 4 tests) | site + root names resolved; empty fallback; UUID root from inventory (no events query); empty list |
+| `backend/tests/test_incident_enrichment.py` (new, 6 tests) | site + root names resolved; empty fallback; UUID root from inventory (no events query); empty list; **detail route regression (200 payload + 404)** |
 | `backend/tests/test_correlation_engine.py` | **+`test_cross_cycle_severity_escalation_same_incident`** — worse event in a later cycle escalates the SAME incident (dedup key stable; upsert recomputes severity). Existing dedup/title/recovery tests already covered the Phase 5 spec items |
 | `frontend/src/lib/alerts.test.ts` (new, 3 tests) | grouping by root cause; fallback labels; severity+recency sort |
 | `frontend/src/lib/utils.test.ts` (new, 6 tests) | `formatElapsed` minutes/hours/days/just-now/negative/invalid |
@@ -49,7 +49,7 @@ Resolution is best-effort: unresolvable ids leave the field empty; the UI falls 
 ### 2.4 Verify
 
 ```bash
-python -m pytest backend/tests      # 397 passed / 0 failed
+python -m pytest backend/tests      # 399 passed / 0 failed
 cd frontend && npm run type-check   # clean
 cd frontend && npm test             # 114 passed
 ```
@@ -82,7 +82,7 @@ cd frontend && npm test             # 114 passed
 ## 4. Verification of "Everything Through This Session"
 
 - **No schema migration:** enrichment is query-time joins; `001_init.sql`/`007_incident_root_symptom.sql` untouched
-- **No regressions:** 392 → 397 backend (5 new), 108 → 114 frontend (6 new), type-check clean
+- **No regressions:** 392 → 399 backend (7 new), 108 → 114 frontend (6 new), type-check clean
 - **Historical docs untouched** (records by design); live docs will gain the Alerts page reference in DEVELOPER_GUIDE if the next session touches it
 
 ## 5. Pending Items (by Impact)
@@ -110,8 +110,8 @@ None known. (`root_device` empty for incidents with no root-cause device — the
 - Backend: IncidentSummary + site_name/root_device, batch-resolved via new resolve_display_names()
   (inventory for sites + UUID devices, events latest device_name for numeric VeloCloud edge ids);
   wired into GET /incidents and /incidents/active — migration-free
-- Tests: 4 new backend enrichment tests + cross-cycle severity escalation test (103 engine tests);
-  9 new frontend tests (grouping + durations)
-- Full suite: 397 backend passed / 0 failed; 114 frontend passed; type-check clean;
+- Tests: 6 backend enrichment/detail tests + cross-cycle severity escalation test (103 engine tests);
+  9 frontend tests (grouping + durations)
+- Full suite: 399 backend passed / 0 failed; 114 frontend passed; type-check clean;
   live-verified on docker stack (site_name/root_device resolve to real names; stats truthful)
 ```

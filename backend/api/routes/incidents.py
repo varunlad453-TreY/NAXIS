@@ -96,6 +96,30 @@ root_device=root_device_names.get(incident.root_device_ids[0], "")
     )
 
 
+async def _incident_to_detail(incident: Incident) -> IncidentDetail:
+    topology_node_ids = await _resolve_affected_device_ids(list(incident.affected_devices))
+    return IncidentDetail(
+        incident_id=incident.incident_id,
+        title=incident.title,
+        severity=incident.severity.value,
+        severity_label=incident.severity.label,
+        status=incident.status.value,
+        affected_sites=list(incident.affected_sites),
+        affected_devices=list(incident.affected_devices),
+        affected_clients=list(incident.affected_clients),
+        root_device_ids=list(incident.root_device_ids),
+        symptom_device_ids=list(incident.symptom_device_ids),
+        topology_node_ids=topology_node_ids,
+        related_event_ids=list(incident.related_event_ids),
+        event_count=incident.event_count(),
+        probable_cause=incident.probable_cause,
+        confidence_score=incident.confidence_score,
+        confidence_breakdown=incident.confidence_breakdown,
+        created_at=incident.created_at,
+        updated_at=incident.updated_at,
+    )
+
+
 @router.get("", response_model=IncidentListResponse, summary="List incidents")
 async def list_incidents(
     severity: List[str] = Query(None, description="Filter by severity"),

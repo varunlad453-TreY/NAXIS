@@ -48,7 +48,7 @@ Current primary routes:
 | Operational  | `/`              | Dashboard with platform HUD + inventory  |
 | Operational  | `/integrations`  | Data-source control plane                |
 | Operational  | `/events`        | Raw unified events list                  |
-| Operational  | `/correlation`   | Correlation engine stats and incidents   |
+| Operational  | `/correlation`   | Alerts page — root-cause grouped incidents, truthful KPIs |
 | Operational  | `/topology`      | Network topology graph (drill-down)      |
 | Operational  | `/sdwan`         | VeloCloud SD-WAN view                    |
 | Operational  | `/mist`          | Juniper Mist view                        |

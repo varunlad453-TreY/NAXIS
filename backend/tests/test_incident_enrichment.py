@@ -105,3 +105,57 @@ class TestIncidentEnrichment:
 
         assert response.status_code == 200
         assert response.json()["incidents"] == []
+
+
+class TestIncidentDetailRoute:
+    """Regression: GET /incidents/{id} must keep working (Phase 5 refactor
+    briefly removed _incident_to_detail — caught live as a 500)."""
+
+    def test_detail_route_returns_full_payload(self, client, monkeypatch):
+        from shared.models.incident import Incident, IncidentSeverity, IncidentStatus
+
+        now = datetime.now(timezone.utc)
+        incident = Incident(
+            incident_id="inc-detail-1",
+            title="SFO-01 · edge-sfo-01 link down",
+            severity=IncidentSeverity.CRITICAL,
+            status=IncidentStatus.OPEN,
+            affected_sites=["site-sfo-01"],
+            affected_devices=["edge-1", "ap-1"],
+            root_device_ids=["edge-1"],
+            symptom_device_ids=["ap-1"],
+            related_event_ids=["e1"],
+            confidence_score=0.9,
+            created_at=now,
+            updated_at=now,
+        )
+
+        async def fake_get_incident(_id):
+            return incident
+
+        monkeypatch.setattr(
+            "api.services.incident_service.incident_service.get_incident",
+            fake_get_incident,
+        )
+        response = client.get("/incidents/inc-detail-1")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["incident_id"] == "inc-detail-1"
+        assert data["severity_label"] == "Outage"
+        assert data["root_device_ids"] == ["edge-1"]
+        assert data["symptom_device_ids"] == ["ap-1"]
+        assert data["event_count"] == 1
+        assert data["probable_cause"] is None
+
+    def test_detail_route_404_when_missing(self, client, monkeypatch):
+        async def fake_get_incident(_id):
+            return None
+
+        monkeypatch.setattr(
+            "api.services.incident_service.incident_service.get_incident",
+            fake_get_incident,
+        )
+        response = client.get("/incidents/does-not-exist")
+
+        assert response.status_code == 404

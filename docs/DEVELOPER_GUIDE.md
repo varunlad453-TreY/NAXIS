@@ -319,7 +319,7 @@ Topology is stored in PostgreSQL (`topology_nodes` + `topology_edges`). The sync
 pytest backend\tests -v
 ```
 
-Current: **397 backend tests, 0 failures** + **114 frontend tests** (`cd frontend && npm test`).
+Current: **399 backend tests, 0 failures** + **114 frontend tests** (`cd frontend && npm test`).
 
 ### Test files
 
@@ -329,7 +329,7 @@ Current: **397 backend tests, 0 failures** + **114 frontend tests** (`cd fronten
 | `test_correlation_engine.py` | 103 | CorrelationEngine Stage 1 + Stage 2, rules, confidence, titles, dedup, recovery, cross-cycle escalation |
 | `test_correlation_pipeline.py` | 11 | Full pipeline: collector → event → correlation → incident |
 | `test_correlation_telemetry.py` | 9 | DB persistence + API endpoint for correlation stats |
-| `test_incident_enrichment.py` | 4 | Alerts enrichment: site/root-device display names, UUID + numeric fallbacks |
+| `test_incident_enrichment.py` | 6 | Alerts enrichment: site/root-device display names, UUID + numeric fallbacks, detail route regression |
 | `test_incident_stats_api.py` | 5 | `GET /incidents/stats` SQL aggregates, zero-fill, route ordering |
 | `test_incidents_api.py` | 3 | `GET /incidents` status filter reaches SQL; invalid status → 422 |
 | `incident-stats.test.ts` (frontend) | 5 | `buildStats()` KPI fallback: SQL passthrough, true total, confidence mean, zero-fill |
