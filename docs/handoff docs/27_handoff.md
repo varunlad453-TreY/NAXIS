@@ -35,7 +35,7 @@ Resolution is best-effort: unresolvable ids leave the field empty; the UI falls 
 - `app/correlation/page.tsx` — rebuilt as the Alerts page: title, description, 4-KPI row, telemetry footnote, root-cause grouped list (`AlertRow`), severity filter chips (Outage/Degraded/Attention), search covering title/id/site/root device
 - `lib/alerts.ts` — `groupByRootCause()` pure helper + `RootCauseGroup`
 - `lib/utils.ts` — `formatElapsed(startIso, nowIso)` → "2h 14m" style durations (guards NaN/negative/invalid input)
-- `components/incidents/incident-card.tsx` — unchanged; the page now renders its own compact `AlertRow` (card still used elsewhere)
+- `components/incidents/incident-card.tsx` + `incident-skeleton.tsx` — **removed**: orphaned when the page shipped its own compact `AlertRow` (no remaining imports)
 
 ### 2.3 Tests
 
@@ -68,7 +68,7 @@ cd frontend && npm test             # 114 passed
 | `backend/shared/database/incidents.py` | +`resolve_display_names()` batch resolver |
 | `backend/api/routes/incidents.py` | +`_enrich_summaries()`, enriched `_incident_to_summary`, imports fixed |
 | `backend/api/models/incident_models.py` | `IncidentSummary` + `site_name`, `root_device` |
-| `backend/tests/test_incident_enrichment.py` | **New** — 4 API enrichment tests |
+| `backend/tests/test_incident_enrichment.py` | **New** — 6 enrichment + detail-route regression tests |
 | `backend/tests/test_correlation_engine.py` | +cross-cycle severity escalation test (103 tests in file) |
 | `frontend/src/app/correlation/page.tsx` | Full Alerts page rebuild |
 | `frontend/src/lib/alerts.ts` | **New** — root-cause grouping helper |
@@ -76,6 +76,8 @@ cd frontend && npm test             # 114 passed
 | `frontend/src/lib/alerts.test.ts` | **New** — 3 grouping tests |
 | `frontend/src/lib/utils.test.ts` | **New** — 6 duration tests |
 | `frontend/src/types/incident.ts` | `site_name?`, `root_device?` on `IncidentSummary` |
+| `frontend/src/components/incidents/incident-card.tsx` | **Removed** — orphaned by the AlertRow rebuild |
+| `frontend/src/components/incidents/incident-skeleton.tsx` | **Removed** — orphaned by the AlertRow rebuild |
 | `CHANGELOG.md` | `[27]` entry |
 | `docs/handoff docs/27_handoff.md` | this file |
 
