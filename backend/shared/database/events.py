@@ -124,6 +124,37 @@ async def insert_events(events: List[UnifiedEvent]) -> None:
         await insert_event(event)
 
 
+async def latest_event_states(source_event_ids: List[str]) -> dict:
+    """Return the most recent event per stable ``source_event_id``.
+
+    Polled-state collectors use this to emit events only when the state
+    actually changed (diff-on-write): the returned mapping is
+    ``{source_event_id: {"event_type": ..., "metadata": {...}}}`` for the
+    newest event of each id. Collectors compare it against the current
+    poll and skip identical steady states.
+    """
+    ids = [sid for sid in (source_event_ids or []) if sid]
+    if not ids:
+        return {}
+    rows = await db.fetch(
+        """
+        SELECT DISTINCT ON (source_event_id)
+               source_event_id, event_type, metadata
+        FROM events
+        WHERE source_event_id = ANY($1::text[])
+        ORDER BY source_event_id, timestamp DESC
+        """,
+        ids,
+    )
+    return {
+        r["source_event_id"]: {
+            "event_type": r["event_type"],
+            "metadata": _as_json(r["metadata"]) or {},
+        }
+        for r in rows
+    }
+
+
 async def get_event(event_id: str) -> Optional[UnifiedEvent]:
     """Fetch a single event by ID."""
     row = await db.fetchrow(

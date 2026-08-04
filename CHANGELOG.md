@@ -1,5 +1,18 @@
 # Changelog
 
+## [28] -- 2026-08-04 -- WP-0: Storage Hygiene (write path)
+- **Retention fix (0.1):** `correlation_telemetry` cleanup was pruned on `created_at` (column doesn't exist) — every 24 h pass errored. Now prunes on `recorded_at`. Verified a manual retention run executes clean.
+- **`EVENT_RETENTION_DAYS` wired (0.2):** new `settings.event_retention_days` (env `EVENT_RETENTION_DAYS`, default 90); `events` pruned at 90 days on the daily pass alongside the 7-day telemetry cleanup. Nothing older than 90 days exists yet; count drops as history ages.
+- **Polled-state emitters stopped (0.3):** `mist-ap-rf` + `mist-wired-uplink` previously emitted a fresh event per radio/link every poll (~604K events/48 h, with fresh UUID `source_event_id` so `ON CONFLICT (event_id)` could never dedupe). Both now diff-on-write: stable `source_event_id` (`mist-rf-{mac}-{band_key}`, `mist-uplink-{uplink_id}`), last state looked up once per cycle via new `events.latest_event_states()`, events emitted only on band/link-state change. RF baseline burst (~1 event per radio/band) re-seeds once after restart; uplink recovery `LINK_UP` re-emits correctly after a `LINK_DOWN` (event_type diff, not presence diff).
+- **Measured live:** RF 2,104 → 2 events/cycle; uplinks 1,095 → 0; whole cycle persisted 3 events. Windowed count: 5 events in 30 min post-deploy vs 179,891 in the prior 2.5 h. First-cycle baseline burst 6,751 (by design).
+- **raw_event (0.4, premise corrected):** live DB shows `raw_event` 100% populated (0 NULL of 1,379,730), not 100% NULL — write path retained for vendor-sourced events; dropped only for synthesized RF state events (biggest duplicated blob ×3 bands). Docs corrected (`PLAN_GAP.md`, `DATA_POLICY.md`).
+- **Duration guard (0.5):** `CollectorRunResult.duration_ms` clamps negatives to 0 (clock-skew protection; ledger already had 0 negatives).
+- **Fixture export (0.6):** new `backend/scripts/export_event_fixture.py` (core columns, no raw blobs) + 100-event sample committed to `backend/tests/fixtures/events_sample.json`; full 50K export is a one-liner when WP-2 needs a replay corpus.
+- **Worker healthcheck (0.7):** `start_period` 30s → 300s in `docker-compose.yml`.
+- **Dead code removed (0.8):** `backend/worker/receivers/{syslog_receiver,snmp_trap_receiver,__init__}.py` deleted (imported by nothing; referenced settings fields that don't exist). `STORAGE_MODE` kept + documented vestigial.
+- **Tests:** +19 backend tests (`test_retention.py`, `test_event_dedup.py`, `test_collector_telemetry.py`). Full suite: **418 backend passed / 0 failed**.
+- Docs: CHANGELOG [28], handoff 28, `PLAN_GAP.md` WP-0 → DONE, `DATA_POLICY.md` appendix corrected. Graphify update skipped (CLI unavailable in this environment; graph is gitignored).
+
 ## [27] -- 2026-08-04 -- Phase 5: Alerts Page UX
 - Correlation Engine page rebuilt as "Alerts": title/empty-state renamed; engine telemetry demoted from a panel to a one-line footnote
 - KPIs trimmed to Active outages / Sites affected / Devices affected / Avg confidence (truthful SQL aggregates from /incidents/stats)

@@ -94,6 +94,11 @@ class Settings(BaseSettings):
     # Collectors
     collector_interval: int = Field(default=60, description="Worker collection interval in seconds")
 
+    # Retention
+    event_retention_days: int = Field(
+        default=90, description="Events older than this many days are pruned"
+    )
+
     # Correlation
     correlation_time_window: int = Field(default=300, description="Correlation time window in seconds")
     correlation_min_events: int = Field(default=2, description="Minimum events to form an incident")

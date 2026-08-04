@@ -56,6 +56,10 @@ try:
     from backend.worker.collectors.mist_ap_history import record_snapshots
 except ImportError:  # pragma: no cover - supports both entry-point styles
     from worker.collectors.mist_ap_history import record_snapshots
+try:
+    from backend.shared.database.events import latest_event_states
+except ImportError:  # pragma: no cover - supports both entry-point styles
+    from shared.database.events import latest_event_states
 
 logger = logging.getLogger(__name__)
 
@@ -300,35 +304,48 @@ class MistApRfCollector:
             source_system=self.SOURCE_SYSTEM,
         )
         try:
-            events: List[UnifiedEvent] = []
+            entries: List[Dict[str, Any]] = []
             for site_id in site_ids:
                 devices = site_devices.get(site_id, [])
                 for dev in devices:
                     try:
-                        rf_events = self._normalize_rf(site_id, dev)
-                        events.extend(rf_events)
+                        entries.extend(self._rf_entries(site_id, dev))
                     except Exception:
                         logger.exception(
                             "Failed to normalize AP RF for %s",
                             dev.get("mac", "?"),
                         )
 
+            states = await latest_event_states([e["source_event_id"] for e in entries])
+
+            events: List[UnifiedEvent] = []
+            for entry in entries:
+                prev = states.get(entry["source_event_id"])
+                if prev is not None and prev["metadata"].get("mist_rf_level") == entry["level"]:
+                    continue
+                events.append(self._rf_event(entry))
+
             outcome.events = events
             outcome.mark_success(rows_written=len(events))
             outcome.metadata["sites_scanned"] = len(site_ids)
-            logger.info("Mist AP RF: %d RF entries from %d sites", len(events), len(site_ids))
+            outcome.metadata["entries_seen"] = len(entries)
+            logger.info(
+                "Mist AP RF: %d RF event(s) from %d entries across %d sites",
+                len(events), len(entries), len(site_ids),
+            )
         except Exception as exc:
             outcome.mark_error(str(exc))
             logger.exception("Mist AP RF collection failed")
         return outcome
 
-    def _normalize_rf(self, site_id: str, raw: Dict[str, Any]) -> List[UnifiedEvent]:
+    def _rf_entries(self, site_id: str, raw: Dict[str, Any]) -> List[Dict[str, Any]]:
         """
-        Extract per-radio RF stats from a device entry.
+        Extract per-radio RF state from a device entry.
 
         The Mist device stats object contains radio_stat with per-band data
         (band_24, band_5, band_6) including channel, tx_power, num_clients,
-        and utilization.
+        and utilization. Returns entries keyed by a stable source_event_id
+        so steady-state polls can be skipped.
         """
         mac = raw.get("mac", "")
         name = raw.get("name", mac or "unknown")
@@ -341,7 +358,7 @@ class MistApRfCollector:
         if not isinstance(radio_stat, dict):
             return []
 
-        events: List[UnifiedEvent] = []
+        entries: List[Dict[str, Any]] = []
         band_map = {
             "band_24": "2.4 GHz",
             "band_5": "5 GHz",
@@ -359,58 +376,84 @@ class MistApRfCollector:
             utilization = band_data.get("utilization", 0)
             bssid = band_data.get("bssid", "")
 
-            # High utilization indicates performance concern
-            if isinstance(utilization, (int, float)) and utilization > 80:
-                severity = EventSeverity.WARNING
-                event_type = EventType.HIGH_BANDWIDTH
-            elif isinstance(utilization, (int, float)) and utilization > 60:
-                severity = EventSeverity.INFO
-                event_type = EventType.OTHER
-            else:
-                severity = EventSeverity.INFO
-                event_type = EventType.OTHER
+            entries.append({
+                "site_id": site_id,
+                "mac": mac,
+                "name": name,
+                "model": model,
+                "band_key": band_key,
+                "band_label": band_label,
+                "channel": channel,
+                "tx_power": tx_power,
+                "num_clients": num_clients,
+                "utilization": utilization,
+                "bssid": bssid,
+                "level": self._rf_level(utilization),
+                "source_event_id": f"mist-rf-{mac}-{band_key}",
+            })
 
-            description = (
-                f"AP {name} — {band_label}, channel {channel}, "
-                f"utilization {utilization}%, {num_clients} clients"
-            )
-            if bssid:
-                description += f", BSSID: {bssid}"
+        return entries
 
-            events.append(UnifiedEvent(
-                event_id=f"mist-rf-{uuid4().hex[:12]}",
-                timestamp=datetime.now(timezone.utc).replace(tzinfo=None),
-                source=EventSource.MIST,
-                source_event_id=f"mist-rf-{mac}-{band_key}-{uuid4().hex[:8]}",
-                severity=severity,
-                category=EventCategory.PERFORMANCE,
-                event_type=event_type,
-                title=f"RF Stats: {name} ({band_label})",
-                description=description,
-                device=DeviceInfo(
-                    device_id=mac,
-                    device_name=name,
-                    device_type="ap",
-                    device_model=model,
-                    site_id=site_id,
-                    site_name=f"site-{site_id[:8]}",
-                ),
-                tags=["wireless", "mist", "rf", "topology"],
-                metadata={
-                    "mist_mac": mac,
-                    "mist_band": band_label,
-                    "mist_band_key": band_key,
-                    "mist_channel": channel,
-                    "mist_tx_power": tx_power,
-                    "mist_num_clients": num_clients,
-                    "mist_utilization": utilization,
-                    "mist_bssid": bssid,
-                    "mist_site_id": site_id,
-                },
-                raw_event=raw,
-            ))
+    @staticmethod
+    def _rf_level(utilization) -> str:
+        """Bucket utilization into a stable performance state."""
+        if isinstance(utilization, (int, float)):
+            if utilization > 80:
+                return "high"
+            if utilization > 60:
+                return "elevated"
+        return "clear"
 
-        return events
+    def _rf_event(self, entry: Dict[str, Any]) -> UnifiedEvent:
+        """Build an RF stats event from a state entry."""
+        utilization = entry["utilization"]
+        if entry["level"] == "high":
+            severity = EventSeverity.WARNING
+            event_type = EventType.HIGH_BANDWIDTH
+        else:
+            severity = EventSeverity.INFO
+            event_type = EventType.OTHER
+
+        description = (
+            f"AP {entry['name']} — {entry['band_label']}, channel {entry['channel']}, "
+            f"utilization {utilization}%, {entry['num_clients']} clients"
+        )
+        if entry["bssid"]:
+            description += f", BSSID: {entry['bssid']}"
+
+        return UnifiedEvent(
+            event_id=f"mist-rf-{uuid4().hex[:12]}",
+            timestamp=datetime.now(timezone.utc).replace(tzinfo=None),
+            source=EventSource.MIST,
+            source_event_id=entry["source_event_id"],
+            severity=severity,
+            category=EventCategory.PERFORMANCE,
+            event_type=event_type,
+            title=f"RF Stats: {entry['name']} ({entry['band_label']})",
+            description=description,
+            device=DeviceInfo(
+                device_id=entry["mac"],
+                device_name=entry["name"],
+                device_type="ap",
+                device_model=entry["model"],
+                site_id=entry["site_id"],
+                site_name=f"site-{entry['site_id'][:8]}" if entry["site_id"] else None,
+            ),
+            tags=["wireless", "mist", "rf", "topology"],
+            metadata={
+                "mist_mac": entry["mac"],
+                "mist_band": entry["band_label"],
+                "mist_band_key": entry["band_key"],
+                "mist_channel": entry["channel"],
+                "mist_tx_power": entry["tx_power"],
+                "mist_num_clients": entry["num_clients"],
+                "mist_utilization": utilization,
+                "mist_bssid": entry["bssid"],
+                "mist_site_id": entry["site_id"],
+                "mist_rf_level": entry["level"],
+            },
+            raw_event=None,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -629,12 +672,18 @@ class MistWiredUplinkCollector:
                 devices = site_devices.get(site_id, [])
                 uplinks.extend(self._extract_uplinks(site_id, devices))
 
+            states = await latest_event_states([self._state_key(u) for u in uplinks])
+
             events: List[UnifiedEvent] = []
             for uplink in uplinks:
                 try:
                     event = self._normalize(uplink)
-                    if event is not None:
-                        events.append(event)
+                    if event is None:
+                        continue
+                    prev = states.get(event.source_event_id)
+                    if prev is not None and prev["event_type"] == event.event_type:
+                        continue
+                    events.append(event)
                 except Exception:
                     logger.exception(
                         "Failed to normalize wired uplink: %s",
@@ -644,11 +693,20 @@ class MistWiredUplinkCollector:
             outcome.events = events
             outcome.mark_success(rows_written=len(events))
             outcome.metadata["raw_count"] = len(uplinks)
-            logger.info("Mist wired uplinks: %d links collected", len(events))
+            logger.info(
+                "Mist wired uplinks: %d link event(s) from %d links collected",
+                len(events), len(uplinks),
+            )
         except Exception as exc:
             outcome.mark_error(str(exc))
             logger.exception("Mist wired uplink collection failed")
         return outcome
+
+    @staticmethod
+    def _state_key(raw: Dict[str, Any]) -> str:
+        """Stable identity for one physical uplink."""
+        uplink_id = raw.get("uplink_id") or f"{raw.get('uplink_mac', '')}-{raw.get('port_id', 'uplink')}"
+        return f"mist-uplink-{uplink_id}"
 
     @staticmethod
     def _extract_uplinks(site_id: str, devices: List[Dict]) -> List[Dict]:
@@ -733,7 +791,7 @@ class MistWiredUplinkCollector:
             event_id=f"mist-uplink-{uuid4().hex[:12]}",
             timestamp=datetime.now(timezone.utc).replace(tzinfo=None),
             source=EventSource.MIST,
-            source_event_id=f"mist-uplink-{ap_mac}-{switch_mac}-{uuid4().hex[:8]}",
+            source_event_id=self._state_key(raw),
             severity=severity,
             category=EventCategory.CONNECTIVITY,
             event_type=event_type,

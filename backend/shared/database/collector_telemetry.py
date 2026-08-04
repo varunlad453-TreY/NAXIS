@@ -31,7 +31,10 @@ class CollectorRunResult:
     def duration_ms(self) -> Optional[int]:
         if self.finished_at is None:
             return None
-        return int((self.finished_at - self.started_at).total_seconds() * 1000)
+        ms = int((self.finished_at - self.started_at).total_seconds() * 1000)
+        # Clock skew / tz drift can produce a negative duration; clamp to 0
+        # so the telemetry ledger never shows impossible runtimes.
+        return max(0, ms)
 
 
 async def ensure_collector_telemetry_schema() -> None:

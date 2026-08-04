@@ -1,9 +1,9 @@
 > **Appendix (2026-08-04) — current-state bridge.** Appended by the Naxis team (original text untouched); see `PLAN_GAP.md` for the gap map + execution plan.
 >
 > **Verified today:**
-> - `raw_event` is **already 100% NULL** in the live DB — the 7.6 GB / PII exposure described below is effectively already gone (DB at **6.5 GB**, from 10). WP-0.4 formalizes it by removing the write path.
-> - The polled-state emitters this doc warns about (39.5%, 448k reachability rows, 784k RF-stats-as-events, 103k "Edge New Device") **still run** → WP-0.3.
-> - `retention.py` still errors every cycle (`created_at` vs `recorded_at`); `EVENT_RETENTION_DAYS=90` still read by no code → WP-0.1/0.2.
+> - `raw_event` is **100% populated** in the live DB (0 NULL of 1,379,730) — *correction of an earlier "100% NULL" reading*. The write path is retained for vendor-sourced events (the debug record); WP-0.3 stops the polled-state emitters that were duplicating blobs ×3 bands, and WP-0.2 (90-day retention) ages out the rest. DB at **6.9 GB** (events table), from 10.
+> - The polled-state emitters this doc warns about (39.5%, 784k RF-stats-as-events, 448k reachability rows) — WP-0.3 **DONE 2026-08-04**: RF + wired-uplink diff-on-write; reachability was already diff-on-write (Phase 5). Measured: 5 events/30 min post-fix vs 179,891 in an equivalent pre-fix window.
+> - `retention.py` **fixed** (`recorded_at`, WP-0.1); `EVENT_RETENTION_DAYS=90` **wired** (WP-0.2).
 > - No `devices`/`device_identities`/`sites` identity tables yet → WP-1.
 > - **Team decision:** the "Truncate events + incidents" item is deferred until after the Phase 2 identity/edge fixes (WP-2.3) — see `PLAN_GAP.md` §5.
 

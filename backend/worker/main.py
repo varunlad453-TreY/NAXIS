@@ -241,7 +241,9 @@ class WorkerDaemon:
         # Data retention cleanup (every 24 hours)
         if (now_utc - self._last_retention).total_seconds() >= 86400:
             try:
-                result = await run_retention(days=7)
+                result = await run_retention(
+                    days=7, event_days=_settings.event_retention_days
+                )
                 logger.info("Retention cleanup: %s", result)
             except Exception:
                 logger.exception("Retention cleanup failed")
