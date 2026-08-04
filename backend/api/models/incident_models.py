@@ -23,6 +23,8 @@ class IncidentSummary(BaseModel):
     severity: str = Field(..., description="Incident severity (critical, major, minor, etc.)")
     severity_label: str = Field(..., description="Operator-friendly severity display name")
     status: str = Field(..., description="Lifecycle status (open, investigating, resolved, etc.)")
+    site_name: str = Field(default="", description="Resolved display name of the primary affected site")
+    root_device: str = Field(default="", description="Resolved display name of the root-cause device")
     event_count: int = Field(..., description="Number of related events")
     affected_sites_count: int = Field(..., description="Number of affected sites")
     affected_devices_count: int = Field(..., description="Number of affected devices")

@@ -112,6 +112,25 @@ export function formatConfidence(score: number): string {
 }
 
 /**
+ * Format an active incident's elapsed time as "2h 14m".
+ *
+ * Used on the Alerts page for "ongoing for 2h 14m".
+ */
+export function formatElapsed(startIso: string, nowIso = new Date().toISOString()): string {
+  const start = new Date(startIso).getTime();
+  const now = new Date(nowIso).getTime();
+  if (Number.isNaN(start) || Number.isNaN(now)) return "—";
+  const totalMinutes = Math.max(0, Math.floor((now - start) / 60000));
+  if (totalMinutes < 1) return "just now";
+  const days = Math.floor(totalMinutes / 1440);
+  const hours = Math.floor((totalMinutes % 1440) / 60);
+  const minutes = totalMinutes % 60;
+  if (days > 0) return `${days}d ${hours}h`;
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  return `${minutes}m`;
+}
+
+/**
  * Get severity sort order (for sorting)
  */
 export function getSeverityOrder(severity: IncidentSeverity): number {

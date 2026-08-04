@@ -225,6 +225,74 @@ async def count_incidents(
     return int(row["cnt"])
 
 
+async def resolve_display_names(
+    site_ids: List[str], root_device_ids: List[str]
+) -> tuple:
+    """
+    Batch-resolve operator-facing display names for a page of incidents.
+
+    Returns (site_names, device_names) dicts:
+      site_names    — {site_id: site_name} from inventory (covers both Mist
+                      UUID site ids and numeric VeloCloud site ids)
+      device_names  — {device_id: display name}: inventory.hostname for UUID
+                      device ids (Mist APs), falling back to the latest
+                      device_name from events for numeric VeloCloud edge ids.
+
+    The returned maps are best-effort — ids that resolve nowhere are simply
+    omitted so callers can fall back to the raw id.
+    """
+    site_names: Dict[str, str] = {}
+    device_names: Dict[str, str] = {}
+
+    site_ids = [s for s in site_ids if s]
+    root_device_ids = [d for d in root_device_ids if d]
+    if not site_ids and not root_device_ids:
+        return site_names, device_names
+
+    if site_ids:
+        rows = await db.fetch(
+            """
+            SELECT DISTINCT site_id, site_name
+            FROM inventory
+            WHERE site_id = ANY($1::text[]) AND site_name <> ''
+            """,
+            list(dict.fromkeys(site_ids)),
+        )
+        for r in rows:
+            site_names[r["site_id"]] = r["site_name"]
+
+    if root_device_ids:
+        device_ids = list(dict.fromkeys(root_device_ids))
+        uuid_ids = [d for d in device_ids if "-" in d]
+        if uuid_ids:
+            rows = await db.fetch(
+                """
+                SELECT device_id, hostname
+                FROM inventory
+                WHERE device_id = ANY($1::text[]) AND hostname <> ''
+                """,
+                uuid_ids,
+            )
+            for r in rows:
+                device_names[r["device_id"]] = r["hostname"]
+
+        numeric_ids = [d for d in device_ids if d not in device_names]
+        if numeric_ids:
+            rows = await db.fetch(
+                """
+                SELECT DISTINCT ON (device_id) device_id, device_name
+                FROM events
+                WHERE device_id = ANY($1::text[]) AND device_name <> ''
+                ORDER BY device_id, (device_name = device_id) ASC, timestamp DESC
+                """,
+                numeric_ids,
+            )
+            for r in rows:
+                device_names[r["device_id"]] = r["device_name"]
+
+    return site_names, device_names
+
+
 async def get_incident_stats() -> dict:
     """
     Single-pass SQL aggregates for incident KPIs.

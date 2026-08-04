@@ -1405,6 +1405,43 @@ class TestRootCauseDedupAndRecovery:
         assert incident_system[0].incident_id != incident_connectivity[0].incident_id
 
     @pytest.mark.asyncio
+    async def test_cross_cycle_severity_escalation_same_incident(self, default_config):
+        """
+        A worse event in a later cycle escalates the SAME incident.
+
+        The dedup key (site|root device|category) is stable across cycles, so
+        the upsert overwrites severity with the recomputed worst severity —
+        an operator watching Alerts sees one alert escalate instead of two.
+        """
+        engine = CorrelationEngine(config=default_config)
+        now = datetime.utcnow()
+
+        first = await engine.process_events([
+            make_event("w1", severity=EventSeverity.MAJOR,
+                       category=EventCategory.CONNECTIVITY,
+                       event_type=EventType.LINK_DOWN,
+                       device_id="ap-1", site_id="site-a", timestamp=now),
+            make_event("w1b", severity=EventSeverity.MAJOR,
+                       category=EventCategory.CONNECTIVITY,
+                       event_type=EventType.LINK_DOWN,
+                       device_id="ap-2", site_id="site-a",
+                       timestamp=now + timedelta(seconds=10)),
+        ])
+        assert len(first) == 1
+        assert first[0].severity == IncidentSeverity.MAJOR
+
+        later = await engine.process_events([
+            make_event("w2", severity=EventSeverity.CRITICAL,
+                       category=EventCategory.CONNECTIVITY,
+                       event_type=EventType.DEVICE_UNREACHABLE,
+                       device_id="ap-1", site_id="site-a",
+                       timestamp=now + timedelta(minutes=5)),
+        ])
+        assert len(later) == 1
+        assert later[0].incident_id == first[0].incident_id
+        assert later[0].severity == IncidentSeverity.CRITICAL
+
+    @pytest.mark.asyncio
     async def test_recovery_event_resolves_open_incident(self, default_config, monkeypatch):
         """DEVICE_REACHABLE resolves open incidents for the recovered device."""
         resolved: List[str] = []

@@ -1,5 +1,13 @@
 # Changelog
 
+## [27] -- 2026-08-04 -- Phase 5: Alerts Page UX
+- Correlation Engine page rebuilt as "Alerts": title/empty-state renamed; engine telemetry demoted from a panel to a one-line footnote
+- KPIs trimmed to Active outages / Sites affected / Devices affected / Avg confidence (truthful SQL aggregates from /incidents/stats)
+- List grouped by root cause (root device + site header); rows show Outage/Degraded/Attention label, "ongoing for 2h 14m" duration (formatElapsed), device count, confidence, event count
+- Backend: IncidentSummary + site_name/root_device, batch-resolved via new resolve_display_names() (inventory for sites + UUID devices, events latest device_name for numeric VeloCloud edge ids); wired into GET /incidents and /incidents/active -- migration-free
+- Tests: 4 new backend enrichment tests + cross-cycle severity escalation test (103 engine tests); 9 new frontend tests (grouping + durations)
+- Full suite: 397 backend passed / 0 failed; 114 frontend passed; type-check clean; live-verified on docker stack (site_name/root_device resolve to real names; stats truthful)
+
 ## [26] — 2026-08-04 — Dead Code Removal: Legacy ORM Worker Path
 - Deleted the entire legacy mock-pipeline worker path, root to leaf:
   - `backend/run_worker.py` (legacy worker entrypoint — imported by nothing)
