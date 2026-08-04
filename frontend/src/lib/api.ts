@@ -8,6 +8,7 @@ import type {
   IncidentStats,
   HealthResponse,
   IncidentSeverity,
+  IncidentStatus,
 } from "@/types/incident";
 import type { EventListResponse, EventFilterParams } from "@/types/event";
 import type { DeviceListResponse, DeviceFilterParams } from "@/types/device";
@@ -96,12 +97,16 @@ export const api = {
    */
   listIncidents: (params?: {
     severity?: IncidentSeverity[];
+    status?: IncidentStatus[];
     limit?: number;
     offset?: number;
   }) => {
     const searchParams = new URLSearchParams();
     if (params?.severity) {
       params.severity.forEach((s) => searchParams.append("severity", s));
+    }
+    if (params?.status) {
+      params.status.forEach((s) => searchParams.append("status", s));
     }
     if (params?.limit) searchParams.set("limit", String(params.limit));
     if (params?.offset) searchParams.set("offset", String(params.offset));

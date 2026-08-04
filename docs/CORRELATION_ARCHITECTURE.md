@@ -783,7 +783,7 @@ Consumers subscribe to `naxis:incidents` and can filter by `severity`, `site_id`
 | `backend/shared/database/redis.py` | 98 | `RedisClient` singleton — async pub/sub for live incident notifications |
 | `backend/worker/main.py` | 370 | `WorkerDaemon` — pipeline: collect → persist → topology sync → correlate → publish → telemetry |
 | `backend/api/routes/correlation.py` | 59 | `GET /correlation/stats` — latest engine telemetry for monitoring |
-| `backend/api/routes/incidents.py` | 170 | `GET /incidents`, `/incidents/stats`, `/incidents/active`, `/incidents/{id}` — list, truthful KPI aggregates, detail |
+| `backend/api/routes/incidents.py` | 168 | `GET /incidents` (severity + status filters), `/incidents/stats`, `/incidents/active`, `/incidents/{id}` — list, truthful KPI aggregates, detail |
 | `schemas/postgres/006_correlation_telemetry.sql` | 30 | Correlation telemetry table schema |
 | `backend/tests/conftest.py` | 537 | `make_event()`, `MockTopologyProvider`, all fixtures |
 | `backend/tests/test_correlation_engine.py` | 1220 | 87 tests across 15 test classes (incl. 8 telemetry tests) |
