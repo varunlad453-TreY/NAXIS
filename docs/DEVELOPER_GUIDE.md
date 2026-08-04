@@ -56,7 +56,7 @@ Onboarding document for new developers. Covers the architecture, workflow, and c
 
 The `backend/Dockerfile` builds one image. Two entrypoints:
 - **api**: `python -m backend.main` — FastAPI server
-- **worker**: `python backend/run_worker.py` — async polling daemon
+- **worker**: `python -m worker.main` — async polling daemon
 
 Both share the same codebase, database, and models. No microservices.
 
@@ -135,7 +135,7 @@ docker run -d --name naxis-pg -p 5432:5432 ^
 
 # Terminal 2: Run worker
 cd backend
-python run_worker.py
+python -m worker.main
 ```
 
 ---
@@ -146,12 +146,9 @@ python run_worker.py
 naxis/
 ├── backend/
 │   ├── main.py                 # FastAPI app entrypoint (api)
-│   ├── run_worker.py           # Worker daemon entrypoint
 │   ├── Dockerfile              # Single Docker image
 │   ├── config/
 │   │   └── settings.py         # Pydantic-settings, typed env vars
-│   ├── db/
-│   │   └── base.py             # Database connection pool
 │   ├── api/
 │   │   ├── routes/             # FastAPI routers (events, incidents, topology, integrations, correlation)
 │   │   └── services/           # Business logic (integration_service, etc.)

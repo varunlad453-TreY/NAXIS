@@ -1,5 +1,17 @@
 # Changelog
 
+## [26] — 2026-08-04 — Dead Code Removal: Legacy ORM Worker Path
+- Deleted the entire legacy mock-pipeline worker path, root to leaf:
+  - `backend/run_worker.py` (legacy worker entrypoint — imported by nothing)
+  - `backend/services/` — `device_service.py`, `event_service.py`, `incident_service.py` (SQLAlchemy ORM services with N+1 `get_stats()`; imported only by `run_worker.py`)
+  - `backend/db/` — `base.py`, `models.py` (ORM layer; imported only by the deleted services)
+  - `backend/worker/mock_ingest/runner.py` — `MockTelemetryPipeline` (imported only by `run_worker.py`)
+  - `backend/worker/Dockerfile` — unbuilt anywhere (compose builds `backend/Dockerfile` for both api and worker); its CMD pointed at the deleted `run_worker.py`
+- Import graph verified repo-wide before cutting: zero code/script/compose/test references outside the deleted cluster
+- Live worker confirmed unaffected: compose runs `python -u -m worker.main` (overrides the image CMD); `backend/Dockerfile` copies `worker/` and `api/` only
+- Docs updated (live docs only; historical handoffs 3/4/15 + TELEMETRY "What Was Before" left as records): README project tree, DEVELOPER_GUIDE entrypoints + direct-run command + walkthrough tree
+- Full suite after removal: `392 backend passed / 0 failed`; graphify updated (3914 nodes / 7674 edges / 272 communities)
+
 ## [25] — 2026-08-03 — Phase 4: Truthful KPIs (API)
 - New `GET /incidents/stats` — single-pass SQL aggregates: `total`, `active` (open/investigating/mitigated), `by_severity` (zero-filled), `distinct_sites`/`distinct_devices` (`COUNT(DISTINCT unnest(...))`), `avg_confidence`
 - Replaced the service's N+1 `get_stats()` (one COUNT query per status) with the one aggregate query in `shared/database/incidents.py`; `ACTIVE_STATUS_VALUES` is now a single source of truth shared by the repo layer and service

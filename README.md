@@ -86,9 +86,8 @@ make up
 naxis/
 ├── backend/
 │   ├── main.py            # FastAPI entrypoint
-│   ├── run_worker.py      # Worker daemon entrypoint
+│   ├── worker/            # Worker daemon (worker/main.py), collectors, topology, pipeline
 │   ├── api/               # REST API routes + services
-│   ├── worker/            # Collectors, topology, pipeline
 │   ├── shared/            # Models, correlation engine, DB clients
 │   └── tests/             # 300 tests
 ├── frontend/              # Next.js 15 UI
