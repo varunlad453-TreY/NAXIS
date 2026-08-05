@@ -175,16 +175,23 @@ async def _resolve_node_id_via_identity(device_ids: List[str]) -> Dict[str, str]
 
 async def get_parents(node_id: str) -> List[Dict[str, Any]]:
     """
-    Return direct parent nodes via topology_edges.
+    Return direct parent nodes via both links (physical) and topology_edges
+    (site_membership, wan_link, logical_link).
 
-    Edge direction: src → dst means src is a child of dst.
-    So parents of node_id are found where node_id is src.
+    links semantics: parent_node_id = upstream, child_node_id = downstream.
+    topology_edges semantics: src = child, dst = parent (preserved for
+    non-physical edge types).
     """
     if not node_id or not db.pool:
         return []
 
     rows = await db.fetch(
         """
+        SELECT n.node_id, n.node_type, n.name, n.vendor, 'physical' AS edge_type, l.props
+        FROM links l
+        JOIN topology_nodes n ON n.node_id = l.parent_node_id
+        WHERE l.child_node_id = $1
+        UNION ALL
         SELECT n.node_id, n.node_type, n.name, n.vendor, e.edge_type, e.props
         FROM topology_edges e
         JOIN topology_nodes n ON n.node_id = e.dst_id
@@ -197,15 +204,19 @@ async def get_parents(node_id: str) -> List[Dict[str, Any]]:
 
 async def get_children(node_id: str) -> List[Dict[str, Any]]:
     """
-    Return direct child nodes via topology_edges.
-
-    Children of node_id are found where node_id is dst (parent).
+    Return direct child nodes via both links (physical) and topology_edges
+    (site_membership, wan_link, logical_link).
     """
     if not node_id or not db.pool:
         return []
 
     rows = await db.fetch(
         """
+        SELECT n.node_id, n.node_type, n.name, n.vendor, 'physical' AS edge_type, l.props
+        FROM links l
+        JOIN topology_nodes n ON n.node_id = l.child_node_id
+        WHERE l.parent_node_id = $1
+        UNION ALL
         SELECT n.node_id, n.node_type, n.name, n.vendor, e.edge_type, e.props
         FROM topology_edges e
         JOIN topology_nodes n ON n.node_id = e.src_id
@@ -219,19 +230,35 @@ async def get_children(node_id: str) -> List[Dict[str, Any]]:
 async def get_devices_under_node(node_id: str, max_depth: int = 3) -> List[str]:
     """
     Recursively find all device node_ids that are descendants of node_id
-    (useful for blast radius: "all devices affected by this switch going down").
+    via the explicit parent-child links table.
+
+    Uses a recursive CTE for efficiency instead of N+1 Python recursion.
     """
     if not node_id or not db.pool or max_depth <= 0:
         return []
 
-    children = await get_children(node_id)
-    result: List[str] = []
-    for child in children:
-        child_id = child["node_id"]
-        result.append(child_id)
-        deeper = await get_devices_under_node(child_id, max_depth - 1)
-        result.extend(deeper)
-    return result
+    try:
+        rows = await db.fetch(
+            """
+            WITH RECURSIVE downstream AS (
+                SELECT child_node_id AS node_id, 1 AS depth
+                FROM links
+                WHERE parent_node_id = $1
+                UNION ALL
+                SELECT l.child_node_id, d.depth + 1
+                FROM links l
+                JOIN downstream d ON l.parent_node_id = d.node_id
+                WHERE d.depth < $2
+            )
+            SELECT DISTINCT node_id FROM downstream
+            """,
+            node_id,
+            max_depth,
+        )
+        return [r["node_id"] for r in rows]
+    except Exception:
+        logger.warning("get_devices_under_node query failed", exc_info=True)
+        return []
 
 
 # ---------------------------------------------------------------------------
@@ -437,9 +464,10 @@ class DatabaseTopologyProvider:
         self, device_ids: Set[str]
     ) -> Dict[str, List[str]]:
         """
-        For each device_id in the set, find direct children via topology_edges.
+        For each device_id in the set, find direct children via the explicit
+        parent-child links table.
 
-        Uses exactly 2 DB queries (batch resolve + single edge query)
+        Uses exactly 2 DB queries (batch resolve + single link query)
         instead of N+1.
 
         Returns a dict: { parent_device_id: [child_device_id, ...] }
@@ -453,54 +481,48 @@ class DatabaseTopologyProvider:
         if not node_ids:
             return {}
 
-        # Batch 2: single query for all edges involving these node_ids
+        # Batch 2: single query against the explicit links table
         try:
             rows = await db.fetch(
                 """
-                SELECT src_id, dst_id
-                FROM topology_edges
-                WHERE src_id = ANY($1) OR dst_id = ANY($1)
+                SELECT parent_node_id, child_node_id
+                FROM links
+                WHERE parent_node_id = ANY($1)
                 """,
                 node_ids,
             )
         except Exception:
-            logger.warning("get_parent_child_map edge query failed", exc_info=True)
+            logger.warning("get_parent_child_map link query failed", exc_info=True)
             return {}
 
         if not rows:
             return {}
 
-        # Build parent → children map from edge rows
-        # Edge direction: dst_id is the parent, src_id is the child
+        # Build parent → children map from link rows
         parent_to_children: Dict[str, List[str]] = {}
         for row in rows:
-            parent_id = row["dst_id"]
-            child_id = row["src_id"]
-            if parent_id not in parent_to_children:
-                parent_to_children[parent_id] = []
-            parent_to_children[parent_id].append(child_id)
+            parent_id = row["parent_node_id"]
+            child_id = row["child_node_id"]
+            parent_to_children.setdefault(parent_id, []).append(child_id)
 
-        # Build reverse index: child_node_id → child_device_id
-        # This is needed because parent_to_children values are topology node_ids
-        # (e.g., "mist-ap-abc123") but the cascade rule expects event device_ids
-        # (e.g., "abc123").  The resolved dict already holds the forward mapping.
-        child_node_to_device: Dict[str, str] = {}
+        # Build reverse index: node_id → device_id for all resolved devices
+        node_to_device: Dict[str, str] = {}
         for dev_id, nid in resolved.items():
             if nid:
-                child_node_to_device[nid] = dev_id
+                node_to_device[nid] = dev_id
 
         # Map back from event device_ids, translating children from node_id
-        # space into device_id space
+        # space into device_id space.  Children not in the input set are
+        # resolved via node_id_to_device_id() (strips known prefixes).
         result: Dict[str, List[str]] = {}
         for device_id, node_id in resolved.items():
             if node_id and node_id in parent_to_children:
-                child_node_ids = parent_to_children[node_id]
                 child_device_ids = []
-                for cid in child_node_ids:
-                    if cid in child_node_to_device:
-                        child_device_ids.append(child_node_to_device[cid])
+                for cid in parent_to_children[node_id]:
+                    if cid in node_to_device:
+                        child_device_ids.append(node_to_device[cid])
                     else:
-                        child_device_ids.append(cid)
+                        child_device_ids.append(node_id_to_device_id(cid))
                 result[device_id] = child_device_ids
 
         return result

@@ -1,7 +1,7 @@
 > **Appendix (2026-08-04) — current-state bridge.** Appended by the Naxis team (original text untouched); see `PLAN_GAP.md` for the gap map + execution plan.
 >
 > **Verified against today's code:**
-> - **Phase 2 correlation engine + incidents + Alerts UI already exist** (`backend/shared/correlation/`, `backend/api/routes/incidents.py`, `frontend/src/app/correlation/page.tsx`) — this doc describes them as future. The two cascade-killing defects (3.1% identity resolution; `physical_link` AP→switch written while `topology.py:398` treats dst as parent) are confirmed → WP-1/WP-2.
+> - **Phase 2 correlation engine + incidents + Alerts UI already exist** (`backend/shared/correlation/`, `backend/api/routes/incidents.py`, `frontend/src/app/correlation/page.tsx`) — this doc describes them as future. The cascade-killing identity defect (3.1%) is fixed via WP-1. The edge-direction defect is fixed via WP-2.1: explicit `links` table with `parent_node_id`/`child_node_id` replaces ambiguous `src_id`/`dst_id` in `topology_edges` for cascade relationships.
 > - Missing exactly as documented: identity tables/resolver (1b), generalized cache (only `mist_clients.py:305` + `mist_sle.py` per-route caches exist), Keycloak/`audit_log`, AWS (all three RDS blockers real: no `ssl=` in `create_pool()` `client.py:38`, `dns: 8.8.8.8` in compose, no migration runner; also `api` service has no `build:` in compose).
 > - No `incident_evidence`, `device_state_history`, `link_state_history`, `metrics_rollup`, `locations`, `diagnostic_runs`, `llm_calls` — all future as described.
 > - `/events` + `/devices` are indeed unlinked — and so are `/mist`, `/sdwan`, `/incidents` (nav = 9 of ~13 pages) → housekeeping in `PLAN_GAP.md`.

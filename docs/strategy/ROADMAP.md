@@ -1,11 +1,12 @@
 > **Appendix (2026-08-05) — current-state bridge.** Full gap map + step-by-step execution plan: see `PLAN_GAP.md`.
 >
 > **Verified today (2026-08-05):**
-> - Majority of **Phase 2 is already built**: correlation engine (`backend/shared/correlation/engine.py`, `rules.py`, 103 tests green), incidents + `/incidents/stats`, and the Alerts UI at `/correlation`. The inverted `physical_link` direction defect is confirmed still present → **WP-2.1** (target-state `links` table), and is why the cascade sits at 0.
+> - **WP-2.1 edge direction CLOSED**: explicit `links` table with `parent_node_id`/`child_node_id` (schemas/postgres/009_links.sql), migration from `topology_edges`, `topology_sync.py` writes switch→AP to `links`, `DatabaseTopologyProvider` queries `links` for cascade, `node_id_to_device_id()` fallback fixed. **The cascade can now match topology edges to events.**
+> - Majority of **Phase 2 is already built**: correlation engine (`backend/shared/correlation/engine.py`, `rules.py`, 103 tests green), incidents + `/incidents/stats`, and the Alerts UI at `/correlation`.
 > - **WP-0 write-path items CLOSED**: polled-state emitters stopped (RF + wired uplink diff-on-write, ~1 MB/day), `retention.py` fixed (`recorded_at`), `EVENT_RETENTION_DAYS` / `INCIDENT_RETENTION_DAYS` / `RAW_EVENT_DEBUG_DAYS` wired, test fixture + 50K export, `mist-inventory` duration guard, worker healthcheck 300s, dead code deleted.
 > - **WP-1 canonical identity CLOSED**: `schemas/postgres/008_identity.sql` applied live (153 sites / 4,102 devices / 2,051 topology nodes linked); `backend/shared/database/identity.py` resolver with bulk APIs; `backend/scripts/backfill_identity.py` backfill; all event collectors wired (Mist × 6, VeloCloud × 5, DNAC × 3, Arista WLC × 2, SNMP × 1); health_snapshot fixed to use `canonical_key` from DB.
 > - 1e/1f, Phase 3/4/5: not built (no Keycloak/audit_log, no AWS, no locations/path-trace/LLM RCA).
-> - Test/image state: **429/429 backend, 114 frontend, type-check clean**; `raw_event` 877 MB (7-day debug window); DB **2.1 GB**, events ~1.27M, incidents 11,085.
+> - Test/image state: **432/432 backend, 114 frontend, type-check clean**; `raw_event` 877 MB (7-day debug window); DB **2.1 GB**, events ~1.27M, incidents 11,085.
 > - **Decision (team):** `events`/`incidents` truncation deferred until after WP-2 identity/edge fixes (WP-2.3).
 
 ---
@@ -117,11 +118,12 @@ The only phase where storage is unavoidable. You cannot correlate what you did n
 capture — a link that flaps at 03:00 and recovers by 03:02 does not exist to an
 on-demand query at 09:00.
 
-- Fix edge direction: every `physical_link` is AP→switch while
-  `backend/shared/database/topology.py:398` treats `dst_id` as parent, so switches
-  are children of APs. Replace with `links` carrying explicit
-  `parent_key`/`child_key`. Combined with 1b, this is why Stage 2 cascade has
-  produced **zero** incidents in its entire life.
+- Fix edge direction: `links` table with explicit `parent_node_id`/`child_node_id`
+  replaces the ambiguous `src_id`/`dst_id` in `topology_edges` for cascade-relevant
+  relationships. `topology_sync.py` writes switch→AP to `links`; `DatabaseTopologyProvider`
+  queries `links` for parent-child; `node_id_to_device_id()` fallback translates
+  child node_ids to event device_ids. This is why Stage 2 cascade can now match
+  topology edges to events.
 - Change incident identity from SHA-256-of-event-set to (root-cause node +
   failure signature + open window). The hash is why 29,525 incidents were never
   once updated and `"Multiple locations - connectivity issue"` appears 12,601

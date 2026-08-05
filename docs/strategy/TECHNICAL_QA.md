@@ -6,7 +6,8 @@
 > - `retention.py` fixed (`recorded_at` bug); `EVENT_RETENTION_DAYS`, `INCIDENT_RETENTION_DAYS`, and a 7-day `RAW_EVENT_DEBUG_DAYS` window are now wired.
 > - Polled-state emitters stopped: RF + wired uplink diff-on-write; `mist-history` transitions are steady-state (0 recent flaps).
 > - Dead `syslog_receiver`/`snmp_trap_receiver` deleted; `STORAGE_MODE` / `storage_mode` / `is_postgres_enabled` removed; worker healthcheck `start_period` 30s → 300s.
-> - Unchanged: 3.1% device resolution, inverted edge direction, SHA-256 incident identity (device-rooted, still event-set based), cascade incidents = 0, Mist clients 404, no Keycloak/audit_log, no AWS.
+> - Fixed since WP-1/WP-2.1: identity resolution ~100% for wired collectors (canonical-key path); edge direction fixed via explicit `links` table (`009_links.sql`).
+> - Unchanged: SHA-256 incident identity (device-rooted, still event-set based), cascade incidents = 0 (WP-2.2–2.8 next), Mist clients 404, no Keycloak/audit_log, no AWS.
 > - Phase 5 (Alerts page) work landed after this doc: truthful KPI row from `/incidents/stats`, root-cause grouping, `site_name`/`root_device` enrichment.
 
 ---
@@ -265,13 +266,17 @@ independent causes:
 `00000000-0000-0000-1000-` infix. Measured: **54 of 1,715** event devices resolve
 = **3.1%**. With the correct prefix, 1,480 would resolve.
 
-**Cause 2 — inverted edge direction.** Every one of the 1,117 `physical_link`
-rows is written AP→switch (`src_id` = AP, `dst_id` = switch).
-`get_parent_child_map()` treats `dst_id` as the parent. So switches are modelled
-as children of APs. Even with IDs resolving, the cascade would run upside down.
+**Cause 2 — inverted edge direction — FIXED in WP-2.1.** The 1,117 `physical_link`
+rows were written AP→switch (`src_id` = AP, `dst_id` = switch), but the real bug
+was deeper: `get_parent_child_map()` returned raw topology node_ids (e.g.
+`"mist-ap-abc123"`) as child device_ids, while events use stripped canonical keys
+(e.g. `"abc123"`). The cascade could never match.
 
-Fix: canonical identity table, plus a `links` table with explicit
-`parent_key`/`child_key` instead of ambiguous src/dst.
+Fix applied: explicit `links` table (`009_links.sql`) with `parent_node_id`/
+`child_node_id`, migration from `topology_edges`, write path in `topology_sync.py`
+now uses `_upsert_link()`, and `get_parent_child_map()` queries `links` and
+resolves unknown children via `node_id_to_device_id()` — which strips known
+prefixes so `"mist-ap-abc123"` becomes `"abc123"` for event matching.
 
 ### Incidents are snapshots, not objects.
 

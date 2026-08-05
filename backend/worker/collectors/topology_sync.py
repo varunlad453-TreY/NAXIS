@@ -80,7 +80,7 @@ class TopologySync:
           - One 'site' node per distinct site (canonical site_key)
           - One 'ap' node per AP device (canonical device_key)
           - 'site_membership' edge from each AP to its site
-          - 'physical_link' edges from Mist wired uplink data (AP → switch)
+          - 'physical' links from Mist wired uplink data (switch → AP) in the links table
         """
         rows = await db.fetch(
             "SELECT device_id, hostname, ip_address, model, site_id, site_name, "
@@ -178,7 +178,7 @@ class TopologySync:
     ) -> None:
         """
         Read the most recent Mist wired uplink events from Postgres and
-        create physical_link edges (AP → switch) in topology_edges.
+        create physical links (switch → AP) in the links table.
 
         Events now carry canonical device_keys in events.device_id, so we
         join to topology_nodes on canonical_key to find the AP node.
@@ -240,21 +240,21 @@ class TopologySync:
                 },
             )
 
-            await _upsert_edge(
-                src_id=ap_node_id,
-                dst_id=switch_node_id,
-                edge_type="physical_link",
-                props={
-                    "port_id": port_id,
-                    "discovered_by": "mist_wired_uplink",
-                    "platform": "mist",
-                },
-            )
-            edge_count += 1
+        await _upsert_link(
+            parent_node_id=switch_node_id,
+            child_node_id=ap_node_id,
+            link_type="physical",
+            props={
+                "port_id": port_id,
+                "discovered_by": "mist_wired_uplink",
+                "platform": "mist",
+            },
+        )
+        edge_count += 1
 
         if edge_count:
             logger.info(
-                "Mist physical links: %d AP→switch edges from wired uplink data",
+                "Mist physical links: %d switch→AP edges from wired uplink data",
                 edge_count,
             )
 
@@ -551,4 +551,27 @@ async def _upsert_edge(
         DO UPDATE SET props = EXCLUDED.props, updated_at = NOW()
         """,
         src_id, dst_id, edge_type, json.dumps(props or {}),
+    )
+
+
+async def _upsert_link(
+    parent_node_id: str,
+    child_node_id: str,
+    link_type: str,
+    props: Dict[str, Any] = None,
+) -> None:
+    """
+    Upsert into the explicit parent-child links table.
+
+    parent_node_id = upstream infrastructure (switch, edge, gateway)
+    child_node_id  = downstream leaf (AP, client-facing port, etc.)
+    """
+    await db.execute(
+        """
+        INSERT INTO links (parent_node_id, child_node_id, link_type, props, updated_at)
+        VALUES ($1, $2, $3, $4::jsonb, NOW())
+        ON CONFLICT (parent_node_id, child_node_id, link_type)
+        DO UPDATE SET props = EXCLUDED.props, updated_at = NOW()
+        """,
+        parent_node_id, child_node_id, link_type, json.dumps(props or {}),
     )

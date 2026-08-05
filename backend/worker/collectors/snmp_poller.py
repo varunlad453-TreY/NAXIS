@@ -459,7 +459,10 @@ class SnmpPoller:
                 "remote_ip": nbr.get("remote_ip", ""),
                 "discovered_by": f"snmp_{protocol}",
             })
-            # Use LEAST/GREATEST to avoid duplicate edges (A→B and B→A)
+            # Write to both tables: topology_edges for API backward-compat,
+            # links for cascade (explicit parent/child direction).
+            # Migration 009 treats dst_id as parent, src_id as child for
+            # topology_edges physical_link edges.
             await db.execute(
                 """
                 INSERT INTO topology_edges (src_id, dst_id, edge_type, props, updated_at)
@@ -468,4 +471,13 @@ class SnmpPoller:
                 DO UPDATE SET props = EXCLUDED.props, updated_at = NOW()
                 """,
                 local_node_id, remote_node_id, edge_props,
+            )
+            await db.execute(
+                """
+                INSERT INTO links (parent_node_id, child_node_id, link_type, props, updated_at)
+                VALUES ($1, $2, 'physical', $3::jsonb, NOW())
+                ON CONFLICT (parent_node_id, child_node_id, link_type)
+                DO UPDATE SET props = EXCLUDED.props, updated_at = NOW()
+                """,
+                remote_node_id, local_node_id, edge_props,
             )

@@ -865,7 +865,7 @@ class TestGetSiteInternalTopology:
             edge_rows = [
                 _mock_edge_row("ap-01", "site-sfo", "site_membership"),
                 _mock_edge_row("sw-01", "site-sfo", "site_membership"),
-                _mock_edge_row("ap-01", "sw-01", "physical_link"),
+                _mock_edge_row("ap-01", "sw-01", "physical"),
             ]
             mock_db.fetch.side_effect = [
                 node_rows,           # 1: _NODES_BY_SITE_QUERY
@@ -888,7 +888,7 @@ class TestGetSiteInternalTopology:
             assert data["total_edges"] == 3
             edge_types = {e["edge_type"] for e in data["edges"]}
             assert "site_membership" in edge_types
-            assert "physical_link" in edge_types
+            assert "physical" in edge_types
 
     def test_not_found_returns_empty(self, client):
         with patch("api.routes.topology.db") as mock_db:

@@ -172,7 +172,16 @@ _INTER_SITE_EDGES_QUERY = """
       AND n2.site_id IS NOT NULL AND n2.site_id != ''
       AND n1.site_id != n2.site_id
       AND e.edge_type != 'site_membership'
-    ORDER BY e.src_id ASC, e.dst_id ASC
+    UNION ALL
+    SELECT DISTINCT l.child_node_id AS src_id, l.parent_node_id AS dst_id,
+           'physical' AS edge_type, l.props, l.updated_at
+    FROM links l
+    JOIN topology_nodes n1 ON l.child_node_id = n1.node_id
+    JOIN topology_nodes n2 ON l.parent_node_id = n2.node_id
+    WHERE n1.site_id IS NOT NULL AND n1.site_id != ''
+      AND n2.site_id IS NOT NULL AND n2.site_id != ''
+      AND n1.site_id != n2.site_id
+    ORDER BY src_id ASC, dst_id ASC
 """
 
 _NODES_BY_SITE_QUERY = """
@@ -188,7 +197,14 @@ _EDGES_FOR_SITE_IDS = """
     JOIN topology_nodes n1 ON e.src_id = n1.node_id
     JOIN topology_nodes n2 ON e.dst_id = n2.node_id
     WHERE (n1.site_id = $1 OR n2.site_id = $1)
-    ORDER BY e.src_id ASC, e.dst_id ASC
+    UNION ALL
+    SELECT l.child_node_id AS src_id, l.parent_node_id AS dst_id,
+           'physical' AS edge_type, l.props, l.updated_at
+    FROM links l
+    JOIN topology_nodes n1 ON l.child_node_id = n1.node_id
+    JOIN topology_nodes n2 ON l.parent_node_id = n2.node_id
+    WHERE (n1.site_id = $1 OR n2.site_id = $1)
+    ORDER BY src_id ASC, dst_id ASC
 """
 
 _SITE_DEVICE_TYPE_BREAKDOWN = """

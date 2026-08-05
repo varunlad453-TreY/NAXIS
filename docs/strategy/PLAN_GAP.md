@@ -70,7 +70,7 @@ Cross-cutting: no ack/assign/resolve (Naxis explains, it doesn't own workflow); 
 | 1d Build Aruba Central, ClearPass, Cloudflare, Netskope, SD-WAN adapter (Silver Peak) | **NOT BUILT** | grep |
 | 1e Keycloak OIDC + RBAC + `audit_log` | **NOT BUILT** — shared `X-API-Key` only | grep: no keycloak/oidc/audit_log |
 | 1f AWS: `ssl=` on `create_pool`, remove `dns: 8.8.8.8`, migration runner, Secrets Manager, RDS, EC2 + TLS proxy, egress allowlist | **NOT DONE** — all 3 RDS blockers verified real; compose `api` service also has no `build:` | `client.py:38`, `docker-compose.yml` |
-| Phase 2 Fix inverted edge direction (AP→switch written; `topology.py:398` treats dst as parent) | **NOT DONE** — root cause of zero cascade incidents (with 3.1% identity) | `topology_sync.py:137-216`, `topology.py:398` |
+| Phase 2 Fix inverted edge direction (AP→switch written; `topology.py:398` treats dst as parent) | **DONE** — explicit `links` table (`009_links.sql`), migration, topology_sync writes switch→AP to `links`, provider queries `links`, `node_id_to_device_id()` fallback fixed | `topology_sync.py`, `topology.py`, `test_topology_provider.py` |
 | Phase 2 New incident identity = (root node + failure signature + open window) | **PARTIAL** — hash is device-rooted but still event-set-based, so new events re-create instead of updating | `engine.py:246-274` |
 | Phase 2 `events` → 24–48h alarm buffer (no `raw_event`); `device_state_history` / `link_state_history` diff-on-write; `incident_evidence` denormalized; `metrics_rollup`; auto-close on clear; recursive-CTE suppression | **NOT BUILT** (recovery handling partial) | grep: no such tables/modules |
 | Phase 2 Topology from collectors (`interfaces`/`links`), not event-mining | **NOT DONE** — 1,117 links derived from `link_up` event metadata | `topology_sync.py:164` |
@@ -177,10 +177,13 @@ Each work package lists: goal, tasks (with files), the gate that means "done", a
 ### WP-2 — Correlation correctness (Phase 2) — makes our Alerts page real
 **Goal:** a site WAN failure → one incident with N suppressed symptoms; daily incident count from ~15K to tens; incidents update instead of duplicating.
 
-- **2.1 Fix edge direction.** Two options, pick the smaller-first:
-  - Minimal: fix the write path in `topology_sync.py:137-216` so `physical_link` src=parent (switch), dst=child (AP); and correct the parent/child semantics in `topology.py:398`.
-  - Target: `links` table with explicit `parent_key`/`child_key` (as the roadmap specifies), migration from `topology_edges`.
-  Verify: a one-line reversed pair (`link` test) yields correct child→parent traversal in the cascade.
+- **2.1 Fix edge direction — DONE.** Implemented the target-state `links` table:
+  - Schema: `schemas/postgres/009_links.sql` with `parent_node_id`/`child_node_id`/`link_type`/`props`/`updated_at`, migration from `topology_edges` physical_link edges, `updated_at` trigger.
+  - Write path: `topology_sync.py` `_sync_mist_physical_links` writes switch→AP to `links` via `_upsert_link()`; `_upsert_edge()` kept for site_membership/wan_link in `topology_edges`.
+  - Read path: `DatabaseTopologyProvider.get_parent_child_map` queries `links` table; `get_devices_under_node` uses recursive CTE against `links` for multi-hop traversal.
+  - **Critical fix**: child node_ids not in the input set are translated via `node_id_to_device_id()` — this was the actual root cause of zero cascade incidents (children were returned as raw node_ids like "mist-ap-abc123" instead of event device_ids like "abc123").
+  - Tests: 3 new tests (links write, no-uplink skip, child-translation fallback) + updated all existing topology provider tests for `links` schema.
+  - Verify: `test_child_not_in_input_set_resolved_via_node_id_to_device_id` proves the fix.
 - **2.2 Change incident identity** → `(root_cause_node, failure_signature, open_window)`. Extend `_compute_incident_id` (`engine.py:246`) from "hash of event IDs + root device" to "hash of root + signature + open window". Upsert then **updates** the same incident as evidence arrives (this is what the plan means by "incidents are objects, not snapshots"). Verify: add event to a group → incident upserts, count stays 1, `updated_at` moves. Regression-test that `"Multiple locations - connectivity issue"`-style dup titles vanish.
 - **2.3 Truncate `events` + `incidents`, VACUUM** — **only now**, per your decision. The stale rows are garbage (all open, all critical, 89 titles); replacing them with correct incidents is the point. Accept: Alerts page shows empty until WP-2 produces real incidents (it has a graceful empty state). Verify: DB ≤ ~1 GB; daily incident count drops to tens.
 - **2.4 `events` → 24–48h alarm buffer**, genuine alarms only, no `raw_event`. Diff-on-write so a link flap at 03:00–03:02 exists once. Verify: buffer roll keeps incidents readable (see 2.6).
@@ -277,14 +280,15 @@ Each work package lists: goal, tasks (with files), the gate that means "done", a
 
 | Fact | Manager doc (07-31) | WP-0/WP-1 state (08-05) | Next WP |
 |---|---|---|---|
-| Backend tests | 284/300 (16 failures) | **429/429 pass** | WP-2 |
+| Backend tests | 284/300 (16 failures) | **432/432 pass** | WP-2.2 |
 | Frontend tests / typecheck | — | **114 pass / clean** | — |
 | Events | ~2.2M | ~1.27M + buffer | WP-2.4 |
 | `raw_event` share | 7.6 GB (PII table) | **877 MB** (7-day debug window) | — |
 | Database size | 10 GB | **2.1 GB** | — |
 | Incidents | 29,525 | 11,085 (not yet truncated) | WP-2.3 |
 | Identity resolution | 3.1% (54/1,715) | **~100% for wired collectors** (canonical-key path) | — |
-| Cascade incidents | 0 | **0** (WP-2 not started) | WP-2 |
+| Cascade incidents | 0 | **0** (WP-2.1 done; WP-2.2–2.8 next) | WP-2.2 |
+| `links` table | — | **009_links.sql applied, physical_link migrated** | WP-2.9 |
 | WP-1 backfill | — | 153 sites, 4,102 devices, 2,051 nodes linked | — |
 | Collectors | 21 (4 vendors) | 21 (4 vendors, all wired to identity) | WP-3 |
 | Stack | Postgres 16 + Redis + FastAPI + Next.js | same (verified running) | — |

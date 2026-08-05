@@ -25,8 +25,8 @@ def _node_row(node_id: str, canonical_key: Optional[str] = None) -> Dict[str, st
     return {"node_id": node_id, "canonical_key": canonical_key or node_id}
 
 
-def _edge_row(src_id: str, dst_id: str) -> Dict[str, str]:
-    return {"src_id": src_id, "dst_id": dst_id}
+def _link_row(parent_node_id: str, child_node_id: str) -> Dict[str, str]:
+    return {"parent_node_id": parent_node_id, "child_node_id": child_node_id}
 
 
 # ── Mock wiring ────────────────────────────────────────────────────────────────
@@ -54,16 +54,16 @@ async def _run_batch_resolve(device_ids, node_ids_in_db):
                 return await provider.batch_resolve_node_ids(set(device_ids))
 
 
-async def _run_parent_child_map(device_ids, node_ids_in_db, edge_rows):
+async def _run_parent_child_map(device_ids, node_ids_in_db, link_rows):
     """
     Simulate get_parent_child_map with two patched db.fetch calls:
     1. batch_resolve_node_ids → node rows
-    2. edge query → edge rows
+    2. link query → link rows
     """
     node_rows = [_node_row(nid) for nid in node_ids_in_db]
     # batch_resolve_node_ids now makes two internal fetches (canonical + legacy),
-    # then get_parent_child_map fetches edges — three returns total.
-    fetch_returns = [node_rows, node_rows, edge_rows]
+    # then get_parent_child_map fetches links — three returns total.
+    fetch_returns = [node_rows, node_rows, link_rows]
     with patch(
         "backend.shared.database.topology._resolve_node_id_via_identity",
         new=AsyncMock(return_value={}),
@@ -102,12 +102,33 @@ async def _run_get_all_descendants(device_id, node_ids_in_db, children_map, max_
                 with patch("backend.shared.database.topology.db.pool", AsyncMock()):
                     return await provider.get_all_descendants(device_id, max_depth)
 
-    # Build side_effect for recursive get_children calls
+    # Build side_effect for get_devices_under_node CTE query
+    def _collect_descendants(start_node, max_depth=5):
+        """Recursively collect all descendant node_ids from children_map."""
+        result = []
+        seen = set()
+        def walk(node, depth):
+            if depth <= 0 or node in seen:
+                return
+            seen.add(node)
+            for child in children_map.get(node, []):
+                cid = child["node_id"]
+                result.append(cid)
+                walk(cid, depth - 1)
+        walk(start_node, max_depth)
+        return result
+
     def fetch_side_effect(sql, *args):
         if "SELECT node_id FROM topology_nodes" in sql:
             return [{"node_id": resolved_node_id}]
+        if "WITH RECURSIVE downstream" in sql:
+            # CTE against links table: parent_node_id = $1, max_depth = $2
+            parent_id = args[0] if args else None
+            max_depth = args[1] if len(args) > 1 else 5
+            descendants = _collect_descendants(parent_id, max_depth)
+            return [{"node_id": nid} for nid in descendants]
         if "SELECT n.node_id" in sql:
-            # get_children: WHERE dst_id = $1
+            # Fallback for legacy get_children queries
             parent_id = args[0] if args else None
             return children_map.get(parent_id, [])
         return []
@@ -232,9 +253,9 @@ class TestGetParentChildMap:
         """
         device_ids = {"01", "abc123"}
         node_ids = ["switch-01", "mist-ap-abc123"]
-        edges = [_edge_row("mist-ap-abc123", "switch-01")]
+        links = [_link_row("switch-01", "mist-ap-abc123")]
 
-        result = await _run_parent_child_map(device_ids, node_ids, edges)
+        result = await _run_parent_child_map(device_ids, node_ids, links)
         # switch-01 is parent of mist-ap-abc123
         # device_id "01" → node_id "switch-01"
         # child "mist-ap-abc123" → device_id "abc123"
@@ -243,15 +264,16 @@ class TestGetParentChildMap:
     async def test_child_not_in_device_ids_map_fallback_to_node_id(self):
         """
         If a child node_id has no corresponding device_id in the resolved
-        set, it should be returned as-is (node_id string) rather than
-        being dropped.
+        set, node_id_to_device_id() strips the known prefix so the cascade
+        rule can still match events that use the stripped form.
         """
         device_ids = {"sw-01"}
         node_ids = ["switch-sw-01"]
-        edges = [_edge_row("mist-ap-unknown", "switch-sw-01")]
+        links = [_link_row("switch-sw-01", "mist-ap-unknown")]
 
-        result = await _run_parent_child_map(device_ids, node_ids, edges)
-        assert result == {"sw-01": ["mist-ap-unknown"]}
+        result = await _run_parent_child_map(device_ids, node_ids, links)
+        # node_id_to_device_id("mist-ap-unknown") strips the prefix → "unknown"
+        assert result == {"sw-01": ["unknown"]}
 
     async def test_multiple_parents_and_children(self):
         device_ids = {"sw-01", "ap-a", "ap-b", "sw-02"}
@@ -261,13 +283,13 @@ class TestGetParentChildMap:
             "mist-ap-ap-b",
             "switch-sw-02",
         ]
-        edges = [
-            _edge_row("mist-ap-ap-a", "switch-sw-01"),
-            _edge_row("mist-ap-ap-b", "switch-sw-01"),
-            _edge_row("mist-ap-ap-a", "switch-sw-02"),
+        links = [
+            _link_row("switch-sw-01", "mist-ap-ap-a"),
+            _link_row("switch-sw-01", "mist-ap-ap-b"),
+            _link_row("switch-sw-02", "mist-ap-ap-a"),
         ]
 
-        result = await _run_parent_child_map(device_ids, node_ids, edges)
+        result = await _run_parent_child_map(device_ids, node_ids, links)
         assert set(result.get("sw-01", [])) == {"ap-a", "ap-b"}
         assert result.get("sw-02") == ["ap-a"]
 
@@ -280,11 +302,11 @@ class TestGetParentChildMap:
         device_ids = {"ap-a", "sw-01"}
         node_ids = ["mist-ap-ap-a", "switch-sw-01"]
         # Edge where ap-a is dst (parent) — should not be treated as parent's child
-        edges = [_edge_row("switch-sw-01", "mist-ap-ap-a")]
+        links = [_link_row("mist-ap-ap-a", "switch-sw-01")]
 
-        result = await _run_parent_child_map(device_ids, node_ids, edges)
-        # ap-a resolves to mist-ap-ap-a, which appears as dst_id (parent)
-        # So ap-a would be a parent, and switch-sw-01 is its child
+        result = await _run_parent_child_map(device_ids, node_ids, links)
+        # ap-a resolves to mist-ap-ap-a, which is the parent in the link
+        # So ap-a is a parent, and switch-sw-01 is its child
         assert "ap-a" in result
         assert result["ap-a"] == ["sw-01"]
 
@@ -295,26 +317,26 @@ class TestGetParentChildMap:
         """
         device_ids = {"vc-edge-xyz", "ap-abc123"}
         node_ids = ["velo-edge-vc-edge-xyz", "mist-ap-ap-abc123"]
-        edges = [_edge_row("mist-ap-ap-abc123", "velo-edge-vc-edge-xyz")]
+        links = [_link_row("velo-edge-vc-edge-xyz", "mist-ap-ap-abc123")]
 
-        result = await _run_parent_child_map(device_ids, node_ids, edges)
+        result = await _run_parent_child_map(device_ids, node_ids, links)
         assert result == {"vc-edge-xyz": ["ap-abc123"]}
 
     async def test_site_membership_edge_ignored_when_site_not_in_set(self):
         device_ids = {"ap-101"}
         node_ids = ["mist-ap-ap-101"]
         # site node not in device_ids, so edge should be ignored
-        edges = [_edge_row("mist-ap-ap-101", "mist-site-sfo-01")]
+        links = [_link_row("mist-site-sfo-01", "mist-ap-ap-101")]
 
-        result = await _run_parent_child_map(device_ids, node_ids, edges)
+        result = await _run_parent_child_map(device_ids, node_ids, links)
         assert result == {}
 
     async def test_site_membership_edge_when_site_in_set(self):
         device_ids = {"ap-101", "sfo-01"}
         node_ids = ["mist-ap-ap-101", "mist-site-sfo-01"]
-        edges = [_edge_row("mist-ap-ap-101", "mist-site-sfo-01")]
+        links = [_link_row("mist-site-sfo-01", "mist-ap-ap-101")]
 
-        result = await _run_parent_child_map(device_ids, node_ids, edges)
+        result = await _run_parent_child_map(device_ids, node_ids, links)
         assert result == {"sfo-01": ["ap-101"]}
 
     async def test_uuid_device_ids_resolve_and_translate(self):
@@ -322,9 +344,9 @@ class TestGetParentChildMap:
         uuid_sw = "b2c3d4e5-f6a7-8901-bcde-f12345678901"
         device_ids = {uuid_sw, uuid_ap}
         node_ids = ["switch-" + uuid_sw, "mist-ap-" + uuid_ap]
-        edges = [_edge_row("mist-ap-" + uuid_ap, "switch-" + uuid_sw)]
+        links = [_link_row("switch-" + uuid_sw, "mist-ap-" + uuid_ap)]
 
-        result = await _run_parent_child_map(device_ids, node_ids, edges)
+        result = await _run_parent_child_map(device_ids, node_ids, links)
         assert result == {uuid_sw: [uuid_ap]}
 
     async def test_mac_device_ids_resolve_and_translate(self):
@@ -332,10 +354,26 @@ class TestGetParentChildMap:
         mac_sw = "00:11:22:33:44:55"
         device_ids = {mac_sw, mac_ap}
         node_ids = ["switch-" + mac_sw, "mist-ap-" + mac_ap]
-        edges = [_edge_row("mist-ap-" + mac_ap, "switch-" + mac_sw)]
+        links = [_link_row("switch-" + mac_sw, "mist-ap-" + mac_ap)]
 
-        result = await _run_parent_child_map(device_ids, node_ids, edges)
+        result = await _run_parent_child_map(device_ids, node_ids, links)
         assert result == {mac_sw: [mac_ap]}
+
+    async def test_child_not_in_input_set_resolved_via_node_id_to_device_id(self):
+        """
+        The key fix: when a child node_id is not in the original input set,
+        get_parent_child_map must use node_id_to_device_id() to translate it
+        back to the event device_id (e.g., 'mist-ap-abc123' → 'abc123').
+        Without this, the cascade rule can never match leaf events.
+        """
+        device_ids = {"sw-01"}
+        node_ids = ["switch-sw-01"]
+        # child is NOT in device_ids — this is the common case in production
+        links = [_link_row("switch-sw-01", "mist-ap-abc123")]
+
+        result = await _run_parent_child_map(device_ids, node_ids, links)
+        # node_id_to_device_id("mist-ap-abc123") strips prefix → "abc123"
+        assert result == {"sw-01": ["abc123"]}
 
     async def test_database_error_returns_empty(self):
         """On db.fetch failure, should return empty dict, not crash."""

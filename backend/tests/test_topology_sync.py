@@ -357,3 +357,101 @@ class TestVeloCloudTopologySync:
         assert edge_node["connected"] is True
         assert edge_node["reachability"] == "reachable"
         assert edge_node["platform"] == "velocloud"
+
+
+class TestMistPhysicalLinks:
+    """
+    Tests for _sync_mist_physical_links writing to the explicit links table.
+    """
+
+    @pytest.mark.asyncio
+    async def test_physical_link_writes_to_links_table(self):
+        """
+        _sync_mist_physical_links must write switch→AP relationships to the
+        links table (parent=switch, child=AP), not topology_edges.
+        """
+        ts = _make_topology_sync(mist_enabled=True, velo_enabled=False)
+        ap_rows = [
+            {
+                "device_id": "ap-001",
+                "hostname": "sfo-ap-01",
+                "ip_address": "10.0.1.10",
+                "model": "AP43",
+                "site_id": "site-101",
+                "site_name": "SFO-DC",
+                "connected": True,
+                "num_clients": 12,
+                "firmware_version": "0.14.1",
+                "mac": "aa:bb:cc:dd:ee:01",
+            }
+        ]
+        # Wired uplink event for this AP
+        # Column aliases match the SQL query: metadata->>'mist_switch_mac' AS switch_mac
+        uplink_rows = [
+            {
+                "device_id": "ap-001",
+                "switch_mac": "00:11:22:33:44:55",
+                "port_id": "ge-0/0/1",
+                "site_id": "site-101",
+            }
+        ]
+
+        exec_calls = []
+        with patch(
+            "backend.worker.collectors.topology_sync.db.fetch",
+            AsyncMock(side_effect=[ap_rows, uplink_rows]),
+        ):
+            with patch(
+                "backend.worker.collectors.topology_sync.db.fetchrow",
+                AsyncMock(return_value=None),
+            ):
+                with patch(
+                    "backend.worker.collectors.topology_sync.db.execute",
+                    AsyncMock(),
+                ) as mock_exec:
+                    mock_exec.side_effect = lambda *a: exec_calls.append(a)
+                    await ts.sync()
+
+        # Find the link insert
+        link_inserts = [
+            c for c in exec_calls if "INSERT INTO links" in c[0]
+        ]
+        assert len(link_inserts) == 1
+
+        # Verify parent=switch, child=AP
+        parent_node_id, child_node_id, link_type = link_inserts[0][1:4]
+        assert parent_node_id == "switch-00:11:22:33:44:55"
+        assert child_node_id == "mist-ap-ap-001"
+        assert link_type == "physical"
+
+    @pytest.mark.asyncio
+    async def test_no_uplink_events_skips_link_creation(self):
+        ts = _make_topology_sync(mist_enabled=True, velo_enabled=False)
+        ap_rows = [
+            {
+                "device_id": "ap-001",
+                "hostname": "sfo-ap-01",
+                "ip_address": "10.0.1.10",
+                "model": "AP43",
+                "site_id": "site-101",
+                "site_name": "SFO-DC",
+                "connected": True,
+                "num_clients": 12,
+                "firmware_version": "0.14.1",
+                "mac": "aa:bb:cc:dd:ee:01",
+            }
+        ]
+        # No uplink events
+        with patch(
+            "backend.worker.collectors.topology_sync.db.fetch",
+            AsyncMock(side_effect=[ap_rows, []]),
+        ):
+            with patch(
+                "backend.worker.collectors.topology_sync.db.execute",
+                AsyncMock(),
+            ) as mock_exec:
+                await ts.sync()
+
+        # No link inserts should happen
+        link_calls = [c for c in mock_exec.call_args_list if "INSERT INTO links" in str(c)]
+        assert len(link_calls) == 0
