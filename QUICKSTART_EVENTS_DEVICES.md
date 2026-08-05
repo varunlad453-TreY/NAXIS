@@ -94,7 +94,7 @@ Events and Devices are automatically populated by the worker pushing data to Cli
 ### With Mock Data
 
 ```bash
-# Make sure STORAGE_MODE=memory in .env
+# Use in-memory mode (no Postgres required)
 npm run dev
 python demo_end_to_end.py  # In another terminal
 # Events and Devices pages will show mock data
@@ -103,7 +103,7 @@ python demo_end_to_end.py  # In another terminal
 ### With Real Data
 
 ```bash
-# Make sure STORAGE_MODE=clickhouse in .env
+# Make sure DATABASE_URL points at Postgres in .env
 docker-compose up
 npm run dev
 # Worker will push real data
@@ -148,9 +148,9 @@ curl http://localhost:8000/health
 # Should return {"status": "healthy"}
 ```
 
-**Check 2: Is ClickHouse running?**
+**Check 2: Is PostgreSQL running?**
 ```bash
-docker ps | grep clickhouse
+docker ps | grep naxis-postgres
 # Should show running container
 ```
 
@@ -162,8 +162,8 @@ docker logs naxis-worker | tail -20
 
 **Check 4: Try demo mode**
 ```bash
-# Use in-memory storage for quick test
-STORAGE_MODE=memory npm run dev
+# Use in-memory mode for quick test (no Postgres required)
+npm run dev
 python demo_end_to_end.py
 ```
 
@@ -172,6 +172,10 @@ python demo_end_to_end.py
 - **Events page**: Refreshes every 10 seconds
 - **Devices page**: Refreshes every 30 seconds
 - Click "Refresh" button to force immediate update
+
+---
+
+*Note: `STORAGE_MODE` and ClickHouse references were removed — the platform uses PostgreSQL via `DATABASE_URL`.*
 - Check browser console (F12) for errors
 
 ### Filters not working?
