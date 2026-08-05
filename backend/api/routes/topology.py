@@ -31,7 +31,6 @@ from shared.database.health_history import get_health_history, get_health_summar
 from shared.database.topology import resolve_node_id as resolve_topology_node_id
 from shared.health import (
     compute_node_health,
-    extract_event_device_id,
     is_infrastructure_type,
 )
 
@@ -98,20 +97,28 @@ _SITE_NAME_QUERY = """
     WHERE site_id = ANY($1::text[])
 """
 
+_CANONICAL_KEYS_QUERY = """
+    SELECT node_id, COALESCE(NULLIF(canonical_key, ''), node_id) AS canonical_key
+    FROM topology_nodes
+    WHERE node_id = ANY($1::text[])
+"""
+
 _HEALTH_EVENTS_QUERY = """
-    SELECT device_id, severity, MAX(timestamp) AS latest_at
-    FROM events
-    WHERE device_id = ANY($1::text[])
-      AND timestamp > NOW() - INTERVAL '15 minutes'
-      AND severity IN ('critical', 'major')
-    GROUP BY device_id, severity
-    ORDER BY device_id, severity DESC
+    SELECT e.device_id, e.severity, MAX(e.timestamp) AS latest_at
+    FROM events e
+    JOIN topology_nodes tn ON tn.canonical_key = e.device_id
+    WHERE tn.node_id = ANY($1::text[])
+      AND e.timestamp > NOW() - INTERVAL '15 minutes'
+      AND e.severity IN ('critical', 'major')
+    GROUP BY e.device_id, e.severity
+    ORDER BY e.device_id, e.severity DESC
 """
 
 _HEALTH_INVENTORY_QUERY = """
-    SELECT device_id, reachability
-    FROM inventory
-    WHERE device_id = ANY($1::text[])
+    SELECT i.device_id, i.reachability
+    FROM inventory i
+    JOIN topology_nodes tn ON tn.canonical_key = i.device_id
+    WHERE tn.node_id = ANY($1::text[])
 """
 
 _HEALTH_NODE_PROPS_QUERY = """
@@ -207,30 +214,37 @@ async def _enrich_health(nodes: List[TopologyNode]) -> None:
     if not nodes or not db.pool:
         return
 
-    device_map = {n.node_id: extract_event_device_id(n.node_id) for n in nodes}
-    unique_device_ids = list(set(device_map.values()))
-    if not unique_device_ids:
+    node_ids = [n.node_id for n in nodes]
+
+    # Fetch canonical keys from topology_nodes so we look up events and inventory
+    # by the actual canonical device_key — not a prefix-strip heuristic.
+    # Fixes SNMP nodes where node_id ("snmp-x-x-x-x") has no relation to the
+    # canonical UUID stored in events.device_id.
+    canonical_rows = await db.fetch(_CANONICAL_KEYS_QUERY, node_ids)
+    device_map = {row["node_id"]: row["canonical_key"] for row in canonical_rows}
+    unique_node_ids = list({r["node_id"] for r in canonical_rows})
+    if not unique_node_ids:
         return
 
     try:
-        # Query recent events
-        event_rows = await db.fetch(_HEALTH_EVENTS_QUERY, unique_device_ids)
+        # Query recent events by canonical key (via topology_nodes join)
+        event_rows = await db.fetch(_HEALTH_EVENTS_QUERY, unique_node_ids)
         worst_severity: dict = {}
         for row in event_rows:
-            dev_id = row["device_id"]
+            can_key = row["device_id"]
             sev = row["severity"]
-            existing = worst_severity.get(dev_id)
+            existing = worst_severity.get(can_key)
             if existing is None or (sev == "critical" and existing != "critical"):
-                worst_severity[dev_id] = sev
+                worst_severity[can_key] = sev
 
-        # Query inventory reachability
-        inventory_rows = await db.fetch(_HEALTH_INVENTORY_QUERY, unique_device_ids)
+        # Query inventory reachability by canonical key
+        inventory_rows = await db.fetch(_HEALTH_INVENTORY_QUERY, unique_node_ids)
         inv_reachability: dict = {}
         for row in inventory_rows:
             inv_reachability[row["device_id"]] = row["reachability"]
 
         # Query topology node props for reachability/connected
-        props_rows = await db.fetch(_HEALTH_NODE_PROPS_QUERY, list(device_map.keys()))
+        props_rows = await db.fetch(_HEALTH_NODE_PROPS_QUERY, node_ids)
         props_reachability: dict = {}
         props_connected: dict = {}
         for row in props_rows:
@@ -239,14 +253,15 @@ async def _enrich_health(nodes: List[TopologyNode]) -> None:
 
         # Compute health for each node using shared module
         for node in nodes:
-            dev_id = device_map.get(node.node_id, node.node_id)
+            nid = node.node_id
+            dev_id = device_map.get(nid, nid)
             status, label, _ = compute_node_health(
-                node_id=node.node_id,
+                node_id=nid,
                 device_id=dev_id,
                 worst_event_severity=worst_severity.get(dev_id),
                 inventory_reachability=inv_reachability.get(dev_id),
-                props_reachability=props_reachability.get(node.node_id),
-                props_connected=props_connected.get(node.node_id),
+                props_reachability=props_reachability.get(nid),
+                props_connected=props_connected.get(nid),
             )
             node.health_status = status
             node.health_label = label

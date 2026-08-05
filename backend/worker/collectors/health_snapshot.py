@@ -20,25 +20,32 @@ from shared.database.health_history import (
 )
 from shared.health import (
     compute_node_health,
-    extract_event_device_id,
 )
 
 logger = logging.getLogger(__name__)
 
+_CANONICAL_KEYS_QUERY = """
+    SELECT node_id, COALESCE(NULLIF(canonical_key, ''), node_id) AS canonical_key
+    FROM topology_nodes
+    WHERE node_id = ANY($1::text[])
+"""
+
 _HEALTH_EVENTS_QUERY = """
-    SELECT device_id, severity, MAX(timestamp) AS latest_at
-    FROM events
-    WHERE device_id = ANY($1::text[])
-      AND timestamp > NOW() - INTERVAL '15 minutes'
-      AND severity IN ('critical', 'major')
-    GROUP BY device_id, severity
-    ORDER BY device_id, severity DESC
+    SELECT e.device_id, e.severity, MAX(e.timestamp) AS latest_at
+    FROM events e
+    JOIN topology_nodes tn ON tn.canonical_key = e.device_id
+    WHERE tn.node_id = ANY($1::text[])
+      AND e.timestamp > NOW() - INTERVAL '15 minutes'
+      AND e.severity IN ('critical', 'major')
+    GROUP BY e.device_id, e.severity
+    ORDER BY e.device_id, e.severity DESC
 """
 
 _HEALTH_INVENTORY_QUERY = """
-    SELECT device_id, reachability
-    FROM inventory
-    WHERE device_id = ANY($1::text[])
+    SELECT tn.node_id, i.reachability
+    FROM inventory i
+    JOIN topology_nodes tn ON tn.canonical_key = i.device_id
+    WHERE tn.node_id = ANY($1::text[])
 """
 
 _HEALTH_NODE_PROPS_QUERY = """
@@ -73,26 +80,33 @@ async def collect_health_snapshots() -> Dict[str, Any]:
             return {"checked": 0, "changed": 0, "message": "No topology nodes found"}
 
         all_node_ids = [r["node_id"] for r in node_rows]
-        device_map = {nid: extract_event_device_id(nid) for nid in all_node_ids}
-        unique_device_ids = list(set(device_map.values()))
 
-        if not unique_device_ids:
+        # Resolve canonical keys from topology_nodes so we look up events and
+        # inventory by the canonical device_key — not a heuristic prefix strip.
+        # This fixes SNMP nodes where the raw node_id ("snmp-x-x-x-x") has no
+        # relationship to the canonical UUID stored in events.device_id.
+        canonical_rows = await db.fetch(_CANONICAL_KEYS_QUERY, all_node_ids)
+        device_map: Dict[str, str] = {
+            row["node_id"]: row["canonical_key"] for row in canonical_rows
+        }
+        unique_node_ids = list({r["node_id"] for r in canonical_rows})
+        if not unique_node_ids:
             return {"checked": len(all_node_ids), "changed": 0, "message": "No device IDs to query"}
 
-        # Fetch health signals
-        event_rows = await db.fetch(_HEALTH_EVENTS_QUERY, unique_device_ids)
+        # Fetch health signals using node_id (resolved to canonical key via join above)
+        event_rows = await db.fetch(_HEALTH_EVENTS_QUERY, unique_node_ids)
         worst_severity: Dict[str, str] = {}
         for row in event_rows:
-            dev_id = row["device_id"]
+            can_key = row["device_id"]
             sev = row["severity"]
-            existing = worst_severity.get(dev_id)
+            existing = worst_severity.get(can_key)
             if existing is None or (sev == "critical" and existing != "critical"):
-                worst_severity[dev_id] = sev
+                worst_severity[can_key] = sev
 
-        inventory_rows = await db.fetch(_HEALTH_INVENTORY_QUERY, unique_device_ids)
+        inventory_rows = await db.fetch(_HEALTH_INVENTORY_QUERY, unique_node_ids)
         inv_reachability: Dict[str, str] = {}
         for row in inventory_rows:
-            inv_reachability[row["device_id"]] = row["reachability"]
+            inv_reachability[row["node_id"]] = row["reachability"]
 
         props_rows = await db.fetch(_HEALTH_NODE_PROPS_QUERY, all_node_ids)
         props_reachability: Dict[str, Optional[str]] = {}
@@ -112,7 +126,7 @@ async def collect_health_snapshots() -> Dict[str, Any]:
                 node_id=nid,
                 device_id=dev_id,
                 worst_event_severity=worst_severity.get(dev_id),
-                inventory_reachability=inv_reachability.get(dev_id),
+                inventory_reachability=inv_reachability.get(nid),
                 props_reachability=props_reachability.get(nid),
                 props_connected=props_connected.get(nid),
             )
