@@ -1,5 +1,14 @@
 # Changelog
 
+## [32] -- 2026-08-05 -- WP-2.2: Fix Incident Identity (Merge Evidence Across Cycles)
+- **Incident identity redesigned:** changed incident ID generation from event-set hash to deterministic fault fingerprint `SHA-256(site_id | root_device_id | category)` so events describing the same fault map to the same incident ID.
+- **SQL array union (`upsert_incident`):** `ON CONFLICT (incident_id) DO UPDATE` now uses `(SELECT COALESCE(array_agg(DISTINCT x), '{}') FROM unnest(...) AS x WHERE x IS NOT NULL)` for `related_event_ids`, `affected_sites`, `affected_devices`, `affected_clients`, and `symptom_device_ids`, ensuring evidence accumulates across collection cycles instead of overwriting prior arrays.
+- **Severity escalation only:** severity in `upsert_incident` uses a SQL `CASE` statement to only escalate (critical > major > minor > warning > info), preventing downgrades when lower-severity events arrive in subsequent cycles.
+- **Timestamp & status preservation:** `created_at` is preserved on update (only `updated_at` advances); terminal statuses (`resolved`, `closed`, `suppressed`) are preserved and protected from overwrite.
+- **Terminal status recurrence handling:** added `_compute_incident_id_with_recurrence()` which checks if an existing incident is in a terminal status via new `get_incident_status()` helper; if terminal, appends an epoch-hour suffix to spawn a new, fresh incident for the recurrence.
+- **Engine async refactoring:** updated `create_incident()` and `_create_from_cascade()` to be `async` and await terminal status recurrence checks.
+- **Tests & Verification:** added `TestIncidentIdentityMerge` test suite to `test_correlation_engine.py`. Full test suite: **432 backend tests passing (0 failures)**.
+
 ## [29] -- 2026-08-05 -- WP-0 follow-up: close all deferred items
 - **`raw_event` bloat stripped from DB:** one-off SQL cleared 1,124,128 synthesized RF/uplink `raw_event` blobs (5,207 MB → 877 MB); table `VACUUM FULL` shrunk events from 6.98 GB → 2.10 GB and DB from ~7.9 GB → 2.1 GB.
 - **7-day `raw_event` debug window wired:** new `RAW_EVENT_DEBUG_DAYS` setting (default 7); daily retention pass strips blobs older than the debug window.

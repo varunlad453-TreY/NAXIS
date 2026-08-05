@@ -18,13 +18,20 @@ Stage 2 restructures site+time groups into root-cause + symptom
 groups using infrastructure topology (topology_nodes/edges from DB)
 or device-type heuristics as fallback.
 
+Incident Identity (WP-2.2):
+  - Incident ID = SHA-256 of (site_id, root_device_id, category).
+  - This is a *fault fingerprint*: the same underlying failure always
+    maps to the same incident, regardless of how many events arrive
+    or across how many worker cycles.
+  - upsert_incident's ON CONFLICT DO UPDATE MERGES arrays (events,
+    devices, sites) so evidence accumulates.  Severity only escalates.
+  - If the existing incident is in a terminal state (resolved/closed/
+    suppressed), a NEW incident is created by appending the epoch hour
+    to the hash material — so recurrence gets a fresh incident.
+
 Restart resilience:
   - On first process_events() call, loads already-linked event IDs from
     the incidents table so past events are not re-processed.
-  - Incident IDs are deterministic (SHA-256 of the root-cause key: site,
-    root device, issue category), so new events for the same underlying
-    failure merge into the same incident (upsert) and re-processing the
-    same events is idempotent.
   - DEVICE_REACHABLE recovery events resolve open incidents whose root
     cause recovered, so incidents don't linger after the outage ends.
 """
@@ -244,7 +251,8 @@ class CorrelationEngine:
 
     @staticmethod
     def _compute_incident_id(
-        events: List[UnifiedEvent], root_device_id: str = None
+        events: List[UnifiedEvent], root_device_id: str = None,
+        _epoch_suffix: str = "",
     ) -> str:
         """
         Deterministic incident ID derived from the root cause:
@@ -256,9 +264,9 @@ class CorrelationEngine:
         DO UPDATE merges them into one live incident instead of creating
         duplicates.
 
-        ponytail: recurrence of the same root cause reopens the same
-        incident row (prior outage history lives in the events table);
-        switch to time-bucketed keys if per-outage history matters.
+        If _epoch_suffix is set (e.g. epoch-hour string), it is appended
+        to the hash material so a recurrence of a resolved/closed fault
+        creates a distinct incident.
         """
         site_id = next(
             (e.device.site_id for e in events if e.device and e.device.site_id),
@@ -271,7 +279,33 @@ class CorrelationEngine:
         )
         category = categories.most_common(1)[0][0] if categories else "unknown"
         material = f"{site_id}|{root_device_id or 'unknown'}|{category}"
+        if _epoch_suffix:
+            material += f"|{_epoch_suffix}"
         return f"inc-{hashlib.sha256(material.encode('utf-8')).hexdigest()[:16]}"
+
+    async def _compute_incident_id_with_recurrence(
+        self, events: List[UnifiedEvent], root_device_id: str = None
+    ) -> str:
+        """
+        Compute the incident ID and check if it already exists in a
+        terminal state. If so, append the current epoch hour to create
+        a new incident for the recurrence.
+        """
+        base_id = self._compute_incident_id(events, root_device_id)
+        try:
+            from ..database.incidents import get_incident_status
+            from ..models.incident import _TERMINAL_STATUSES
+
+            status = await get_incident_status(base_id)
+            if status and status in {s.value for s in _TERMINAL_STATUSES}:
+                # The incident exists and is terminal. Create a new one.
+                # We use the current hour to group recurrences that happen close together.
+                epoch_hour = str(int(time.time() / 3600))
+                return self._compute_incident_id(events, root_device_id, _epoch_suffix=epoch_hour)
+        except Exception:
+            logger.warning("Failed to check terminal status for %s", base_id, exc_info=True)
+            
+        return base_id
 
     @staticmethod
     def _primary_device_id(events: List[UnifiedEvent]) -> str:
@@ -389,7 +423,7 @@ class CorrelationEngine:
                 # Stage 2: Create root-cause + symptom incidents
                 assigned_ids: Set[str] = set()
                 for cascade in cascade_groups:
-                    incident = self._create_from_cascade(cascade)
+                    incident = await self._create_from_cascade(cascade)
                     incidents.append(incident)
                     for eid in cascade.all_event_ids():
                         assigned_ids.add(eid)
@@ -410,7 +444,7 @@ class CorrelationEngine:
                     e for e in group_events if e.event_id not in assigned_ids
                 ]
                 if unassigned:
-                    residual = self.create_incident(unassigned)
+                    residual = await self.create_incident(unassigned)
                     incidents.append(residual)
                     for e in unassigned:
                         processed_events_in_cycle.add(e.event_id)
@@ -421,7 +455,7 @@ class CorrelationEngine:
                     )
             else:
                 # Stage 1 fallback: create flat incident from the group
-                incident = self.create_incident(group_events)
+                incident = await self.create_incident(group_events)
                 incidents.append(incident)
                 for event in group_events:
                     processed_events_in_cycle.add(event.event_id)
@@ -512,13 +546,16 @@ class CorrelationEngine:
                 exc_info=True,
             )
 
-    def _create_from_cascade(self, cascade: CascadeGroup) -> Incident:
+    async def _create_from_cascade(self, cascade: CascadeGroup) -> Incident:
         """
         Create an Incident from a CascadeGroup.
 
         The root events define the incident severity and title.
         Symptom events are added with reduced severity (INFO) so they
         appear in the blast radius but don't drive alerting.
+
+        If the computed incident ID already exists and is in a terminal
+        state, a new incident is created via epoch-hour suffix.
         """
         if not cascade.root_events:
             raise ValueError("Cannot create incident from empty cascade root")
@@ -561,8 +598,13 @@ class CorrelationEngine:
             }
         )
 
+        # Compute the incident ID with terminal-status recurrence check
+        incident_id = await self._compute_incident_id_with_recurrence(
+            all_events, cascade.root_device_id
+        )
+
         incident = Incident(
-            incident_id=self._compute_incident_id(all_events, cascade.root_device_id),
+            incident_id=incident_id,
             title=title,
             severity=severity,
             status=IncidentStatus.OPEN,
@@ -593,13 +635,17 @@ class CorrelationEngine:
 
         return incident
 
-    def create_incident(self, events: List[UnifiedEvent]) -> Incident:
+    async def create_incident(self, events: List[UnifiedEvent]) -> Incident:
         """
         Create an Incident from a group of correlated events (Stage 1).
 
-        Uses a deterministic incident_id derived from the sorted
-        event IDs, so re-processing the same events produces the
-        same incident (ON CONFLICT DO UPDATE deduplicates).
+        Uses a deterministic incident_id derived from the root-cause
+        key (site, root device, category).  New events for the same
+        underlying failure merge via upsert_incident's ON CONFLICT.
+
+        If the computed ID maps to a terminal incident (resolved/closed/
+        suppressed), a new incident is created with an epoch-hour suffix
+        so recurrences get fresh incidents.
 
         Args:
             events: List of correlated UnifiedEvent objects
@@ -624,8 +670,13 @@ class CorrelationEngine:
             {e.client.client_id for e in events if e.client and e.client.client_id}
         )
 
+        # Compute the incident ID with terminal-status recurrence check
+        incident_id = await self._compute_incident_id_with_recurrence(
+            events, primary_device
+        )
+
         incident = Incident(
-            incident_id=self._compute_incident_id(events, primary_device),
+            incident_id=incident_id,
             title=title,
             severity=severity,
             status=IncidentStatus.OPEN,

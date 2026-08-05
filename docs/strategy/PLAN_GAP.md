@@ -184,7 +184,7 @@ Each work package lists: goal, tasks (with files), the gate that means "done", a
   - **Critical fix**: child node_ids not in the input set are translated via `node_id_to_device_id()` — this was the actual root cause of zero cascade incidents (children were returned as raw node_ids like "mist-ap-abc123" instead of event device_ids like "abc123").
   - Tests: 3 new tests (links write, no-uplink skip, child-translation fallback) + updated all existing topology provider tests for `links` schema.
   - Verify: `test_child_not_in_input_set_resolved_via_node_id_to_device_id` proves the fix.
-- **2.2 Change incident identity** → `(root_cause_node, failure_signature, open_window)`. Extend `_compute_incident_id` (`engine.py:246`) from "hash of event IDs + root device" to "hash of root + signature + open window". Upsert then **updates** the same incident as evidence arrives (this is what the plan means by "incidents are objects, not snapshots"). Verify: add event to a group → incident upserts, count stays 1, `updated_at` moves. Regression-test that `"Multiple locations - connectivity issue"`-style dup titles vanish.
+- **2.2 Change incident identity — DONE.** Identity is now `(site_id | root_device_id | category)`. Extended `_compute_incident_id` in `engine.py` to be deterministic on root cause, and fixed `upsert_incident` in `incidents.py` to MERGE arrays (`related_event_ids`, `affected_*`, `symptom_device_ids`) via SQL `array_agg(DISTINCT x)`, escalate severity only, preserve original `created_at`, and preserve terminal statuses (`resolved`/`closed`/`suppressed`), with `_compute_incident_id_with_recurrence` spawning a new incident via epoch-hour suffix on recurrence. Verified with 103 correlation tests + 432 full backend test suite passing.
 - **2.3 Truncate `events` + `incidents`, VACUUM** — **only now**, per your decision. The stale rows are garbage (all open, all critical, 89 titles); replacing them with correct incidents is the point. Accept: Alerts page shows empty until WP-2 produces real incidents (it has a graceful empty state). Verify: DB ≤ ~1 GB; daily incident count drops to tens.
 - **2.4 `events` → 24–48h alarm buffer**, genuine alarms only, no `raw_event`. Diff-on-write so a link flap at 03:00–03:02 exists once. Verify: buffer roll keeps incidents readable (see 2.6).
 - **2.5 State history:** `device_state_history`, `link_state_history` — one row per real transition (replaces the polled re-emissions stopped in WP-0.3). Verify: one AP disconnect = 1 history row, not 335.
@@ -280,14 +280,14 @@ Each work package lists: goal, tasks (with files), the gate that means "done", a
 
 | Fact | Manager doc (07-31) | WP-0/WP-1 state (08-05) | Next WP |
 |---|---|---|---|
-| Backend tests | 284/300 (16 failures) | **432/432 pass** | WP-2.2 |
+| Backend tests | 284/300 (16 failures) | **432/432 pass** | WP-2.3 |
 | Frontend tests / typecheck | — | **114 pass / clean** | — |
 | Events | ~2.2M | ~1.27M + buffer | WP-2.4 |
 | `raw_event` share | 7.6 GB (PII table) | **877 MB** (7-day debug window) | — |
 | Database size | 10 GB | **2.1 GB** | — |
 | Incidents | 29,525 | 11,085 (not yet truncated) | WP-2.3 |
 | Identity resolution | 3.1% (54/1,715) | **~100% for wired collectors** (canonical-key path) | — |
-| Cascade incidents | 0 | **0** (WP-2.1 done; WP-2.2–2.8 next) | WP-2.2 |
+| Cascade incidents | 0 | **WP-2.1 & WP-2.2 done; WP-2.3–2.8 next** | WP-2.3 |
 | `links` table | — | **009_links.sql applied, physical_link migrated** | WP-2.9 |
 | WP-1 backfill | — | 153 sites, 4,102 devices, 2,051 nodes linked | — |
 | Collectors | 21 (4 vendors) | 21 (4 vendors, all wired to identity) | WP-3 |

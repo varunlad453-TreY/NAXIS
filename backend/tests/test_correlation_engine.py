@@ -1533,3 +1533,47 @@ class TestRootCauseDedupAndRecovery:
         ])
         assert incidents == []
         assert resolved == ["ap-1"]
+
+
+class TestIncidentIdentityMerge:
+    """Tests for WP-2.2 incident identity and terminal recurrence."""
+
+    @pytest.mark.asyncio
+    async def test_same_fault_different_cycles_same_incident_id(self, default_config):
+        """Events for same site, root device, and category produce identical incident_id."""
+        engine = CorrelationEngine(config=default_config)
+        now = datetime.utcnow()
+
+        e1 = make_event("evt-1", severity=EventSeverity.CRITICAL, device_id="core-1", site_id="site-a", timestamp=now)
+        e2 = make_event("evt-2", severity=EventSeverity.MAJOR, device_id="core-1", site_id="site-a", timestamp=now + timedelta(seconds=10))
+
+        inc1 = await engine.create_incident([e1])
+        inc2 = await engine.create_incident([e2])
+
+        assert inc1.incident_id == inc2.incident_id
+
+    @pytest.mark.asyncio
+    async def test_terminal_incident_not_reopened(self, default_config, monkeypatch):
+        """If incident exists and is terminal (resolved/closed/suppressed), recurrence produces a new incident ID."""
+        async def fake_get_status(inc_id):
+            return "resolved"
+
+        monkeypatch.setattr(
+            "backend.shared.database.incidents.get_incident_status",
+            fake_get_status,
+        )
+
+        engine = CorrelationEngine(config=default_config)
+        now = datetime.utcnow()
+
+        e1 = make_event("evt-1", severity=EventSeverity.CRITICAL, device_id="core-1", site_id="site-a", timestamp=now)
+        e2 = make_event("evt-2", severity=EventSeverity.CRITICAL, device_id="core-1", site_id="site-a", timestamp=now + timedelta(hours=2))
+
+        # Base ID
+        base_id = engine._compute_incident_id([e1])
+        # Recurrence ID when DB status is resolved
+        rec_id = await engine._compute_incident_id_with_recurrence([e2])
+
+        assert base_id != rec_id
+        assert rec_id.startswith("inc-")
+

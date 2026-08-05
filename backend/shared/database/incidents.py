@@ -85,7 +85,19 @@ async def insert_incident(incident: Incident) -> None:
 
 
 async def upsert_incident(incident: Incident) -> None:
-    """Insert or update an incident (used by correlation engine)."""
+    """Insert or update an incident (used by correlation engine).
+
+    On conflict (same incident_id):
+      - Arrays (related_event_ids, affected_*, symptom_device_ids) are
+        MERGED (union) so evidence accumulates across cycles.
+      - severity only escalates — never downgrades.
+      - Terminal statuses (resolved/closed/suppressed) are preserved.
+      - created_at is preserved — only updated_at moves forward.
+      - root_device_ids is REPLACED — current cycle's root-cause is
+        authoritative.
+      - confidence_score takes the MAX.
+      - probable_cause keeps existing if new is NULL.
+    """
     d = incident.to_db_dict()
     confidence_breakdown = (
         json.dumps(d["confidence_breakdown"]) if d["confidence_breakdown"] else None
@@ -109,18 +121,43 @@ async def upsert_incident(incident: Incident) -> None:
         )
         ON CONFLICT (incident_id) DO UPDATE SET
             title                = EXCLUDED.title,
-            severity             = EXCLUDED.severity,
-            status               = EXCLUDED.status,
-            affected_sites       = EXCLUDED.affected_sites,
-            affected_devices     = EXCLUDED.affected_devices,
-            affected_clients     = EXCLUDED.affected_clients,
+            severity             = CASE
+                                     WHEN incidents.severity = 'critical' THEN 'critical'
+                                     WHEN EXCLUDED.severity  = 'critical' THEN 'critical'
+                                     WHEN incidents.severity = 'major'    THEN 'major'
+                                     WHEN EXCLUDED.severity  = 'major'    THEN 'major'
+                                     WHEN incidents.severity = 'minor'    THEN 'minor'
+                                     WHEN EXCLUDED.severity  = 'minor'    THEN 'minor'
+                                     WHEN incidents.severity = 'warning'  THEN 'warning'
+                                     WHEN EXCLUDED.severity  = 'warning'  THEN 'warning'
+                                     ELSE EXCLUDED.severity
+                                   END,
+            status               = CASE
+                                     WHEN incidents.status IN ('resolved','closed','suppressed')
+                                     THEN incidents.status
+                                     ELSE EXCLUDED.status
+                                   END,
+            affected_sites       = (SELECT COALESCE(array_agg(DISTINCT x), '{}') FROM unnest(
+                                      incidents.affected_sites || EXCLUDED.affected_sites) AS x
+                                    WHERE x IS NOT NULL),
+            affected_devices     = (SELECT COALESCE(array_agg(DISTINCT x), '{}') FROM unnest(
+                                      incidents.affected_devices || EXCLUDED.affected_devices) AS x
+                                    WHERE x IS NOT NULL),
+            affected_clients     = (SELECT COALESCE(array_agg(DISTINCT x), '{}') FROM unnest(
+                                      incidents.affected_clients || EXCLUDED.affected_clients) AS x
+                                    WHERE x IS NOT NULL),
             root_device_ids      = EXCLUDED.root_device_ids,
-            symptom_device_ids   = EXCLUDED.symptom_device_ids,
-            related_event_ids    = EXCLUDED.related_event_ids,
-            probable_cause       = EXCLUDED.probable_cause,
-            confidence_score     = EXCLUDED.confidence_score,
-            confidence_breakdown = EXCLUDED.confidence_breakdown,
+            symptom_device_ids   = (SELECT COALESCE(array_agg(DISTINCT x), '{}') FROM unnest(
+                                      incidents.symptom_device_ids || EXCLUDED.symptom_device_ids) AS x
+                                    WHERE x IS NOT NULL),
+            related_event_ids    = (SELECT COALESCE(array_agg(DISTINCT x), '{}') FROM unnest(
+                                      incidents.related_event_ids || EXCLUDED.related_event_ids) AS x
+                                    WHERE x IS NOT NULL),
+            probable_cause       = COALESCE(EXCLUDED.probable_cause, incidents.probable_cause),
+            confidence_score     = GREATEST(incidents.confidence_score, EXCLUDED.confidence_score),
+            confidence_breakdown = COALESCE(EXCLUDED.confidence_breakdown, incidents.confidence_breakdown),
             updated_at           = EXCLUDED.updated_at
+            -- NOTE: created_at intentionally NOT updated — preserves original creation time
         """,
         d["incident_id"], d["title"], d["severity"], d["status"],
         d["affected_sites"], d["affected_devices"], d["affected_clients"],
@@ -129,6 +166,20 @@ async def upsert_incident(incident: Incident) -> None:
         confidence_breakdown,
         d["created_at"], d["updated_at"],
     )
+
+
+async def get_incident_status(incident_id: str) -> Optional[str]:
+    """Fetch only the status of an existing incident (lightweight).
+
+    Used by the correlation engine to check whether an incident is
+    in a terminal state before upserting new evidence.  Returns
+    None if the incident does not exist.
+    """
+    row = await db.fetchrow(
+        "SELECT status FROM incidents WHERE incident_id = $1",
+        incident_id,
+    )
+    return row["status"] if row else None
 
 
 async def get_incident(incident_id: str) -> Optional[Incident]:

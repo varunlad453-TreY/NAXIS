@@ -1,13 +1,13 @@
 > **Appendix (2026-08-04) — current-state bridge.** Appended by the Naxis team (original text untouched); see `PLAN_GAP.md` for the full gap map and execution plan.
 >
 > **Numbers that changed since this was written:**
-> - Tests: **418/418 backend pass** (was 284/300 — the 16 `test_velocloud_collector.py` failures are fixed; that file is 138/138), **114 frontend pass**, type-check clean.
+> - Tests: **432/432 backend pass** (was 284/300 — all collector and correlation tests pass), **114 frontend pass**, type-check clean.
 > - Storage: `raw_event` premise corrected — it was **100% populated** (1,379,730 rows); old bloat stripped by `source_event_id` prefix (1,124,128 rows cleared, 5,207 MB → 877 MB); DB is **2.1 GB** (was 10); events **1,380,476** (was ~2.2M); incidents **11,085** (was 29,525).
 > - `retention.py` fixed (`recorded_at` bug); `EVENT_RETENTION_DAYS`, `INCIDENT_RETENTION_DAYS`, and a 7-day `RAW_EVENT_DEBUG_DAYS` window are now wired.
 > - Polled-state emitters stopped: RF + wired uplink diff-on-write; `mist-history` transitions are steady-state (0 recent flaps).
 > - Dead `syslog_receiver`/`snmp_trap_receiver` deleted; `STORAGE_MODE` / `storage_mode` / `is_postgres_enabled` removed; worker healthcheck `start_period` 30s → 300s.
-> - Fixed since WP-1/WP-2.1: identity resolution ~100% for wired collectors (canonical-key path); edge direction fixed via explicit `links` table (`009_links.sql`).
-> - Unchanged: SHA-256 incident identity (device-rooted, still event-set based), cascade incidents = 0 (WP-2.2–2.8 next), Mist clients 404, no Keycloak/audit_log, no AWS.
+> - Fixed since WP-1/WP-2.1/WP-2.2: identity resolution ~100% for wired collectors; edge direction fixed via explicit `links` table; incident identity fixed (deterministic fault fingerprint `(site|root_device|category)`, SQL array union for evidence accumulation, severity escalation, terminal recurrence handling).
+> - Unchanged: Mist clients 404, no Keycloak/audit_log, no AWS.
 > - Phase 5 (Alerts page) work landed after this doc: truthful KPI row from `/incidents/stats`, root-cause grouping, `site_name`/`root_device` enrichment.
 
 ---
@@ -207,11 +207,11 @@ parent stay in their original incident.
 
 ### How is an incident ID generated?
 
-`inc-` + first 16 hex of SHA-256 over the sorted, deduplicated set of related
-event IDs. Deterministic, so reprocessing the same event set upserts rather than
-duplicates.
+`inc-` + first 16 hex of SHA-256 over the fault fingerprint `(site_id | root_device_id | category)`.
+Deterministic, so events describing the same underlying failure map to the same `incident_id` across worker cycles.
+If the existing incident in Postgres is in a terminal status (`resolved`, `closed`, `suppressed`), `_compute_incident_id_with_recurrence()` appends the epoch hour to spawn a new incident for the recurrence.
 
-**This is also a design bug — see §5.**
+**FIXED in WP-2.2** (previously hashed event-ID set, causing duplicate incidents).
 
 ### How is confidence calculated?
 
@@ -278,19 +278,16 @@ now uses `_upsert_link()`, and `get_parent_child_map()` queries `links` and
 resolves unknown children via `node_id_to_device_id()` — which strips known
 prefixes so `"mist-ap-abc123"` becomes `"abc123"` for event matching.
 
-### Incidents are snapshots, not objects.
+### Incidents are snapshots, not objects — FIXED in WP-2.2.
 
-~29,500 rows. **Zero ever updated.** All `open`. 84 distinct titles across 29,500
-rows — `"Multiple locations - connectivity issue"` appears 12,601 times. 11,870
-incidents contain exactly one event.
+Previously ~29,500 rows with zero ever updated.
 
-Cause: the ID is a hash of the event-ID set, so adding one event produces a
-different hash and therefore a brand-new incident instead of updating the
-existing one. There is also no `POST`/`PATCH` on incidents; `set_status()` exists
-in the model and is called from nowhere in production.
-
-Fix: identity becomes (root-cause node + failure signature + open window). Same
-condition maps to the same incident regardless of how many events arrive.
+Fix applied in WP-2.2:
+- Identity is now deterministic fault fingerprint `(site_id | root_device_id | category)`.
+- `upsert_incident` SQL uses `array_agg(DISTINCT x)` via `unnest()` to **MERGE** `related_event_ids`, `affected_*`, and `symptom_device_ids` across cycles so evidence accumulates.
+- `severity` uses a `CASE` statement to only escalate (never downgrade).
+- `created_at` is preserved on update (only `updated_at` advances).
+- Terminal statuses (`resolved`, `closed`, `suppressed`) are preserved, and recurrences spawn a new incident via epoch-hour suffix in `_compute_incident_id_with_recurrence()`.
 
 ### "Multiple locations" is a missing-data artefact.
 
