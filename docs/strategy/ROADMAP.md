@@ -1,11 +1,12 @@
-> **Appendix (2026-08-04) — current-state bridge.** Written and appended by the Naxis team (manager's text untouched) so this roadmap reads against the live system, not the pre-existing state. Full gap map + step-by-step execution plan: see `PLAN_GAP.md`.
+> **Appendix (2026-08-05) — current-state bridge.** Full gap map + step-by-step execution plan: see `PLAN_GAP.md`.
 >
-> **Verified today:**
-> - Majority of **Phase 2 is already built**: correlation engine (`backend/shared/correlation/engine.py`, `rules.py`, 103 tests green), incidents + `/incidents/stats`, and the Alerts UI at `/correlation`. The two documented defects (3.1% identity resolution, inverted `physical_link` direction) are confirmed still present → **WP-1/WP-2**, and are why the cascade sits at 0.
-> - 1a write-path items **not done**: polled-state emitters still run (39.5% of events), `retention.py` still errors on `created_at` (table uses `recorded_at`), `EVENT_RETENTION_DAYS` still unread, no test fixture dir, `mist-inventory` duration bug live.
-> - 1b/1e/1f, Phase 3/4/5: not built (no identity tables/resolver, no Keycloak/audit_log, no AWS).
-> - Test/image state is ahead of the docs: **399/399 backend, 114 frontend, type-check clean**; `raw_event` already 100% NULL; DB 6.5 GB (was 10), events 1.27M, incidents 11,085.
-> - **Decision (team):** `events`/`incidents` truncation deferred until after WP-2 identity/edge fixes — not in 1a as written — so the Alerts page goes dark once and fills correctly.
+> **Verified today (2026-08-05):**
+> - Majority of **Phase 2 is already built**: correlation engine (`backend/shared/correlation/engine.py`, `rules.py`, 103 tests green), incidents + `/incidents/stats`, and the Alerts UI at `/correlation`. The inverted `physical_link` direction defect is confirmed still present → **WP-2.1** (target-state `links` table), and is why the cascade sits at 0.
+> - **WP-0 write-path items CLOSED**: polled-state emitters stopped (RF + wired uplink diff-on-write, ~1 MB/day), `retention.py` fixed (`recorded_at`), `EVENT_RETENTION_DAYS` / `INCIDENT_RETENTION_DAYS` / `RAW_EVENT_DEBUG_DAYS` wired, test fixture + 50K export, `mist-inventory` duration guard, worker healthcheck 300s, dead code deleted.
+> - **WP-1 canonical identity CLOSED**: `schemas/postgres/008_identity.sql` applied live (153 sites / 4,102 devices / 2,051 topology nodes linked); `backend/shared/database/identity.py` resolver with bulk APIs; `backend/scripts/backfill_identity.py` backfill; all event collectors wired (Mist × 6, VeloCloud × 5, DNAC × 3, Arista WLC × 2, SNMP × 1); health_snapshot fixed to use `canonical_key` from DB.
+> - 1e/1f, Phase 3/4/5: not built (no Keycloak/audit_log, no AWS, no locations/path-trace/LLM RCA).
+> - Test/image state: **429/429 backend, 114 frontend, type-check clean**; `raw_event` 877 MB (7-day debug window); DB **2.1 GB**, events ~1.27M, incidents 11,085.
+> - **Decision (team):** `events`/`incidents` truncation deferred until after WP-2 identity/edge fixes (WP-2.3).
 
 ---
 
@@ -35,8 +36,8 @@ adding vendors, not after — every integration built on the old path gets rewri
   `backend/worker/collectors/mist_topology.py:157` (reachability, 448,812 rows),
   RF-stats-as-events (784,869 rows), VeloCloud `"Edge New Device"` (103,600
   rows), app visibility.
-- Drop `raw_event` entirely. Removes 7.6 GB and all PII in one move.
-- Wire `EVENT_RETENTION_DAYS` — it is in `config/.env` and read by no code.
+- `raw_event` is retained as a 7-day debug record for vendor-sourced events; synthesized RF/uplink state events no longer write it. Old bloat stripped by `source_event_id` prefix; daily retention enforces the 7-day window. This keeps the debug value while bounding PII/storage.
+- Wire `EVENT_RETENTION_DAYS` — **DONE**. `INCIDENT_RETENTION_DAYS` and a 7-day `raw_event` debug window are also wired.
 - Fix `retention.py` logging `correlation_telemetry: column "created_at" does not
   exist` every cycle.
 - Fix `mist-inventory` reporting **-29.3 s** average duration (`finished_at`
@@ -179,7 +180,7 @@ client PII in the egress. `llm_calls` logged.
   `frontend/src/config/navigation.ts` or delete.
 - `syslog_receiver.py` and `snmp_trap_receiver.py` exist and are imported by
   nothing. Decide in 1d whether they are in scope.
-- `STORAGE_MODE` in settings is read by nothing.
+- `STORAGE_MODE` was removed — it had zero consumers; the database connection is driven by `DATABASE_URL`.
 - Worker healthcheck `start_period: 30s` is shorter than the first collection
   pass, so the container reports a transient false "unhealthy" on startup.
 

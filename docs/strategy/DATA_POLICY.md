@@ -1,7 +1,7 @@
 > **Appendix (2026-08-04) — current-state bridge.** Appended by the Naxis team (original text untouched); see `PLAN_GAP.md` for the gap map + execution plan.
 >
 > **Verified today:**
-> - `raw_event` is **100% populated** in the live DB (0 NULL of 1,379,730) — *correction of an earlier "100% NULL" reading*. The write path is retained for vendor-sourced events (the debug record); WP-0.3 stops the polled-state emitters that were duplicating blobs ×3 bands, and WP-0.2 (90-day retention) ages out the rest. DB at **6.9 GB** (events table), from 10.
+> - `raw_event` is **100% populated** in the live DB (0 NULL of 1,379,730) — *correction of an earlier "100% NULL" reading*. The write path is retained for vendor-sourced events (the debug record); WP-0.3 stops the polled-state emitters that were duplicating blobs ×3 bands. Old bloat was stripped by `source_event_id` prefix (1,124,128 rows / 5,207 MB cleared); the daily retention pass enforces a 7-day `raw_event` debug window. DB at **2.1 GB** (events table), from 10.
 > - The polled-state emitters this doc warns about (39.5%, 784k RF-stats-as-events, 448k reachability rows) — WP-0.3 **DONE 2026-08-04**: RF + wired-uplink diff-on-write; reachability was already diff-on-write (Phase 5). Measured: 5 events/30 min post-fix vs 179,891 in an equivalent pre-fix window.
 > - `retention.py` **fixed** (`recorded_at`, WP-0.1); `EVENT_RETENTION_DAYS=90` **wired** (WP-0.2).
 > - No `devices`/`device_identities`/`sites` identity tables yet → WP-1.
@@ -77,20 +77,20 @@ localization only — no trending, permanently.
 | `devices`, `device_identities`, `sites`, `interfaces`, `links` | current state, indefinite |
 | `device_state_history`, `link_state_history` | indefinite, diff-on-write only |
 | `incidents`, `incident_evidence` | indefinite |
-| `events` | 24–48h working buffer, alarms only, no `raw_event` |
+| `events` | 24–48h working buffer, alarms only; `raw_event` kept only for a 7-day debug window |
 | `metrics_rollup` | hourly 90d (WAN links), daily 90d (radios), daily 2y (sites) |
 | `clients` | current association 7d, session history 30d |
 | `audit_log`, `diagnostic_runs`, `llm_calls` | 1 year |
 | `collector_run_ledger` | 7d |
-| `raw_event` | **not stored** |
+| `raw_event` | **7-day debug window**, then stripped automatically |
 
 Steady state: ~400 MB, from 10 GB today. Ingest under 100 MB/day at eight
 vendors, from 2.5 GB/day at four.
 
-`EVENT_RETENTION_DAYS=90` exists in `config/.env` and is read by no code —
-`events` has never been pruned. `backend/shared/database/retention.py` only trims
-three telemetry tables. It also logs
-`correlation_telemetry: column "created_at" does not exist` every cycle.
+`EVENT_RETENTION_DAYS=90` is wired in `settings.py` and passed to the daily
+retention pass. `INCIDENT_RETENTION_DAYS=180` (resolved incidents only) and
+`RAW_EVENT_DEBUG_DAYS=7` are also wired. The `created_at` bug in
+`retention.py` is fixed.
 
 ## Never stored
 
@@ -101,24 +101,27 @@ three telemetry tables. It also logs
   legally is.
 - **ClearPass full auth transcripts.** Auth success/failure and method only,
   never credentials.
-- `raw_event` — dropped entirely
+- `raw_event` — retained for 7 days as a debug record, then stripped automatically
 - Client PII in any LLM payload (Phase 5)
 
 ## PII currently in the database
 
-None of this was a decision. It arrived because `raw_event` captures whole vendor
-payloads verbatim.
+None of this was a decision. It arrived because `raw_event` captured whole vendor
+payloads verbatim. After WP-0 stripped the old bloat, the remaining
+vendor-sourced `raw_event` payloads inside the 7-day debug window still carry a
+small amount of PII:
 
 | Key | Events | What it is |
 |---|---|---|
-| `xy_coords` | 510,285 | AP floor coordinates — with client association, physical people-location data |
-| `hostnames` | 25,127 | employee device names, typically `firstname-laptop` |
-| `user_agent` | 4,555 (15 distinct) | client OS / browser |
-| `admin_name` | 3,924 (51 distinct) | named admins from Mist audit logs |
+| `xy_coords` | 0 | AP floor coordinates — stripped with the old bloat |
+| `hostnames` | 9,225 | employee device names, typically `firstname-laptop` |
+| `user_agent` | 2,297 | client OS / browser |
+| `admin_name` | 2,262 | named admins from Mist audit logs |
 | `username` | 0 | clean today; ClearPass will introduce it |
 
-Dropping `raw_event` removes all of it in one move. That is the single largest
-privacy win available and it costs nothing we want to keep.
+The 7-day debug window bounds this PII automatically. Extending redaction to
+strip `hostnames`, `user_agent`, `admin_name` and hash client MACs at *ingest*
+removes the remainder.
 
 ### Redaction at ingest
 

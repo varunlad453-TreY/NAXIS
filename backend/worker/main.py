@@ -242,7 +242,10 @@ class WorkerDaemon:
         if (now_utc - self._last_retention).total_seconds() >= 86400:
             try:
                 result = await run_retention(
-                    days=7, event_days=_settings.event_retention_days
+                    days=7,
+                    event_days=_settings.event_retention_days,
+                    incident_days=_settings.incident_retention_days,
+                    raw_event_days=_settings.raw_event_debug_days,
                 )
                 logger.info("Retention cleanup: %s", result)
             except Exception:

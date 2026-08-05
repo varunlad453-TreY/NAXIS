@@ -21,6 +21,11 @@ from config.settings import get_settings
 from shared.database.client import db
 from shared.models.collector_outcome import CollectorOutcome
 
+try:
+    from backend.shared.database.identity import IdentityResolver
+except ImportError:  # pragma: no cover - supports both entry-point styles
+    from shared.database.identity import IdentityResolver
+
 logger = logging.getLogger(__name__)
 
 COLLECTOR_ID = "velocloud-inventory"
@@ -62,6 +67,7 @@ class VelocloudInventoryCollector:
             rows = _build_rows(edges)
             if rows:
                 await _upsert_inventory(rows)
+                await _seed_identities(rows)
             outcome.mark_success(rows_written=len(rows))
             logger.info("VeloCloud inventory: upserted %d edges", len(rows))
         except Exception as exc:
@@ -213,3 +219,32 @@ async def _upsert_inventory(rows: List[Dict[str, Any]]) -> None:
             row["last_seen"],
             json.dumps(row["props"]),
         )
+
+
+async def _seed_identities(rows: List[Dict[str, Any]]) -> None:
+    """Ensure every VeloCloud edge and site has a canonical identity."""
+    try:
+        resolver = IdentityResolver()
+        site_specs = [
+            (row["site_id"], row["site_name"] or row["site_id"], "velocloud", None)
+            for row in rows
+            if row["site_id"]
+        ]
+        site_map = await resolver.resolve_sites(site_specs)
+        pairs = [
+            ("velocloud", row["device_id"], {
+                "display_name": row["hostname"] or row["device_id"],
+                "device_type": "edge",
+                "model": row["model"] or "",
+                "serial": row["serial"] or "",
+                "mac": row["mac"] or "",
+                "ip_address": row["ip_address"] or "",
+                "site_key": site_map.get(("velocloud", row["site_id"])),
+            })
+            for row in rows
+            if row["device_id"]
+        ]
+        if pairs:
+            await resolver.resolve_devices(pairs)
+    except Exception:
+        logger.exception("Failed to seed VeloCloud identities")

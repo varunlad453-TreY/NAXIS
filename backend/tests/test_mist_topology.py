@@ -103,9 +103,10 @@ class TestToSnapshot:
 # ---------------------------------------------------------------------------
 
 class TestEventFromTransition:
-    def test_reachable_to_unreachable_emits_critical_outage(self):
+    @pytest.mark.asyncio
+    async def test_reachable_to_unreachable_emits_critical_outage(self):
         collector = _collector()
-        event = collector._event_from_transition({
+        event = await collector._event_from_transition({
             "snapshot": _snapshot({"reachability": "unreachable"}),
             "prev_reachability": "reachable",
             "cur_reachability": "unreachable",
@@ -117,9 +118,10 @@ class TestEventFromTransition:
         assert event.device.site_name == "Pimpri Plant"
         assert event.metadata["reachability_transition"] == "reachable -> unreachable"
 
-    def test_unreachable_to_reachable_emits_info_recovery(self):
+    @pytest.mark.asyncio
+    async def test_unreachable_to_reachable_emits_info_recovery(self):
         collector = _collector()
-        event = collector._event_from_transition({
+        event = await collector._event_from_transition({
             "snapshot": _snapshot({"reachability": "reachable"}),
             "prev_reachability": "unreachable",
             "cur_reachability": "reachable",
@@ -128,27 +130,30 @@ class TestEventFromTransition:
         assert event.severity == EventSeverity.INFO
         assert event.event_type == EventType.DEVICE_REACHABLE
 
-    def test_steady_unreachable_emits_nothing(self):
+    @pytest.mark.asyncio
+    async def test_steady_unreachable_emits_nothing(self):
         collector = _collector()
-        event = collector._event_from_transition({
+        event = await collector._event_from_transition({
             "snapshot": _snapshot({"reachability": "unreachable"}),
             "prev_reachability": "unreachable",
             "cur_reachability": "unreachable",
         })
         assert event is None
 
-    def test_steady_reachable_emits_nothing(self):
+    @pytest.mark.asyncio
+    async def test_steady_reachable_emits_nothing(self):
         collector = _collector()
-        event = collector._event_from_transition({
+        event = await collector._event_from_transition({
             "snapshot": _snapshot({"reachability": "reachable"}),
             "prev_reachability": "reachable",
             "cur_reachability": "reachable",
         })
         assert event is None
 
-    def test_first_sighting_down_emits_critical(self):
+    @pytest.mark.asyncio
+    async def test_first_sighting_down_emits_critical(self):
         collector = _collector()
-        event = collector._event_from_transition({
+        event = await collector._event_from_transition({
             "snapshot": _snapshot({"reachability": "unreachable"}),
             "prev_reachability": None,
             "cur_reachability": "unreachable",
@@ -157,9 +162,10 @@ class TestEventFromTransition:
         assert event.severity == EventSeverity.CRITICAL
         assert event.event_type == EventType.DEVICE_UNREACHABLE
 
-    def test_first_sighting_up_emits_nothing(self):
+    @pytest.mark.asyncio
+    async def test_first_sighting_up_emits_nothing(self):
         collector = _collector()
-        event = collector._event_from_transition({
+        event = await collector._event_from_transition({
             "snapshot": _snapshot({"reachability": "reachable"}),
             "prev_reachability": None,
             "cur_reachability": "reachable",

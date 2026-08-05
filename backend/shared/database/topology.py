@@ -20,6 +20,11 @@ import hashlib
 from ..correlation.rules import TopologyProvider
 from .client import db
 
+try:
+    from backend.shared.database.identity import IdentityResolver
+except ImportError:  # pragma: no cover
+    from shared.database.identity import IdentityResolver
+
 logger = logging.getLogger(__name__)
 
 
@@ -101,15 +106,30 @@ async def resolve_node_id(device_id: str) -> Optional[str]:
     """
     Map a canonical device_id (from UnifiedEvent) to the corresponding
     topology_nodes.node_id.  Returns None if no match found.
+
+    Resolution order:
+      1. Direct canonical_key match (new identity-aware events).
+      2. Identity lookup: vendor_device_id -> canonical_key -> node_id.
+      3. Legacy prefix heuristic fallback.
     """
-    if not device_id:
+    if not device_id or not db.pool:
         return None
 
-    if not db.pool:
-        return None
+    # 1. Direct canonical key match
+    row = await db.fetchrow(
+        "SELECT node_id FROM topology_nodes WHERE canonical_key = $1",
+        device_id,
+    )
+    if row:
+        return row["node_id"]
 
+    # 2. Identity-aware lookup
+    identity_match = await _resolve_node_id_via_identity([device_id])
+    if identity_match.get(device_id):
+        return identity_match[device_id]
+
+    # 3. Legacy prefix heuristic fallback
     candidates = _known_node_id_patterns(device_id)
-
     for node_id in candidates:
         row = await db.fetchrow(
             "SELECT node_id FROM topology_nodes WHERE node_id = $1", node_id
@@ -118,6 +138,35 @@ async def resolve_node_id(device_id: str) -> Optional[str]:
             return row["node_id"]
 
     return None
+
+
+async def _resolve_node_id_via_identity(device_ids: List[str]) -> Dict[str, str]:
+    """
+    Bulk resolve device_ids to topology node_ids via the identity tables.
+
+    Queries device_identities for vendor_device_id matches and joins to
+    topology_nodes on canonical_key.  Returns {device_id: node_id} for
+    matches found.  Vendor collisions are resolved by first match.
+    """
+    if not device_ids or not db.pool:
+        return {}
+
+    rows = await db.fetch(
+        """
+        SELECT di.vendor_device_id, tn.node_id
+        FROM device_identities di
+        JOIN topology_nodes tn ON tn.canonical_key = di.device_key
+        WHERE di.vendor_device_id = ANY($1::text[])
+        """,
+        device_ids,
+    )
+    # Keep first node_id per vendor_device_id
+    result: Dict[str, str] = {}
+    for row in rows:
+        vid = row["vendor_device_id"]
+        if vid not in result:
+            result[vid] = row["node_id"]
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -322,42 +371,65 @@ class DatabaseTopologyProvider:
         """
         Resolve multiple event device_ids to topology node_ids in a single
         DB query.  Returns {device_id: node_id_or_None, ...}.
+
+        Resolution order:
+          1. Direct canonical_key match on topology_nodes.
+          2. Identity lookup: vendor_device_id -> canonical_key -> node_id.
+          3. Legacy prefix heuristic fallback.
         """
         if not device_ids or not db.pool:
             return {}
 
-        # Build all candidate patterns across all device_ids
-        all_candidates: List[str] = []
-        pattern_to_device: Dict[str, str] = {}
-        for did in device_ids:
-            for pattern in _known_node_id_patterns(did):
-                all_candidates.append(pattern)
-                pattern_to_device[pattern] = did
+        device_list = list(device_ids)
+        result: Dict[str, Optional[str]] = {d: None for d in device_ids}
+        unresolved: Set[str] = set(device_ids)
 
-        if not all_candidates:
-            return {d: None for d in device_ids}
-
-        # Single query: find which candidate node_ids exist
         try:
+            # 1. Direct canonical key match
             rows = await db.fetch(
-                "SELECT node_id FROM topology_nodes WHERE node_id = ANY($1)",
-                all_candidates,
+                "SELECT node_id, canonical_key FROM topology_nodes WHERE canonical_key = ANY($1::text[])",
+                device_list,
             )
+            for row in rows:
+                for did in unresolved:
+                    if did == row["canonical_key"]:
+                        result[did] = row["node_id"]
+
+            unresolved = {d for d, nid in result.items() if nid is None}
+
+            # 2. Identity-aware lookup
+            if unresolved:
+                identity_matches = await _resolve_node_id_via_identity(list(unresolved))
+                for did, node_id in identity_matches.items():
+                    if did in unresolved:
+                        result[did] = node_id
+                        unresolved.discard(did)
+
+            # 3. Legacy prefix heuristic fallback
+            if unresolved:
+                all_candidates: List[str] = []
+                pattern_to_device: Dict[str, str] = {}
+                for did in unresolved:
+                    for pattern in _known_node_id_patterns(did):
+                        all_candidates.append(pattern)
+                        pattern_to_device[pattern] = did
+
+                if all_candidates:
+                    rows = await db.fetch(
+                        "SELECT node_id FROM topology_nodes WHERE node_id = ANY($1)",
+                        all_candidates,
+                    )
+                    existing = {r["node_id"] for r in rows}
+                    for did in unresolved:
+                        resolved = None
+                        for pattern in _known_node_id_patterns(did):
+                            if pattern in existing:
+                                resolved = pattern
+                                break
+                        result[did] = resolved
+
         except Exception:
             logger.warning("batch_resolve_node_ids query failed", exc_info=True)
-            return {d: None for d in device_ids}
-
-        existing = {r["node_id"] for r in rows}
-
-        # Map each device_id to its first matching node_id
-        result: Dict[str, Optional[str]] = {}
-        for did in device_ids:
-            resolved = None
-            for pattern in _known_node_id_patterns(did):
-                if pattern in existing:
-                    resolved = pattern
-                    break
-            result[did] = resolved
 
         return result
 

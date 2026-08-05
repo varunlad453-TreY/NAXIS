@@ -25,8 +25,10 @@ except ImportError:  # pragma: no cover - supports both entry-point styles
     from shared.models.collector_outcome import CollectorOutcome
 try:
     from backend.shared.database.client import db
+    from backend.shared.database.identity import IdentityResolver
 except ImportError:  # pragma: no cover - supports both entry-point styles
     from shared.database.client import db
+    from shared.database.identity import IdentityResolver
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +73,7 @@ class MistInventoryCollector:
             rows = _build_rows(devices, site_map, stats_map, self._org_id)
             if rows:
                 await _upsert_inventory(rows)
+                await _sync_identities(rows)
 
             outcome.rows_written = len(rows)
             outcome.metadata["devices_found"] = len(devices)
@@ -228,3 +231,40 @@ async def _upsert_inventory(rows: List[Dict[str, Any]]) -> None:
             row["num_clients"], row["uptime_seconds"], row["firmware_version"],
             row["last_seen"],
         )
+
+
+async def _sync_identities(rows: List[Dict[str, Any]]) -> None:
+    """Ensure every inventory row is represented in the canonical identity tables."""
+    if not rows:
+        return
+
+    resolver = IdentityResolver()
+
+    # Sites first
+    site_specs = [
+        (row["site_id"], row["site_name"] or row["site_id"], "mist", None)
+        for row in rows
+        if row["site_id"]
+    ]
+    site_map = await resolver.resolve_sites(site_specs)
+
+    # Devices
+    pairs: List[Tuple[str, str, Dict[str, Any]]] = []
+    for row in rows:
+        site_key = site_map.get(("mist", row["site_id"]))
+        hints = {
+            "display_name": row["hostname"] or row["device_id"],
+            "device_type": row["device_type"] or "ap",
+            "model": row["model"] or "",
+            "serial": row["serial"] or "",
+            "mac": row["mac"] or "",
+            "ip_address": row["ip_address"] or "",
+            "site_key": site_key,
+        }
+        pairs.append(("mist", row["device_id"], hints))
+        if row["mac"]:
+            mac_hints = dict(hints)
+            mac_hints["vendor_display_name"] = f"{row['hostname'] or row['device_id']} (mac)"
+            pairs.append(("mist", row["mac"], mac_hints))
+
+    await resolver.resolve_devices(pairs)

@@ -30,6 +30,11 @@ from shared.models.event import (
     UnifiedEvent,
 )
 
+try:
+    from backend.shared.database.identity import IdentityResolver
+except ImportError:  # pragma: no cover - supports both entry-point styles
+    from shared.database.identity import IdentityResolver
+
 logger = logging.getLogger(__name__)
 
 _PAGE_LIMIT = 100
@@ -50,6 +55,7 @@ class VelocloudEventsCollector:
         self._base_url = settings.velocloud_url.rstrip("/")
         self._api_key = settings.velocloud_api_key
         self._enabled = settings.velocloud_enabled
+        self._resolver = IdentityResolver()
         self._headers = {
             "Authorization": f"Token {self._api_key}",
             "Content-Type": "application/json",
@@ -76,7 +82,7 @@ class VelocloudEventsCollector:
         events: List[UnifiedEvent] = []
         for raw in raw_events:
             try:
-                events.append(self._normalize(raw))
+                events.append(await self._normalize(raw))
             except Exception:
                 logger.exception("Failed to normalize VeloCloud event: %s", raw.get("id"))
 
@@ -150,7 +156,7 @@ class VelocloudEventsCollector:
 
         return results
 
-    def _normalize(self, raw: Dict[str, Any]) -> UnifiedEvent:
+    async def _normalize(self, raw: Dict[str, Any]) -> UnifiedEvent:
         ts_raw = raw.get("eventTime") or raw.get("createdWhen") or ""
         try:
             timestamp = datetime.fromisoformat(ts_raw.replace("Z", "+00:00")).replace(tzinfo=None)
@@ -166,8 +172,14 @@ class VelocloudEventsCollector:
         edge_id = str(raw.get("edgeId", "")) or raw.get("edgeLogicalId", "") or "unknown"
         site_name = raw.get("siteName", "") or ""
 
+        device_id = edge_id
+        if self._resolver and edge_id and edge_id != "unknown":
+            resolved = await self._resolver.find_device("velocloud", edge_id)
+            if resolved:
+                device_id = resolved
+
         device = DeviceInfo(
-            device_id=edge_id,
+            device_id=device_id,
             device_name=edge_name,
             device_type="edge",
             site_id=str(raw.get("siteId", "")) or edge_id,

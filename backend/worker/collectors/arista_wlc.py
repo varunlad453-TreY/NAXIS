@@ -34,6 +34,7 @@ try:
         EventType,
         UnifiedEvent,
     )
+    from backend.shared.database.identity import IdentityResolver
 except ImportError:  # pragma: no cover - supports both entry-point styles
     from shared.models.collector_outcome import CollectorOutcome
     from shared.models.event import (
@@ -45,6 +46,7 @@ except ImportError:  # pragma: no cover - supports both entry-point styles
         EventType,
         UnifiedEvent,
     )
+    from shared.database.identity import IdentityResolver
 
 logger = logging.getLogger(__name__)
 
@@ -189,9 +191,15 @@ class AristaWlcApsCollector:
     COLLECTOR_ID = "arista-wlc-aps"
     SOURCE_SYSTEM = "arista_wlc"
 
-    def __init__(self, client: httpx.AsyncClient, base_url: str):
+    def __init__(
+        self,
+        client: httpx.AsyncClient,
+        base_url: str,
+        resolver: Optional[IdentityResolver] = None,
+    ):
         self._client = client
         self._base = base_url
+        self._resolver = resolver
 
     @retry(
         retry=retry_if_exception_type(httpx.TransportError),
@@ -216,7 +224,7 @@ class AristaWlcApsCollector:
             events: List[UnifiedEvent] = []
             for ap in aps_raw:
                 try:
-                    events.append(self._normalize_ap(ap))
+                    events.append(await self._normalize_ap(ap))
                 except Exception:
                     logger.exception("Failed to normalize Arista WLC AP")
 
@@ -229,7 +237,7 @@ class AristaWlcApsCollector:
             logger.exception("Arista WLC APs collection failed")
         return outcome
 
-    def _normalize_ap(self, raw: Dict[str, Any]) -> UnifiedEvent:
+    async def _normalize_ap(self, raw: Dict[str, Any]) -> UnifiedEvent:
         ap_name = raw.get("apName", raw.get("name", "unknown"))
         ap_mac = raw.get("apMac", raw.get("mac", f"awlc-{uuid4().hex[:8]}"))
         ip = raw.get("ipAddress", raw.get("ip", ""))
@@ -255,6 +263,20 @@ class AristaWlcApsCollector:
         if uptime:
             description += f", uptime: {uptime}"
 
+        device_id = ap_mac
+        if self._resolver and ap_mac:
+            resolved = await self._resolver.resolve_device(
+                "arista_wlc",
+                ap_mac,
+                display_name=ap_name,
+                device_type="ap",
+                model=model,
+                serial=serial,
+                ip_address=ip,
+            )
+            if resolved:
+                device_id = resolved
+
         return UnifiedEvent(
             event_id=f"awlc-ap-{uuid4().hex[:12]}",
             timestamp=datetime.now(timezone.utc).replace(tzinfo=None),
@@ -266,7 +288,7 @@ class AristaWlcApsCollector:
             title=f"AP: {ap_name}",
             description=description,
             device=DeviceInfo(
-                device_id=ap_mac,
+                device_id=device_id,
                 device_name=ap_name,
                 device_type="ap",
                 device_model=model,
@@ -294,9 +316,15 @@ class AristaWlcRadiosCollector:
     COLLECTOR_ID = "arista-wlc-radios"
     SOURCE_SYSTEM = "arista_wlc"
 
-    def __init__(self, client: httpx.AsyncClient, base_url: str):
+    def __init__(
+        self,
+        client: httpx.AsyncClient,
+        base_url: str,
+        resolver: Optional[IdentityResolver] = None,
+    ):
         self._client = client
         self._base = base_url
+        self._resolver = resolver
 
     @retry(
         retry=retry_if_exception_type(httpx.TransportError),
@@ -321,7 +349,7 @@ class AristaWlcRadiosCollector:
             events: List[UnifiedEvent] = []
             for radio in radios_raw:
                 try:
-                    radio_events = self._normalize_radio(radio)
+                    radio_events = await self._normalize_radio(radio)
                     events.extend(radio_events)
                 except Exception:
                     logger.exception("Failed to normalize Arista WLC radio")
@@ -336,7 +364,7 @@ class AristaWlcRadiosCollector:
             logger.exception("Arista WLC radios collection failed")
         return outcome
 
-    def _normalize_radio(self, raw: Dict[str, Any]) -> List[UnifiedEvent]:
+    async def _normalize_radio(self, raw: Dict[str, Any]) -> List[UnifiedEvent]:
         ap_name = raw.get("apName", raw.get("ap", "unknown"))
         ap_mac = raw.get("apMac", raw.get("mac", ""))
         band = raw.get("band", "")
@@ -350,6 +378,12 @@ class AristaWlcRadiosCollector:
             ap_mac = f"awlc-{uuid4().hex[:8]}"
 
         band_label = f"{band} GHz" if band and "GHz" not in str(band) else str(band)
+
+        device_id = ap_mac
+        if self._resolver:
+            resolved = await self._resolver.find_device("arista_wlc", ap_mac)
+            if resolved:
+                device_id = resolved
 
         events: List[UnifiedEvent] = []
 
@@ -382,7 +416,7 @@ class AristaWlcRadiosCollector:
             title=f"Radio: {ap_name} ({band_label})",
             description=description,
             device=DeviceInfo(
-                device_id=ap_mac,
+                device_id=device_id,
                 device_name=ap_name,
                 device_type="ap",
             ),
@@ -563,10 +597,11 @@ class AristaWlcCollector:
                 err.mark_error("Arista WLC authentication failed — check credentials")
                 return [err]
 
-            # Create sub-collectors with the authenticated client
+            # Create sub-collectors with the authenticated client and identity resolver
+            resolver = IdentityResolver()
             clients = AristaWlcClientsCollector(client, self._host)
-            aps = AristaWlcApsCollector(client, self._host)
-            radios = AristaWlcRadiosCollector(client, self._host)
+            aps = AristaWlcApsCollector(client, self._host, resolver)
+            radios = AristaWlcRadiosCollector(client, self._host, resolver)
             events = AristaWlcEventsCollector(client, self._host)
 
             # Run each sub-collector

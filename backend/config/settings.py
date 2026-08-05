@@ -24,14 +24,6 @@ class Settings(BaseSettings):
     log_level: str = Field(default="INFO", description="Logging level")
     environment: str = Field(default="development", description="Runtime environment")
 
-    # Storage mode: memory | postgres
-    # "memory" keeps the original MVP behavior and lets tests run without Docker.
-    # "postgres" persists everything to PostgreSQL.
-    storage_mode: str = Field(
-        default="memory",
-        description="Primary storage backend: memory or postgres",
-    )
-
     # API
     api_key: str = Field(default="", description="API key for authentication (empty = no auth)")
     api_host: str = Field(default="0.0.0.0", description="API bind host")
@@ -98,6 +90,12 @@ class Settings(BaseSettings):
     event_retention_days: int = Field(
         default=90, description="Events older than this many days are pruned"
     )
+    incident_retention_days: int = Field(
+        default=180, description="Resolved incidents older than this many days are pruned"
+    )
+    raw_event_debug_days: int = Field(
+        default=7, description="Keep raw_event blobs for this many days, then strip them"
+    )
 
     # Correlation
     correlation_time_window: int = Field(default=300, description="Correlation time window in seconds")
@@ -133,11 +131,6 @@ class Settings(BaseSettings):
     def api_cors_origins_list(self) -> List[str]:
         """Return CORS origins as a list."""
         return [part.strip() for part in self.api_cors_origins.split(",") if part.strip()]
-
-    @property
-    def is_postgres_enabled(self) -> bool:
-        """True when PostgreSQL persistence is requested."""
-        return self.storage_mode.lower() == "postgres"
 
 
 # Lazy singleton

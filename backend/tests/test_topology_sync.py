@@ -47,6 +47,7 @@ def _mock_inventory_row(overrides: dict = None) -> dict:
                     "state": "STABLE",
                     "score_tx": None,
                     "score_rx": None,
+                    "latency_ms_tx": None,
                     "upstream_mbps": 200,
                     "downstream_mbps": 500,
                 },
@@ -59,13 +60,34 @@ def _mock_inventory_row(overrides: dict = None) -> dict:
     return row
 
 
+class FakeIdentityResolver:
+    """Deterministic identity resolver for tests; avoids DB round-trips."""
+
+    async def resolve_site(self, vendor_site_id, site_name=None, vendor=None, parent_key=None):
+        return vendor_site_id
+
+    async def resolve_sites(self, specs):
+        return {(vendor, site_id): site_id for site_id, name, vendor, parent in specs}
+
+    async def resolve_device(self, vendor, vendor_device_id, **hints):
+        return vendor_device_id
+
+    async def resolve_devices(self, pairs):
+        return {(vendor, vendor_id): vendor_id for vendor, vendor_id, hints in pairs}
+
+    async def find_device(self, vendor, vendor_device_id):
+        return vendor_device_id
+
+
 def _make_topology_sync(mist_enabled=False, velo_enabled=True):
     with patch("backend.worker.collectors.topology_sync.get_settings") as gs:
         settings = MagicMock()
         settings.mist_enabled = mist_enabled
         settings.velocloud_enabled = velo_enabled
         gs.return_value = settings
-        return TopologySync()
+        ts = TopologySync()
+    ts._identity = FakeIdentityResolver()
+    return ts
 
 
 class TestVeloCloudTopologySync:
@@ -327,7 +349,7 @@ class TestVeloCloudTopologySync:
         edge_node = None
         for c in exec_calls:
             if "INSERT INTO topology_nodes" in c[0] and "velo-edge-" in c[1]:
-                props_json = c[8]
+                props_json = c[9]
                 edge_node = json.loads(props_json)
                 break
 

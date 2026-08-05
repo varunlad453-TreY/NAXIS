@@ -1,5 +1,17 @@
 # Changelog
 
+## [29] -- 2026-08-05 -- WP-0 follow-up: close all deferred items
+- **`raw_event` bloat stripped from DB:** one-off SQL cleared 1,124,128 synthesized RF/uplink `raw_event` blobs (5,207 MB → 877 MB); table `VACUUM FULL` shrunk events from 6.98 GB → 2.10 GB and DB from ~7.9 GB → 2.1 GB.
+- **7-day `raw_event` debug window wired:** new `RAW_EVENT_DEBUG_DAYS` setting (default 7); daily retention pass strips blobs older than the debug window.
+- **`INCIDENT_RETENTION_DAYS` wired:** new `settings.incident_retention_days` (env `INCIDENT_RETENTION_DAYS`, default 180); retention prunes only **resolved** incidents older than N days (open incidents are never touched).
+- **`STORAGE_MODE` removed:** deleted `storage_mode` + `is_postgres_enabled` from `settings.py` and removed the env var from `.env` / `config/.env`; zero consumers existed and the DB connection is driven by `DATABASE_URL`.
+- **50K fixture export generated:** `python -m scripts.export_event_fixture --limit 50000` produced ~45.7 MB corpus at `C:\Users\varun\AppData\Local\Temp\opencode\events_50k_fixture.json` for WP-2 replay work.
+- **Mist-history flapping resolved:** investigation showed the ~11 transitions/min figure was pre-WP-0.3 data; post-deploy `device_unreachable` events are 0 and `mist_ap_history` shows 0 transitions in 48 h. Diff-on-write eliminated the per-poll re-emission.
+- **WP-0 ingest gate closed:** steady-state ingest measured at ~1 MB/day events (excluding one-time deploy baseline bursts), far below the 100 MB/day gate.
+- **Docs sweep:** corrected stale "`raw_event` 100% NULL" / "drop entirely" claims and outdated numbers in `PLAN_GAP.md`, `ROADMAP.md`, `TECHNICAL_QA.md`, `DATA_POLICY.md`; removed `STORAGE_MODE` references in `TELEMETRY_ARCHITECTURE.md` and `QUICKSTART_EVENTS_DEVICES.md`.
+- **Tests:** retention tests updated for incidents + raw_event strip; full suite **418 backend passed / 0 failed**.
+- **Worker redeployed** with the new retention settings.
+
 ## [28] -- 2026-08-04 -- WP-0: Storage Hygiene (write path)
 - **Retention fix (0.1):** `correlation_telemetry` cleanup was pruned on `created_at` (column doesn't exist) — every 24 h pass errored. Now prunes on `recorded_at`. Verified a manual retention run executes clean.
 - **`EVENT_RETENTION_DAYS` wired (0.2):** new `settings.event_retention_days` (env `EVENT_RETENTION_DAYS`, default 90); `events` pruned at 90 days on the daily pass alongside the 7-day telemetry cleanup. Nothing older than 90 days exists yet; count drops as history ages.

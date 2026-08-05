@@ -33,6 +33,8 @@ async def test_prunes_all_tables_with_correct_columns():
         "collector_run_ledger": 42,
         "health_snapshots": 42,
         "events": 42,
+        "incidents": 42,
+        "raw_event_strip": 42,
     }
     queries = [call.args[0] for call in execute.call_args_list]
     assert "recorded_at" in queries[0], "correlation_telemetry must prune on recorded_at"
@@ -40,6 +42,10 @@ async def test_prunes_all_tables_with_correct_columns():
     assert "snapshot_at" in queries[2]
     assert "DELETE FROM events" in queries[3]
     assert "timestamp" in queries[3]
+    assert "DELETE FROM incidents" in queries[4]
+    assert "status = 'resolved'" in queries[4], "open incidents must never be pruned"
+    assert "UPDATE events" in queries[5]
+    assert "raw_event = NULL" in queries[5]
 
 
 @pytest.mark.asyncio
@@ -58,6 +64,8 @@ async def test_events_use_event_days_cutoff_and_telemetry_uses_days():
     assert cutoffs[1] == now - timedelta(days=7)
     assert cutoffs[2] == now - timedelta(days=7)
     assert cutoffs[3] == now - timedelta(days=90)
+    assert cutoffs[4] == now - timedelta(days=180)
+    assert cutoffs[5] == now - timedelta(days=7)
 
 
 @pytest.mark.asyncio

@@ -38,6 +38,11 @@ from typing import Any, Dict, List
 from config.settings import get_settings
 from shared.database.client import db
 
+try:
+    from backend.shared.database.identity import IdentityResolver
+except ImportError:  # pragma: no cover
+    from shared.database.identity import IdentityResolver
+
 logger = logging.getLogger(__name__)
 
 
@@ -54,6 +59,7 @@ class TopologySync:
         settings = get_settings()
         self._mist_enabled = settings.mist_enabled
         self._velo_enabled = settings.velocloud_enabled
+        self._identity = IdentityResolver()
 
     async def sync(self) -> None:
         if self._mist_enabled:
@@ -71,8 +77,8 @@ class TopologySync:
         Builds topology from the inventory table for platform='mist'.
 
         Creates:
-          - One 'site' node per distinct site_id
-          - One 'ap' node per AP device
+          - One 'site' node per distinct site (canonical site_key)
+          - One 'ap' node per AP device (canonical device_key)
           - 'site_membership' edge from each AP to its site
           - 'physical_link' edges from Mist wired uplink data (AP → switch)
         """
@@ -84,31 +90,53 @@ class TopologySync:
         if not rows:
             return
 
-        # Collect unique sites
-        sites: Dict[str, str] = {}
-        for row in rows:
-            if row["site_id"]:
-                sites[row["site_id"]] = row["site_name"] or row["site_id"]
+        # Resolve canonical keys for sites and devices in bulk
+        site_specs = [
+            (row["site_id"], row["site_name"] or row["site_id"], "mist", None)
+            for row in rows
+            if row["site_id"]
+        ]
+        site_map = await self._identity.resolve_sites(site_specs)
 
-        # Upsert site nodes
-        for site_id, site_name in sites.items():
+        device_pairs = [
+            ("mist", row["device_id"], {
+                "display_name": row["hostname"] or row["device_id"],
+                "device_type": "ap",
+                "model": row["model"] or "",
+                "serial": "",
+                "mac": row["mac"] or "",
+                "ip_address": row["ip_address"] or "",
+                "site_key": site_map.get(("mist", row["site_id"])),
+            })
+            for row in rows
+            if row["device_id"]
+        ]
+        device_map = await self._identity.resolve_devices(device_pairs)
+
+        # Upsert site nodes (canonical keys)
+        for site_id, site_name in {(row["site_id"], row["site_name"] or row["site_id"]) for row in rows if row["site_id"]}:
+            site_key = site_map.get(("mist", site_id))
+            if not site_key:
+                continue
             await _upsert_node(
-                node_id=f"mist-site-{site_id}",
+                node_id=f"mist-site-{site_key}",
                 node_type="site",
                 name=site_name,
                 vendor="mist",
                 site_id=site_id,
-                props={"platform": "mist"},
+                canonical_key=site_key,
+                props={"platform": "mist", "vendor_site_id": site_id},
             )
 
         # Upsert AP nodes + site_membership edges
         ap_node_ids: Dict[str, str] = {}
-        mac_to_ap_node_id: Dict[str, str] = {}
         for row in rows:
-            ap_node_id = f"mist-ap-{row['device_id']}"
+            device_key = device_map.get(("mist", row["device_id"]))
+            if not device_key:
+                continue
+            ap_node_id = f"mist-ap-{device_key}"
             ap_node_ids[row["device_id"]] = ap_node_id
-            if row["mac"]:
-                mac_to_ap_node_id[row["mac"]] = ap_node_id
+            site_key = site_map.get(("mist", row["site_id"]))
             await _upsert_node(
                 node_id=ap_node_id,
                 node_type="ap",
@@ -117,16 +145,19 @@ class TopologySync:
                 vendor="mist",
                 model=row["model"] or "",
                 site_id=row["site_id"] or "",
+                canonical_key=device_key,
                 props={
                     "connected": bool(row["connected"]),
                     "num_clients": row["num_clients"] or 0,
                     "firmware": row["firmware_version"] or "",
                     "platform": "mist",
+                    "vendor_device_id": row["device_id"],
+                    "mac": row["mac"] or "",
                 },
             )
 
-            if row["site_id"]:
-                site_node_id = f"mist-site-{row['site_id']}"
+            if site_key:
+                site_node_id = f"mist-site-{site_key}"
                 await _upsert_edge(
                     src_id=ap_node_id,
                     dst_id=site_node_id,
@@ -136,24 +167,21 @@ class TopologySync:
 
         # Stage 2: Build physical_link edges from Mist wired uplink data
         # stored in the events table by MistWiredUplinkCollector.
-        await self._sync_mist_physical_links(ap_node_ids, mac_to_ap_node_id)
+        await self._sync_mist_physical_links(ap_node_ids)
 
         logger.info(
-            "Mist topology: %d APs, %d sites upserted", len(rows), len(sites)
+            "Mist topology: %d APs, %d sites upserted", len(rows), len(site_map)
         )
 
     async def _sync_mist_physical_links(
-        self, ap_node_ids: Dict[str, str],
-        mac_to_ap_node_id: Dict[str, str] = None,
+        self, ap_node_ids: Dict[str, str]
     ) -> None:
         """
         Read the most recent Mist wired uplink events from Postgres and
         create physical_link edges (AP → switch) in topology_edges.
 
-        The MistWiredUplinkCollector writes events with AP MAC and switch
-        MAC in the metadata.  This method queries those events and builds
-        edges so the correlation engine's TopologyCascadeRule can identify
-        parent-child relationships.
+        Events now carry canonical device_keys in events.device_id, so we
+        join to topology_nodes on canonical_key to find the AP node.
         """
         try:
             rows = await db.fetch(
@@ -181,22 +209,24 @@ class TopologySync:
 
         edge_count = 0
         for row in rows:
-            ap_dev_id = row["device_id"]
+            ap_device_key = row["device_id"]
             switch_mac = row["switch_mac"]
             port_id = row.get("port_id") or ""
             site_id = row.get("site_id") or ""
 
-            if not ap_dev_id or not switch_mac:
+            if not ap_device_key or not switch_mac:
                 continue
 
-            # AP node ID — look up by device_id (UUID) first, then by MAC
-            ap_node_id = ap_node_ids.get(ap_dev_id)
-            if not ap_node_id and mac_to_ap_node_id:
-                ap_node_id = mac_to_ap_node_id.get(ap_dev_id)
+            # AP node ID — resolve by canonical key
+            ap_node_row = await db.fetchrow(
+                "SELECT node_id FROM topology_nodes WHERE canonical_key = $1 AND node_type = 'ap'",
+                ap_device_key,
+            )
+            ap_node_id = ap_node_row["node_id"] if ap_node_row else ap_node_ids.get(ap_device_key)
             if not ap_node_id:
-                ap_node_id = f"mist-ap-{ap_dev_id}"
+                continue
 
-            # Switch node ID (use LLDP-discovered MAC)
+            # Switch node ID (use LLDP-discovered MAC; no canonical key yet)
             switch_node_id = f"switch-{switch_mac}"
             await _upsert_node(
                 node_id=switch_node_id,
@@ -235,8 +265,8 @@ class TopologySync:
         Builds topology from the inventory table for platform='velocloud'.
 
         Creates:
-          - One 'site' node per distinct site_id
-          - One 'edge' node per SD-WAN edge
+          - One 'site' node per distinct site (canonical site_key)
+          - One 'edge' node per SD-WAN edge (canonical device_key)
           - 'site_membership' edge from each edge to its site
           - 'wan_link' edges from inventory.props.links for each WAN interface
         """
@@ -248,23 +278,44 @@ class TopologySync:
         if not rows:
             return
 
-        sites: Dict[str, str] = {}
-        for row in rows:
-            if row["site_id"]:
-                sites[row["site_id"]] = row["site_name"] or row["site_id"]
+        site_specs = [
+            (row["site_id"], row["site_name"] or row["site_id"], "velocloud", None)
+            for row in rows
+            if row["site_id"]
+        ]
+        site_map = await self._identity.resolve_sites(site_specs)
 
-        for site_id, site_name in sites.items():
+        device_pairs = [
+            ("velocloud", row["device_id"], {
+                "display_name": row["hostname"] or row["device_id"],
+                "device_type": "edge",
+                "model": row["model"] or "",
+                "site_key": site_map.get(("velocloud", row["site_id"])),
+            })
+            for row in rows
+            if row["device_id"]
+        ]
+        device_map = await self._identity.resolve_devices(device_pairs)
+
+        for site_id, site_name in {(row["site_id"], row["site_name"] or row["site_id"]) for row in rows if row["site_id"]}:
+            site_key = site_map.get(("velocloud", site_id))
+            if not site_key:
+                continue
             await _upsert_node(
-                node_id=f"velo-site-{site_id}",
+                node_id=f"velo-site-{site_key}",
                 node_type="site",
                 name=site_name,
                 vendor="velocloud",
                 site_id=site_id,
-                props={"platform": "velocloud"},
+                canonical_key=site_key,
+                props={"platform": "velocloud", "vendor_site_id": site_id},
             )
 
         for row in rows:
-            edge_node_id = f"velo-edge-{row['device_id']}"
+            device_key = device_map.get(("velocloud", row["device_id"]))
+            if not device_key:
+                continue
+            edge_node_id = f"velo-edge-{device_key}"
             props_raw = row["props"] or {}
             if isinstance(props_raw, str):
                 try:
@@ -274,6 +325,7 @@ class TopologySync:
 
             links: List[Dict[str, Any]] = props_raw.get("links", [])
             velobrain_score: float = props_raw.get("velobrain_score", 0.0)
+            site_key = site_map.get(("velocloud", row["site_id"]))
 
             await _upsert_node(
                 node_id=edge_node_id,
@@ -283,6 +335,7 @@ class TopologySync:
                 vendor="velocloud",
                 model=row["model"] or "",
                 site_id=row["site_id"] or "",
+                canonical_key=device_key,
                 props={
                     "connected": bool(row["connected"]),
                     "reachability": row["reachability"],
@@ -290,13 +343,14 @@ class TopologySync:
                     "velobrain_score": velobrain_score,
                     "wan_links": len(links),
                     "platform": "velocloud",
+                    "vendor_device_id": row["device_id"],
                 },
             )
 
-            if row["site_id"]:
+            if site_key:
                 await _upsert_edge(
                     src_id=edge_node_id,
-                    dst_id=f"velo-site-{row['site_id']}",
+                    dst_id=f"velo-site-{site_key}",
                     edge_type="site_membership",
                     props={"platform": "velocloud"},
                 )
@@ -340,7 +394,7 @@ class TopologySync:
 
         logger.info(
             "VeloCloud topology: %d edges, %d sites upserted",
-            len(rows), len(sites),
+            len(rows), len(site_map),
         )
 
     # ── Cross-vendor logical links ─────────────────────────────────────────────
@@ -460,23 +514,25 @@ async def _upsert_node(
     vendor: str = "",
     model: str = "",
     site_id: str = "",
+    canonical_key: str = "",
     props: Dict[str, Any] = None,
 ) -> None:
     await db.execute(
         """
         INSERT INTO topology_nodes
-            (node_id, node_type, name, ip_address, vendor, model, site_id, props, updated_at)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, NOW())
+            (node_id, node_type, name, ip_address, vendor, model, site_id, canonical_key, props, updated_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, NULLIF($8, ''), $9::jsonb, NOW())
         ON CONFLICT (node_id) DO UPDATE SET
-            name       = EXCLUDED.name,
-            ip_address = COALESCE(NULLIF(EXCLUDED.ip_address,''), topology_nodes.ip_address),
-            vendor     = EXCLUDED.vendor,
-            model      = COALESCE(NULLIF(EXCLUDED.model,''), topology_nodes.model),
-            site_id    = COALESCE(NULLIF(EXCLUDED.site_id,''), topology_nodes.site_id),
-            props      = EXCLUDED.props,
-            updated_at = NOW()
+            name          = EXCLUDED.name,
+            ip_address    = COALESCE(NULLIF(EXCLUDED.ip_address,''), topology_nodes.ip_address),
+            vendor        = EXCLUDED.vendor,
+            model         = COALESCE(NULLIF(EXCLUDED.model,''), topology_nodes.model),
+            site_id       = COALESCE(NULLIF(EXCLUDED.site_id,''), topology_nodes.site_id),
+            canonical_key = COALESCE(NULLIF(EXCLUDED.canonical_key,''), topology_nodes.canonical_key),
+            props         = EXCLUDED.props,
+            updated_at    = NOW()
         """,
-        node_id, node_type, name, ip_address, vendor, model, site_id,
+        node_id, node_type, name, ip_address, vendor, model, site_id, canonical_key,
         json.dumps(props or {}),
     )
 

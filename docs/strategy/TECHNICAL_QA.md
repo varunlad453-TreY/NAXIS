@@ -1,9 +1,12 @@
 > **Appendix (2026-08-04) — current-state bridge.** Appended by the Naxis team (original text untouched); see `PLAN_GAP.md` for the full gap map and execution plan.
 >
 > **Numbers that changed since this was written:**
-> - Tests: **399/399 backend pass** (was 284/300 — the 16 `test_velocloud_collector.py` failures are fixed; that file is 138/138), **114 frontend pass**, type-check clean.
-> - Storage: `raw_event` is now **100% NULL** (the 7.6 GB / PII table described in §6 no longer exists); DB is **6.5 GB** (was 10); events **1,270,644** (was ~2.2M); incidents **11,085** (was 29,525).
-> - Unchanged and still accurate: 3.1% device resolution, inverted edge direction, SHA-256 incident identity (device-rooted, still event-set based), cascade incidents = 0, Mist clients 404, polled-state emitters running, retention `created_at` bug, `EVENT_RETENTION_DAYS` unread, no Keycloak/audit_log, no AWS, dead `syslog_receiver`/`snmp_trap_receiver`, unread `STORAGE_MODE`, healthcheck `start_period: 30s`.
+> - Tests: **418/418 backend pass** (was 284/300 — the 16 `test_velocloud_collector.py` failures are fixed; that file is 138/138), **114 frontend pass**, type-check clean.
+> - Storage: `raw_event` premise corrected — it was **100% populated** (1,379,730 rows); old bloat stripped by `source_event_id` prefix (1,124,128 rows cleared, 5,207 MB → 877 MB); DB is **2.1 GB** (was 10); events **1,380,476** (was ~2.2M); incidents **11,085** (was 29,525).
+> - `retention.py` fixed (`recorded_at` bug); `EVENT_RETENTION_DAYS`, `INCIDENT_RETENTION_DAYS`, and a 7-day `RAW_EVENT_DEBUG_DAYS` window are now wired.
+> - Polled-state emitters stopped: RF + wired uplink diff-on-write; `mist-history` transitions are steady-state (0 recent flaps).
+> - Dead `syslog_receiver`/`snmp_trap_receiver` deleted; `STORAGE_MODE` / `storage_mode` / `is_postgres_enabled` removed; worker healthcheck `start_period` 30s → 300s.
+> - Unchanged: 3.1% device resolution, inverted edge direction, SHA-256 incident identity (device-rooted, still event-set based), cascade incidents = 0, Mist clients 404, no Keycloak/audit_log, no AWS.
 > - Phase 5 (Alerts page) work landed after this doc: truthful KPI row from `/incidents/stats`, root-cause grouping, `site_name`/`root_device` enrichment.
 
 ---
@@ -317,19 +320,18 @@ topology has always returned 0 rows.
 
 ### Others
 
-- `EVENT_RETENTION_DAYS=90` is in `config/.env` and read by no code. `events` has
-  never been pruned. `retention.py` trims only three telemetry tables and logs
-  `correlation_telemetry: column "created_at" does not exist` every cycle.
-- `mist-inventory` reports **-29.3 s** average duration — `finished_at` before
-  `started_at`.
-- `STORAGE_MODE` in settings is read by nothing.
-- Worker healthcheck `start_period: 30s` is shorter than the first collection
-  pass, so the container reports a transient false "unhealthy" at startup.
+- `EVENT_RETENTION_DAYS=90` is wired; `INCIDENT_RETENTION_DAYS=180` (resolved
+  incidents only) and `RAW_EVENT_DEBUG_DAYS=7` are also wired. `retention.py`
+  `created_at` bug fixed.
+- `mist-inventory` duration guard clamps negatives to 0; ledger now shows 0
+  negatives and a positive average duration.
+- `STORAGE_MODE` / `storage_mode` / `is_postgres_enabled` were removed — they had
+  zero consumers and the DB connection is driven by `DATABASE_URL`.
+- Worker healthcheck `start_period` is 300s.
 - `/events` and `/devices` pages exist and are linked from nowhere.
-- `syslog_receiver.py` and `snmp_trap_receiver.py` exist and are imported by
-  nothing.
-- 16 of 300 tests fail, all in `test_velocloud_collector.py`, related to an
-  `enterprise_id` override.
+- `syslog_receiver.py` and `snmp_trap_receiver.py` were deleted.
+- All 418 backend tests pass; 16 historic `test_velocloud_collector.py` failures
+  are resolved.
 
 ---
 
@@ -364,9 +366,12 @@ Everything else is a 60-second TTL cache over live vendor APIs.
 | security | 570 | 258 kB |
 | configuration | 531 | 295 kB |
 
-8 GB of 10 GB is `raw_event` on two categories that should not be events at all.
-The genuinely useful signal — connectivity, security, configuration — is under
-240 MB. Growth is 2.5 GB/day at four vendors; ~6 GB/day at eight.
+After WP-0 (2026-08-05): the events table is **2.10 GB** and `raw_event` is
+**877 MB** (256,474 rows) — only vendor-sourced events keep raw payloads, and
+only for a 7-day debug window. The old RF/uplink polled-state bloat
+(1,124,128 rows / 5,207 MB) was stripped. Growth is now ~1 MB/day events at four
+vendors (steady state, excluding one-time deploy baseline bursts). The WP-0
+ingest gate (<100 MB/day) is closed.
 
 Target: ~400 MB steady state, under 100 MB/day ingest.
 
@@ -400,21 +405,24 @@ seconds. Every view carries an "as of HH:MM:SS" timestamp.
 
 ### What PII is in the database today?
 
-None of it deliberate — it arrived because `raw_event` captures whole vendor
-payloads verbatim.
+None of it deliberate — it arrived because `raw_event` captured whole vendor
+payloads verbatim. After stripping the RF/uplink bloat, the remaining vendor
+`raw_event` payloads still carry a small amount of PII inside the 7-day debug
+window:
 
 | Key | Events | What |
 |---|---|---|
-| `xy_coords` | 510,285 | AP floor coordinates; with client association, physical people-location data |
-| `hostnames` | 25,127 | employee device names, typically `firstname-laptop` |
-| `user_agent` | 4,555 (15 distinct) | client OS/browser |
-| `admin_name` | 3,924 (51 distinct) | named admins from Mist audit logs |
+| `xy_coords` | 0 | AP floor coordinates; stripped with the old bloat |
+| `hostnames` | 9,225 | employee device names, typically `firstname-laptop` |
+| `user_agent` | 2,297 | client OS/browser |
+| `admin_name` | 2,262 | named admins from Mist audit logs |
 | `username` | 0 | clean today; ClearPass will introduce it |
 
-Dropping `raw_event` removes all of it at once. Redaction is extended to strip
-`hostnames`, `user_agent`, `admin_name` and hash client MACs at *ingest* — before
-write, never at read. Once PII is written it is a compliance artefact regardless
-of whether anything reads it.
+The 7-day `raw_event` debug window means this PII is bounded and ages out
+automatically. Redaction is extended to strip `hostnames`, `user_agent`,
+`admin_name` and hash client MACs at *ingest* — before write, never at read.
+Once PII is written it is a compliance artefact regardless of whether anything
+reads it.
 
 ### What is never stored?
 
@@ -576,10 +584,9 @@ matters more than the API one.
 
 ### Test coverage?
 
-300 tests, 284 passing. 16 failures all in `test_velocloud_collector.py` around
-an `enterprise_id` override. Coverage is strongest where it matters — 87 tests on
-the correlation engine, 136 on VeloCloud normalisation, 11 on the full
-collector→event→incident pipeline.
+418 tests, 418 passing. Coverage is strongest where it matters — 103 tests on
+the correlation engine, 138 on VeloCloud normalisation, 19 on retention + event
+dedup + telemetry guards, 11 on the full collector→event→incident pipeline.
 
 Run with `PYTHONPATH=<repo>:<repo>/backend` — `conftest.py` imports
 `backend.shared.correlation`.
@@ -635,15 +642,15 @@ product; everything after is depth.
 
 | Fact | Value |
 |---|---|
-| Events stored | ~2.2M |
-| Of which polled state, not state change | 39.5% |
-| Database size | 10 GB |
-| `raw_event` share | 7.6 GB |
-| Growth, 4 vendors | 2.5 GB/day |
+| Events stored | 1.38M |
+| Of which polled state, not state change | <0.1% post-WP-0 (was 39.5%) |
+| Database size | 2.1 GB |
+| `raw_event` share | 877 MB (7-day debug window) |
+| Growth, 4 vendors | ~1 MB/day events (steady state) |
 | Target steady state | ~400 MB |
-| Incidents | ~29,500 |
+| Incidents | 11,085 |
 | Incidents ever updated | 0 |
-| Distinct incident titles | 84 |
+| Distinct incident titles | 89 |
 | Most repeated title | 12,601 × |
 | Cascade incidents ever | 0 |
 | Device→topology resolution | 3.1% (54/1,715) |
@@ -651,7 +658,7 @@ product; everything after is depth.
 | Topology nodes / edges | 2,731 / 3,442 |
 | Collectors | 21 |
 | Sites | 153 |
-| Tests passing | 284/300 |
+| Tests passing | 418/418 |
 | Correlation cycle time | ~850 ms |
 | Slowest collector | 252 s (`mist-inventory`) |
 | Mist API calls per pass | ~900 |

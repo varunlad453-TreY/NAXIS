@@ -543,7 +543,7 @@ DNAC_VERIFY_SSL=true
 # Worker
 COLLECTOR_INTERVAL=60          # Seconds between collection cycles
 LOG_LEVEL=INFO
-STORAGE_MODE=postgres          # Must be postgres for telemetry ledger
+# DB connection is driven by DATABASE_URL; postgres is required for telemetry ledger
 ```
 
 ### 9.3 Freshness Thresholds (Hardcoded)

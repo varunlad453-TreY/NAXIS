@@ -21,8 +21,8 @@ import pytest
 from backend.shared.database.topology import DatabaseTopologyProvider
 
 
-def _node_row(node_id: str) -> Dict[str, str]:
-    return {"node_id": node_id}
+def _node_row(node_id: str, canonical_key: Optional[str] = None) -> Dict[str, str]:
+    return {"node_id": node_id, "canonical_key": canonical_key or node_id}
 
 
 def _edge_row(src_id: str, dst_id: str) -> Dict[str, str]:
@@ -39,12 +39,19 @@ async def _run_batch_resolve(device_ids, node_ids_in_db):
     """
     Simulate batch_resolve_node_ids by patching db.fetch so the
     ANY($1) query returns rows for the node_ids that exist.
+
+    Identity-aware lookup is short-circuited so these tests exercise the
+    canonical-key and legacy-prefix resolution paths.
     """
     rows = [_node_row(nid) for nid in node_ids_in_db]
-    with patch("backend.shared.database.topology.db.fetch", AsyncMock(return_value=rows)):
-        with patch("backend.shared.database.topology.db.pool", AsyncMock()):
-            provider = _make_provider()
-            return await provider.batch_resolve_node_ids(set(device_ids))
+    with patch(
+        "backend.shared.database.topology._resolve_node_id_via_identity",
+        new=AsyncMock(return_value={}),
+    ):
+        with patch("backend.shared.database.topology.db.fetch", AsyncMock(return_value=rows)):
+            with patch("backend.shared.database.topology.db.pool", AsyncMock()):
+                provider = _make_provider()
+                return await provider.batch_resolve_node_ids(set(device_ids))
 
 
 async def _run_parent_child_map(device_ids, node_ids_in_db, edge_rows):
@@ -54,11 +61,17 @@ async def _run_parent_child_map(device_ids, node_ids_in_db, edge_rows):
     2. edge query → edge rows
     """
     node_rows = [_node_row(nid) for nid in node_ids_in_db]
-    fetch_returns = [node_rows, edge_rows]
-    with patch("backend.shared.database.topology.db.fetch", AsyncMock(side_effect=fetch_returns)):
-        with patch("backend.shared.database.topology.db.pool", AsyncMock()):
-            provider = _make_provider()
-            return await provider.get_parent_child_map(set(device_ids))
+    # batch_resolve_node_ids now makes two internal fetches (canonical + legacy),
+    # then get_parent_child_map fetches edges — three returns total.
+    fetch_returns = [node_rows, node_rows, edge_rows]
+    with patch(
+        "backend.shared.database.topology._resolve_node_id_via_identity",
+        new=AsyncMock(return_value={}),
+    ):
+        with patch("backend.shared.database.topology.db.fetch", AsyncMock(side_effect=fetch_returns)):
+            with patch("backend.shared.database.topology.db.pool", AsyncMock()):
+                provider = _make_provider()
+                return await provider.get_parent_child_map(set(device_ids))
 
 
 async def _run_get_all_descendants(device_id, node_ids_in_db, children_map, max_depth=5):
@@ -67,6 +80,7 @@ async def _run_get_all_descendants(device_id, node_ids_in_db, children_map, max_
     and db.fetch (for get_children recursively).
     """
     provider = _make_provider()
+    node_set = set(node_ids_in_db)
 
     # resolve_node_id → check if device_id maps to a node_id
     resolved_node_id = None
@@ -80,9 +94,13 @@ async def _run_get_all_descendants(device_id, node_ids_in_db, children_map, max_
             break
 
     if not resolved_node_id:
-        with patch("backend.shared.database.topology.db.fetchrow", AsyncMock(return_value=None)):
-            with patch("backend.shared.database.topology.db.pool", AsyncMock()):
-                return await provider.get_all_descendants(device_id, max_depth)
+        with patch(
+            "backend.shared.database.topology._resolve_node_id_via_identity",
+            new=AsyncMock(return_value={}),
+        ):
+            with patch("backend.shared.database.topology.db.fetchrow", AsyncMock(return_value=None)):
+                with patch("backend.shared.database.topology.db.pool", AsyncMock()):
+                    return await provider.get_all_descendants(device_id, max_depth)
 
     # Build side_effect for recursive get_children calls
     def fetch_side_effect(sql, *args):
@@ -95,15 +113,25 @@ async def _run_get_all_descendants(device_id, node_ids_in_db, children_map, max_
         return []
 
     def fetchrow_side_effect(sql, *args):
-        if "SELECT node_id FROM topology_nodes WHERE node_id = $1" in sql:
-            candidate = args[0] if args else None
-            return _node_row(candidate) if candidate in set(node_ids_in_db) else None
+        candidate = args[0] if args else None
+        if candidate is None:
+            return None
+        # Canonical-key lookup returns the node if the device_id itself is a node
+        if "WHERE canonical_key = $1" in sql:
+            return _node_row(candidate) if candidate in node_set else None
+        # Legacy node_id lookup
+        if "WHERE node_id = $1" in sql:
+            return _node_row(candidate) if candidate in node_set else None
         return None
 
-    with patch("backend.shared.database.topology.db.fetch", AsyncMock(side_effect=fetch_side_effect)):
-        with patch("backend.shared.database.topology.db.fetchrow", AsyncMock(side_effect=fetchrow_side_effect)):
-            with patch("backend.shared.database.topology.db.pool", AsyncMock()):
-                return await provider.get_all_descendants(device_id, max_depth)
+    with patch(
+        "backend.shared.database.topology._resolve_node_id_via_identity",
+        new=AsyncMock(return_value={}),
+    ):
+        with patch("backend.shared.database.topology.db.fetch", AsyncMock(side_effect=fetch_side_effect)):
+            with patch("backend.shared.database.topology.db.fetchrow", AsyncMock(side_effect=fetchrow_side_effect)):
+                with patch("backend.shared.database.topology.db.pool", AsyncMock()):
+                    return await provider.get_all_descendants(device_id, max_depth)
 
 
 # ==============================================================================
