@@ -9,6 +9,21 @@
 - **Engine async refactoring:** updated `create_incident()` and `_create_from_cascade()` to be `async` and await terminal status recurrence checks.
 - **Tests & Verification:** added `TestIncidentIdentityMerge` test suite to `test_correlation_engine.py`. Full test suite: **432 backend tests passing (0 failures)**.
 
+## [31] -- 2026-08-05 -- WP-2.1: Fix Inverted Edge Direction
+- **Explicit `links` table schema (`009_links.sql`):** created `links` table with explicit `parent_node_id` and `child_node_id` columns, unique constraint on `(parent_node_id, child_node_id, link_type)`, and `updated_at` trigger.
+- **Migrated physical link edges:** copied existing `physical_link` edges from `topology_edges` to `links` with corrected direction (`parent_node_id = dst_id`, `child_node_id = src_id`), establishing switch→AP parent-child hierarchy.
+- **Cascade child translation fix:** fixed `DatabaseTopologyProvider.get_parent_child_map()` to translate raw child node_ids (e.g. `"mist-ap-abc123"`) via `node_id_to_device_id()` stripping prefixes to match canonical device_ids in event stream (e.g. `"abc123"`).
+- **Write & Read Path Updates:** updated `topology_sync.py` and `snmp_poller.py` write paths to write physical links via `_upsert_link()`; updated topology API routes and recursive CTE traversal to read physical links from `links`.
+- **Tests & Verification:** added 3 new topology tests (links write, no-uplink skip, child-translation fallback). Full test suite: **432 backend tests passing**.
+
+## [30] -- 2026-08-05 -- WP-1: Canonical Identity Layer
+- **Identity Schema (`008_identity.sql`):** created `sites`, `devices`, and `device_identities` join tables plus `topology_nodes.canonical_key` column for cross-vendor device resolution.
+- **Identity Resolver (`backend/shared/database/identity.py`):** built `IdentityResolver` with in-memory caching and bulk resolution APIs (`resolve_devices`/`resolve_sites`) for fast single-query lookup.
+- **Inventory & Collector Integration:** updated every event collector (Mist ×6, VeloCloud ×5, DNAC ×3, Arista WLC ×2, SNMP ×1) to resolve and emit `canonical_key`.
+- **Live Inventory Backfill:** executed `scripts/backfill_identity.py` linking 153 sites, 4,102 device identities, and 2,051 topology nodes.
+- **Topology Resolver Ladder:** updated topology node resolution to follow primary ladder: `canonical_key` → identity join → legacy prefix fallback. Fixed `health_snapshot.py` to use canonical keys from DB.
+- **Tests & Verification:** added unit tests for identity resolver. Full test suite: **429 backend tests passing**.
+
 ## [29] -- 2026-08-05 -- WP-0 follow-up: close all deferred items
 - **`raw_event` bloat stripped from DB:** one-off SQL cleared 1,124,128 synthesized RF/uplink `raw_event` blobs (5,207 MB → 877 MB); table `VACUUM FULL` shrunk events from 6.98 GB → 2.10 GB and DB from ~7.9 GB → 2.1 GB.
 - **7-day `raw_event` debug window wired:** new `RAW_EVENT_DEBUG_DAYS` setting (default 7); daily retention pass strips blobs older than the debug window.
