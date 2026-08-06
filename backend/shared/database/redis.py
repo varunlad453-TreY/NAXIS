@@ -89,6 +89,30 @@ class RedisClient:
         except Exception as exc:
             logger.warning("Failed to publish incident to Redis: %s", exc)
 
+    async def get_json(self, key: str) -> Optional[Any]:
+        """Fetch and deserialize JSON from Redis. Returns None if missing or disabled."""
+        if not self._settings.redis_enabled:
+            return None
+        try:
+            val = await self._get_redis().get(key)
+            if val is not None:
+                return json.loads(val)
+        except Exception as exc:
+            logger.debug("Redis get_json failed for key %s: %s", key, exc)
+        return None
+
+    async def set_json(self, key: str, value: Any, ttl_seconds: int = 60) -> bool:
+        """Serialize and store value in Redis with TTL. Returns True if stored."""
+        if not self._settings.redis_enabled:
+            return False
+        try:
+            payload = json.dumps(value, default=str)
+            await self._get_redis().set(key, payload, ex=ttl_seconds)
+            return True
+        except Exception as exc:
+            logger.debug("Redis set_json failed for key %s: %s", key, exc)
+            return False
+
     async def close(self) -> None:
         """Close the Redis connection."""
         if self._redis:

@@ -496,7 +496,7 @@ class MistApRfCollector:
 class MistClientTopologyCollector:
     """
     Collects client connectivity data from
-    ``/api/v1/orgs/{org_id}/clients``.
+    ``/api/v1/orgs/{org_id}/clients/search`` (or site stats fallback).
 
     Maps client MAC, IP, SSID, band, RSSI, and connection events to
     build the client-to-AP connectivity layer.
@@ -547,8 +547,11 @@ class MistClientTopologyCollector:
         return outcome
 
     async def _fetch_clients(self) -> List[Dict]:
-        """Fetch all clients from the org endpoint with pagination."""
-        url = f"{self._base_url}/api/v1/orgs/{self._org_id}/clients"
+        """
+        Fetch all clients from the org search endpoint with pagination.
+        Falls back to per-site stats if org-level search is unavailable or restricted.
+        """
+        url = f"{self._base_url}/api/v1/orgs/{self._org_id}/clients/search"
         params: Dict[str, Any] = {"limit": _PAGE_LIMIT}
         results: List[Dict] = []
         page = 0
@@ -562,8 +565,8 @@ class MistClientTopologyCollector:
                 else:
                     resp = await self._client.get(current_url)
                 _raise_for_status(resp)
-            except (MistTopologyApiError, httpx.TransportError) as exc:
-                logger.error("Mist clients fetch failed on page %d: %s", page + 1, exc)
+            except Exception as exc:
+                logger.warning("Mist org clients search failed on page %d: %s — attempting site stats fallback", page + 1, exc)
                 break
 
             body = resp.json()
@@ -578,6 +581,40 @@ class MistClientTopologyCollector:
 
             current_url = f"{self._base_url}{next_path}"
             current_params = None
+
+        if not results:
+            # Fallback: per-site stats client fetch
+            results = await self._fetch_clients_per_site_fallback()
+
+        return results
+
+    async def _fetch_clients_per_site_fallback(self) -> List[Dict]:
+        """Fallback: Fetch clients per site via /api/v1/sites/{site_id}/stats/clients."""
+        results: List[Dict] = []
+        try:
+            sites_resp = await self._client.get(f"{self._base_url}/api/v1/orgs/{self._org_id}/sites")
+            _raise_for_status(sites_resp)
+            sites_data = sites_resp.json()
+            site_ids = [s.get("id") for s in (sites_data if isinstance(sites_data, list) else sites_data.get("results", [])) if isinstance(s, dict) and s.get("id")]
+
+            for site_id in site_ids:
+                try:
+                    resp = await self._client.get(
+                        f"{self._base_url}/api/v1/sites/{site_id}/stats/clients",
+                        params={"limit": _PAGE_LIMIT},
+                    )
+                    _raise_for_status(resp)
+                    body = resp.json()
+                    page_items = body.get("results", body) if isinstance(body, dict) else body
+                    if isinstance(page_items, list):
+                        for item in page_items:
+                            if isinstance(item, dict):
+                                item.setdefault("site_id", site_id)
+                                results.append(item)
+                except Exception as e:
+                    logger.debug("Mist site %s client stats fetch failed: %s", site_id, e)
+        except Exception as exc:
+            logger.debug("Mist sites listing for fallback failed: %s", exc)
 
         return results
 

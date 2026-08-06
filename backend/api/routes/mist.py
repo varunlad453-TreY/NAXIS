@@ -6,8 +6,13 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Response
 from fastapi.responses import StreamingResponse
+
+try:
+    from backend.shared.cache import cached_api_route
+except ImportError:
+    from shared.cache import cached_api_route
 
 from shared.database.client import db
 
@@ -103,8 +108,10 @@ def _derive_events(snapshots: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
 
 @router.get("/aps/{serial}/history")
+@cached_api_route(ttl_seconds=60, key_prefix="mist_ap_history")
 async def get_ap_history(
     serial: str,
+    response: Response,
     event: Optional[str] = Query(None, description="Filter by event type"),
     since: Optional[datetime] = Query(None),
     until: Optional[datetime] = Query(None),

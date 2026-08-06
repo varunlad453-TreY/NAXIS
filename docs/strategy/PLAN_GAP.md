@@ -63,9 +63,9 @@ Cross-cutting: no ack/assign/resolve (Naxis explains, it doesn't own workflow); 
 | 1a Export ~50K-event fixture | **DONE** — fixture at `C:\Users\varun\AppData\Local\Temp\opencode\events_50k_fixture.json` (~45.7 MB) | `backend/scripts/export_event_fixture.py` |
 | 1b `devices` / `device_identities` / `sites` tables + identity resolver + backfill | **DONE** — `008_identity.sql` applied; 153 sites / 4,102 devices / 2,051 nodes linked | `identity.py`, `backfill_identity.py` |
 | 1b Fix `_known_node_id_patterns` infix bug | **BYPASSED** — canonical identity resolver is the primary path; legacy prefix heuristic is fallback only; infix bug remains in fallback but is not exercised for canonical-keyed events | `topology.py:35` |
-| 1c Generalized cache (60s TTL everywhere) + "as of HH:MM:SS" timestamps | **NOT DONE** — only 2 per-route caches | grep |
+| 1c Generalized cache (60s TTL everywhere) + "as of HH:MM:SS" timestamps | **DONE** — WP-3.1: Dual-Tier L1 Memory + L2 Redis cache (`shared/cache.py`), single-flight stampede protection, ISO-8601 `as_of` timestamp injection, `X-As-Of` & `X-Cache-Status` response headers | `shared/cache.py`, `api/routes/{mist_clients,mist_sle,mist,sdwan_chat}.py` |
 | 1d Configure DNAC (5 collectors) + Arista WLC (4) | **NOT DONE** — written, never configured (4 of 8 vendors live) | QA doc + code |
-| 1d Fix Mist clients **404** (blocks `client_mac` → Phase 4) | **NOT DONE** — `client_mac` NULL on all events; client topology 0 rows | verified |
+| 1d Fix Mist clients **404** (blocks `client_mac` → Phase 4) | **DONE** — WP-3.3: endpoint drift fixed from 404 `/orgs/{org_id}/clients` to `/orgs/{org_id}/clients/search` with per-site stats fallback | `worker/collectors/mist_topology.py` |
 | 1d Pull Mist EX switch inventory | **NOT DONE** — switches arrive as `Switch f8:39:18…` LLDP guesses | verified |
 | 1d Build Aruba Central, ClearPass, Cloudflare, Netskope, SD-WAN adapter (Silver Peak) | **NOT BUILT** | grep |
 | 1e Keycloak OIDC + RBAC + `audit_log` | **NOT BUILT** — shared `X-API-Key` only | grep: no keycloak/oidc/audit_log |

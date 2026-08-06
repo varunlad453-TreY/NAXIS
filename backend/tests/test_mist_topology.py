@@ -6,13 +6,13 @@ disconnected AP on every poll — only on state transitions — and that
 recovery (device_reachable) events are emitted when devices come back.
 """
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from backend.shared.models.collector_outcome import CollectorOutcome
 from backend.shared.models.event import EventSeverity, EventType
-from backend.worker.collectors.mist_topology import MistApHistoryCollector
+from backend.worker.collectors.mist_topology import MistApHistoryCollector, MistClientTopologyCollector
 
 
 def _device(overrides=None):
@@ -266,3 +266,76 @@ class TestCollect:
         assert outcome.status == "success"
         assert rs.await_args.args[0][0]["mac"] == "aa:bb:cc:dd:ee:ff"
         assert outcome.metadata["devices_seen"] == 1
+
+
+class TestMistClientTopologyCollector:
+    @pytest.mark.asyncio
+    async def test_fetch_clients_uses_search_endpoint(self):
+        mock_client = AsyncMock()
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "results": [
+                {
+                    "mac": "112233445566",
+                    "ip": "192.168.1.50",
+                    "hostname": "laptop-01",
+                    "ssid": "Staff-WiFi",
+                    "rssi": -65,
+                    "site_id": "site-123",
+                    "ap_mac": "aabbccddeeff",
+                }
+            ]
+        }
+        mock_client.get.return_value = mock_resp
+
+        collector = MistClientTopologyCollector(mock_client, "https://api.mist.example", "org-123")
+        outcome = await collector.collect()
+
+        assert outcome.status == "success"
+        assert outcome.metadata["raw_count"] == 1
+        assert len(outcome.events) == 1
+        assert outcome.events[0].client.client_mac == "112233445566"
+        assert outcome.events[0].client.client_hostname == "laptop-01"
+
+        # Verify endpoint called is /search
+        called_url = mock_client.get.call_args[0][0]
+        assert "/api/v1/orgs/org-123/clients/search" in called_url
+
+    @pytest.mark.asyncio
+    async def test_fetch_clients_site_stats_fallback(self):
+        mock_client = AsyncMock()
+
+        # Org search returns HTTP 404 (endpoint restricted or legacy org)
+        err_resp = MagicMock()
+        err_resp.status_code = 404
+        err_resp.json.return_value = {"detail": "Not Found"}
+
+        sites_resp = MagicMock()
+        sites_resp.status_code = 200
+        sites_resp.json.return_value = [{"id": "site-abc"}]
+
+        clients_resp = MagicMock()
+        clients_resp.status_code = 200
+        clients_resp.json.return_value = {
+            "results": [
+                {
+                    "mac": "998877665544",
+                    "ip": "10.0.0.12",
+                    "hostname": "phone-02",
+                    "ssid": "Guest",
+                    "rssi": -72,
+                    "ap_mac": "aabbcc001122",
+                }
+            ]
+        }
+
+        mock_client.get.side_effect = [err_resp, sites_resp, clients_resp]
+
+        collector = MistClientTopologyCollector(mock_client, "https://api.mist.example", "org-123")
+        outcome = await collector.collect()
+
+        assert outcome.status == "success"
+        assert len(outcome.events) == 1
+        assert outcome.events[0].client.client_mac == "998877665544"
+
