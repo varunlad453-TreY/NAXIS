@@ -319,14 +319,14 @@ Topology is stored in PostgreSQL (`topology_nodes` + `topology_edges`). The sync
 pytest backend\tests -v
 ```
 
-Current: **399 backend tests, 0 failures** + **114 frontend tests** (`cd frontend && npm test`).
+Current: **432 backend tests, 0 failures** + **114 frontend tests** (`cd frontend && npm test`).
 
 ### Test files
 
 | File | Tests | What |
 |------|-------|------|
-| `test_velocloud_collector.py` | 136 | VeloCloud collector, `_build_rows`, `_upsert_inventory`, normalization |
-| `test_correlation_engine.py` | 103 | CorrelationEngine Stage 1 + Stage 2, rules, confidence, titles, dedup, recovery, cross-cycle escalation |
+| `test_velocloud_collector.py` | 138 | VeloCloud collector, `_build_rows`, `_upsert_inventory`, normalization |
+| `test_correlation_engine.py` | 105 | CorrelationEngine Stage 1 + Stage 2, identity merge (WP-2.2), rules, confidence, titles, dedup, recovery, cross-cycle escalation |
 | `test_correlation_pipeline.py` | 11 | Full pipeline: collector → event → correlation → incident |
 | `test_correlation_telemetry.py` | 9 | DB persistence + API endpoint for correlation stats |
 | `test_incident_enrichment.py` | 6 | Alerts enrichment: site/root-device display names, UUID + numeric fallbacks, detail route regression |

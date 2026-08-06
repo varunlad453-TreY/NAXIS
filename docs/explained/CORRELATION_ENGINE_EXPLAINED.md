@@ -208,6 +208,27 @@ Plus heuristics for MAC addresses (tries both colon-separated and cleaned format
 
 **Result:** Eliminates a latent production breakage. One less thing to discover at 3am.
 
+### Fix 9 — Inverted Edge Direction & Explicit Links Table (WP-2.1)
+
+**Broken:** Physical links were written AP→switch (`src_id` = AP, `dst_id` = switch) in `topology_edges`, and `get_parent_child_map()` returned raw topology node_ids (e.g. `"mist-ap-abc123"`) as child device_ids, while events use stripped canonical keys (e.g. `"abc123"`). The cascade could never match leaf events to parents, yielding 0 cascade incidents.
+
+**Fix:** Created an explicit `links` table (`009_links.sql`) with `parent_node_id` (switch) and `child_node_id` (AP). Updated `get_parent_child_map()` to translate child node_ids via `node_id_to_device_id()` stripping prefixes to match event device_ids.
+
+**Result:** Cascade correlation correctly matches infrastructure root causes to leaf symptoms.
+
+### Fix 10 — Incident Identity & Evidence Array Merging (WP-2.2)
+
+**Broken:** Incidents were snapshot rows rather than living objects. Upserts overwrote array fields (`related_event_ids`, `affected_devices`, `symptom_device_ids`), resetting history every 60-second cycle. Severity downgraded when lower-severity secondary events arrived, and `created_at` kept resetting to "now".
+
+**Fix:** 
+- Incident ID changed to deterministic fault fingerprint: `SHA-256(site_id | root_device_id | category)`.
+- `upsert_incident()` SQL updated to **MERGE** arrays using `array_agg(DISTINCT x)` via `unnest()`. Evidence accumulates continuously across cycles.
+- Severity uses a SQL `CASE` statement to only escalate (never downgrade).
+- Original `created_at` timestamp is preserved on update.
+- Terminal statuses (`resolved`, `closed`, `suppressed`) are protected; `_compute_incident_id_with_recurrence()` appends an epoch-hour suffix if an existing incident is terminal, spawning a fresh ticket for recurrences.
+
+**Result:** 1 outage = 1 living incident object that accumulates all evidence over its lifetime with truthful duration and monotonic severity.
+
 ### Fix 8 — Null Preservation (`probable_cause`)
 
 **Broken:** `probable_cause: self.probable_cause or ""` converted `None` to an empty string. The frontend needs to distinguish:
@@ -235,7 +256,7 @@ We built 7 end-to-end integration tests in `backend/tests/test_correlation_pipel
 | `test_deterministic_incident_ids` | Two separate daemon instances processing the same events produce identical incident IDs |
 | `test_pipeline_does_not_duplicate_processed_events` | Second cycle produces zero new incidents — in-memory tracker prevents re-processing |
 
-**119 total tests, 0 failures.**
+**432 total backend tests, 0 failures.**
 
 ---
 

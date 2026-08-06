@@ -29,7 +29,7 @@ make up
 
 - API: `http://localhost:8000`
 - Frontend: `http://localhost:3000`
-- Full test suite: `pytest backend\tests -v` (300 tests, 0 failures)
+- Full test suite: `pytest backend\tests -v` (432 tests, 0 failures)
 
 ## Architecture
 
@@ -89,7 +89,7 @@ naxis/
 │   ├── worker/            # Worker daemon (worker/main.py), collectors, topology, pipeline
 │   ├── api/               # REST API routes + services
 │   ├── shared/            # Models, correlation engine, DB clients
-│   └── tests/             # 300 tests
+│   └── tests/             # 432 tests
 ├── frontend/              # Next.js 15 UI
 ├── schemas/               # PostgreSQL SQL files
 ├── config/                # .env
