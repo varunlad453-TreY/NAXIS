@@ -165,8 +165,7 @@ class TopologySync:
                     props={"platform": "mist"},
                 )
 
-        # Stage 2: Build physical_link edges from Mist wired uplink data
-        # stored in the events table by MistWiredUplinkCollector.
+        # Stage 2: Build physical_link edges from inventory (WP-2.9)
         await self._sync_mist_physical_links(ap_node_ids)
 
         logger.info(
@@ -177,34 +176,47 @@ class TopologySync:
         self, ap_node_ids: Dict[str, str]
     ) -> None:
         """
-        Read the most recent Mist wired uplink events from Postgres and
-        create physical links (switch → AP) in the links table.
+        Build physical links (switch → AP) in the links table directly from
+        inventory state (WP-2.9), with events fallback.
 
-        Events now carry canonical device_keys in events.device_id, so we
-        join to topology_nodes on canonical_key to find the AP node.
+        Guarantees topology links survive raw event pruning after 48 hours.
         """
         try:
             rows = await db.fetch(
                 """
-                SELECT DISTINCT ON (e.device_id)
-                    e.device_id,
-                    e.metadata->>'mist_switch_mac' AS switch_mac,
-                    e.metadata->>'mist_port_id' AS port_id,
-                    e.site_id
-                FROM events e
-                WHERE e.source = 'mist'
-                  AND e.event_type = 'link_up'
-                  AND e.metadata->>'mist_switch_mac' IS NOT NULL
-                  AND e.metadata->>'mist_switch_mac' != ''
-                ORDER BY e.device_id, e.timestamp DESC
+                SELECT DISTINCT ON (i.device_id)
+                    i.device_id,
+                    COALESCE(
+                        NULLIF(i.attributes->>'mist_switch_mac', ''),
+                        NULLIF(i.raw_data->'uplink'->>'mac', ''),
+                        NULLIF(i.raw_data->>'switch_mac', ''),
+                        NULLIF(e.metadata->>'mist_switch_mac', '')
+                    ) AS switch_mac,
+                    COALESCE(
+                        NULLIF(i.attributes->>'mist_port_id', ''),
+                        NULLIF(i.raw_data->'uplink'->>'port_id', ''),
+                        NULLIF(e.metadata->>'mist_port_id', '')
+                    ) AS port_id,
+                    i.site_id
+                FROM inventory i
+                LEFT JOIN events e ON e.device_id = i.device_id 
+                    AND e.source = 'mist' 
+                    AND e.event_type = 'link_up'
+                    AND e.metadata->>'mist_switch_mac' IS NOT NULL 
+                    AND e.metadata->>'mist_switch_mac' != ''
+                WHERE i.attributes->>'mist_switch_mac' IS NOT NULL 
+                   OR i.raw_data->'uplink'->>'mac' IS NOT NULL
+                   OR i.raw_data->>'switch_mac' IS NOT NULL
+                   OR e.metadata->>'mist_switch_mac' IS NOT NULL
+                ORDER BY i.device_id
                 """
             )
         except Exception:
-            logger.debug("Mist wired uplink events not available (table may be empty)")
+            logger.debug("Inventory/events query failed for physical links")
             return
 
         if not rows:
-            logger.debug("No Mist wired uplink data found in events table")
+            logger.debug("No physical link data found in inventory or events")
             return
 
         edge_count = 0
@@ -226,7 +238,7 @@ class TopologySync:
             if not ap_node_id:
                 continue
 
-            # Switch node ID (use LLDP-discovered MAC; no canonical key yet)
+            # Switch node ID
             switch_node_id = f"switch-{switch_mac}"
             await _upsert_node(
                 node_id=switch_node_id,
@@ -240,25 +252,23 @@ class TopologySync:
                 },
             )
 
-        await _upsert_link(
-            parent_node_id=switch_node_id,
-            child_node_id=ap_node_id,
-            link_type="physical",
-            props={
-                "port_id": port_id,
-                "discovered_by": "mist_wired_uplink",
-                "platform": "mist",
-            },
-        )
-        edge_count += 1
+            await _upsert_link(
+                parent_node_id=switch_node_id,
+                child_node_id=ap_node_id,
+                link_type="physical",
+                props={
+                    "port_id": port_id,
+                    "discovered_by": "mist_wired_uplink",
+                    "platform": "mist",
+                },
+            )
+            edge_count += 1
 
         if edge_count:
             logger.info(
-                "Mist physical links: %d switch→AP edges from wired uplink data",
+                "Mist physical links: %d switch→AP edges written",
                 edge_count,
             )
-
-    # ── VeloCloud topology ────────────────────────────────────────────────────
 
     async def _sync_velocloud_topology(self) -> None:
         """

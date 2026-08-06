@@ -629,16 +629,29 @@ class TopologyCascadeRule:
         cascade_groups: List[CascadeGroup] = []
         used_event_ids: Set[str] = set()
 
+        # Batch multi-hop descendants lookup
+        bulk_descendants: Dict[str, List[str]] = {}
+        infra_device_ids = set(infra_by_device.keys())
+        if hasattr(self._provider, "get_all_descendants_bulk"):
+            try:
+                bulk_descendants = await self._provider.get_all_descendants_bulk(
+                    infra_device_ids, max_depth=10
+                )
+            except Exception:
+                logger.warning("get_all_descendants_bulk failed", exc_info=True)
+
         for infra_dev_id, dev_events in infra_by_device.items():
             # Immediate children from topology edges
             immediate_children = set(parent_child_map.get(infra_dev_id, []))
 
             # Multi-hop descendants via recursive traversal
             all_descendants: Set[str] = set()
-            if hasattr(self._provider, "get_all_descendants"):
+            if infra_dev_id in bulk_descendants:
+                all_descendants = set(bulk_descendants[infra_dev_id]) - {infra_dev_id}
+            elif hasattr(self._provider, "get_all_descendants"):
                 try:
                     descendant_ids = await self._provider.get_all_descendants(
-                        infra_dev_id, max_depth=5
+                        infra_dev_id, max_depth=10
                     )
                     all_descendants = set(descendant_ids) - {infra_dev_id}
                 except Exception:

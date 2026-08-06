@@ -241,14 +241,15 @@ async def get_devices_under_node(node_id: str, max_depth: int = 3) -> List[str]:
         rows = await db.fetch(
             """
             WITH RECURSIVE downstream AS (
-                SELECT child_node_id AS node_id, 1 AS depth
+                SELECT child_node_id AS node_id, ARRAY[parent_node_id] AS path, 1 AS depth
                 FROM links
                 WHERE parent_node_id = $1
-                UNION ALL
-                SELECT l.child_node_id, d.depth + 1
+                UNION
+                SELECT l.child_node_id, d.path || l.parent_node_id, d.depth + 1
                 FROM links l
                 JOIN downstream d ON l.parent_node_id = d.node_id
                 WHERE d.depth < $2
+                  AND NOT (l.child_node_id = ANY(d.path))
             )
             SELECT DISTINCT node_id FROM downstream
             """,
@@ -541,3 +542,52 @@ class DatabaseTopologyProvider:
             return []
         child_node_ids = await get_devices_under_node(node_id, max_depth=max_depth)
         return [node_id_to_device_id(cid) for cid in child_node_ids]
+
+    async def get_all_descendants_bulk(
+        self, device_ids: Set[str], max_depth: int = 10
+    ) -> Dict[str, List[str]]:
+        """
+        Batch recursive CTE: find all multi-hop descendants for a set of device_ids
+        in a single SQL query with loop-protection.
+        """
+        if not device_ids or not db.pool:
+            return {}
+
+        resolved = await self.batch_resolve_node_ids(device_ids)
+        node_ids = [nid for nid in resolved.values() if nid]
+        if not node_ids:
+            return {}
+
+        try:
+            rows = await db.fetch(
+                """
+                WITH RECURSIVE downstream AS (
+                    SELECT parent_node_id AS root_id, child_node_id AS node_id, ARRAY[parent_node_id] AS path, 1 AS depth
+                    FROM links
+                    WHERE parent_node_id = ANY($1::text[])
+                    UNION
+                    SELECT d.root_id, l.child_node_id, d.path || l.parent_node_id, d.depth + 1
+                    FROM links l
+                    JOIN downstream d ON l.parent_node_id = d.node_id
+                    WHERE d.depth < $2
+                      AND NOT (l.child_node_id = ANY(d.path))
+                )
+                SELECT DISTINCT root_id, node_id FROM downstream
+                """,
+                node_ids,
+                max_depth,
+            )
+        except Exception:
+            logger.warning("get_all_descendants_bulk query failed", exc_info=True)
+            return {}
+
+        root_to_children: Dict[str, List[str]] = {}
+        for r in rows:
+            root_to_children.setdefault(r["root_id"], []).append(r["node_id"])
+
+        result: Dict[str, List[str]] = {}
+        for dev_id, nid in resolved.items():
+            if nid and nid in root_to_children:
+                result[dev_id] = [node_id_to_device_id(c) for c in root_to_children[nid]]
+
+        return result

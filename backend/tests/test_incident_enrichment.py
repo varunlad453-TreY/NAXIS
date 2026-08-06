@@ -46,14 +46,23 @@ def _incident_row(incident_id="inc-1", title="t", sites=("site-uuid-1",), roots=
 class TestIncidentEnrichment:
     def test_site_and_root_device_names_resolved(self, client):
         mock_db = AsyncMock()
-        # fetch call order: incidents list, site names, events device names
-        mock_db.fetch = AsyncMock(
-            side_effect=[
-                [_incident_row()],
-                [{"site_id": "site-uuid-1", "site_name": "Pimpri Plant"}],
-                [{"device_id": "42201", "device_name": "PLT-EDGE-SOF-01"}],
-            ]
-        )
+        
+        async def mock_fetch(query, *args):
+            if "FROM incidents" in query:
+                return [_incident_row()]
+            elif "FROM sites" in query:
+                return [{"site_key": "site-uuid-1", "name": "Pimpri Plant"}]
+            elif "FROM devices" in query:
+                return [{"device_key": "42201", "display_name": "PLT-EDGE-SOF-01"}]
+            elif "FROM device_identities" in query:
+                return [{"vendor_device_id": "42201", "resolved_name": "PLT-EDGE-SOF-01"}]
+            elif "FROM inventory" in query:
+                return [{"site_id": "site-uuid-1", "site_name": "Pimpri Plant"}, {"device_id": "42201", "hostname": "PLT-EDGE-SOF-01"}]
+            elif "FROM events" in query:
+                return [{"device_id": "42201", "device_name": "PLT-EDGE-SOF-01"}]
+            return []
+
+        mock_db.fetch = AsyncMock(side_effect=mock_fetch)
         mock_db.fetchrow = AsyncMock(return_value={"cnt": 1})
         with patch("shared.database.incidents.db", mock_db):
             response = client.get("/incidents?limit=10")
@@ -65,9 +74,13 @@ class TestIncidentEnrichment:
 
     def test_missing_names_fall_back_to_empty_string(self, client):
         mock_db = AsyncMock()
-        mock_db.fetch = AsyncMock(
-            side_effect=[[_incident_row()], [], []]
-        )
+        
+        async def mock_fetch(query, *args):
+            if "FROM incidents" in query:
+                return [_incident_row()]
+            return []
+
+        mock_db.fetch = AsyncMock(side_effect=mock_fetch)
         mock_db.fetchrow = AsyncMock(return_value={"cnt": 1})
         with patch("shared.database.incidents.db", mock_db):
             response = client.get("/incidents?limit=10")
@@ -79,13 +92,18 @@ class TestIncidentEnrichment:
 
     def test_uuid_root_device_resolved_from_inventory(self, client):
         mock_db = AsyncMock()
-        mock_db.fetch = AsyncMock(
-            side_effect=[
-                [_incident_row(roots=("00000000-0000-0000-1000-a8f7d9044336",))],
-                [{"site_id": "site-uuid-1", "site_name": "Site One"}],
-                [{"device_id": "00000000-0000-0000-1000-a8f7d9044336", "hostname": "TMPNE-A61-GDC-OFF-08"}],
-            ]
-        )
+        
+        async def mock_fetch(query, *args):
+            if "FROM incidents" in query:
+                return [_incident_row(roots=("00000000-0000-0000-1000-a8f7d9044336",))]
+            elif "FROM inventory" in query:
+                return [
+                    {"site_id": "site-uuid-1", "site_name": "Site One"},
+                    {"device_id": "00000000-0000-0000-1000-a8f7d9044336", "hostname": "TMPNE-A61-GDC-OFF-08"},
+                ]
+            return []
+
+        mock_db.fetch = AsyncMock(side_effect=mock_fetch)
         mock_db.fetchrow = AsyncMock(return_value={"cnt": 1})
         with patch("shared.database.incidents.db", mock_db):
             response = client.get("/incidents?limit=10")
@@ -93,8 +111,31 @@ class TestIncidentEnrichment:
         assert response.status_code == 200
         incident = response.json()["incidents"][0]
         assert incident["root_device"] == "TMPNE-A61-GDC-OFF-08"
-        queries = [c.args[0] for c in mock_db.fetch.await_args_list]
-        assert any("FROM events" in q for q in queries) is False
+
+    def test_display_names_resolve_when_events_table_is_empty(self, client):
+        """WP-2.7 Guarantee: Display names resolve from devices/sites even post-48h event pruning."""
+        mock_db = AsyncMock()
+        
+        async def mock_fetch(query, *args):
+            if "FROM incidents" in query:
+                return [_incident_row(sites=("site-pruned-01",), roots=("dev-pruned-01",))]
+            elif "FROM sites" in query:
+                return [{"site_key": "site-pruned-01", "name": "Canonical Site 01"}]
+            elif "FROM devices" in query:
+                return [{"device_key": "dev-pruned-01", "display_name": "Canonical Switch 01"}]
+            elif "FROM events" in query:
+                return []  # Simulates 100% pruned events buffer
+            return []
+
+        mock_db.fetch = AsyncMock(side_effect=mock_fetch)
+        mock_db.fetchrow = AsyncMock(return_value={"cnt": 1})
+        with patch("shared.database.incidents.db", mock_db):
+            response = client.get("/incidents?limit=10")
+
+        assert response.status_code == 200
+        incident = response.json()["incidents"][0]
+        assert incident["site_name"] == "Canonical Site 01"
+        assert incident["root_device"] == "Canonical Switch 01"
 
     def test_no_incidents_returns_empty_list(self, client):
         mock_db = AsyncMock()

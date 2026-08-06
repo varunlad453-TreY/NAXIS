@@ -301,17 +301,15 @@ async def resolve_display_names(
     site_ids: List[str], root_device_ids: List[str]
 ) -> tuple:
     """
-    Batch-resolve operator-facing display names for a page of incidents.
+    Batch-resolve operator-facing display names for a page of incidents (WP-2.7).
 
-    Returns (site_names, device_names) dicts:
-      site_names    — {site_id: site_name} from inventory (covers both Mist
-                      UUID site ids and numeric VeloCloud site ids)
-      device_names  — {device_id: display name}: inventory.hostname for UUID
-                      device ids (Mist APs), falling back to the latest
-                      device_name from events for numeric VeloCloud edge ids.
+    Multi-Tier Resolution Pipeline:
+      1. Canonical Identity Tables (`sites`, `devices`, `device_identities`)
+      2. Inventory Table (`inventory`)
+      3. Events Table Fallback (`events`)
 
-    The returned maps are best-effort — ids that resolve nowhere are simply
-    omitted so callers can fall back to the raw id.
+    Guarantees device/site display names resolve permanently even after raw events
+    are pruned by the 48-hour WP-2.4 retention policy.
     """
     site_names: Dict[str, str] = {}
     device_names: Dict[str, str] = {}
@@ -321,46 +319,155 @@ async def resolve_display_names(
     if not site_ids and not root_device_ids:
         return site_names, device_names
 
+    # --- Site Resolution ---
     if site_ids:
-        rows = await db.fetch(
-            """
-            SELECT DISTINCT site_id, site_name
-            FROM inventory
-            WHERE site_id = ANY($1::text[]) AND site_name <> ''
-            """,
-            list(dict.fromkeys(site_ids)),
-        )
-        for r in rows:
-            site_names[r["site_id"]] = r["site_name"]
+        unique_sites = list(dict.fromkeys(site_ids))
 
+        # Tier 1a: Canonical sites table by site_key
+        try:
+            s_rows = await db.fetch(
+                """
+                SELECT site_key, name FROM sites
+                WHERE site_key = ANY($1::text[]) AND name <> ''
+                """,
+                unique_sites,
+            )
+            for r in s_rows:
+                if r.get("site_key") and r.get("name"):
+                    site_names[r["site_key"]] = r["name"]
+        except Exception:
+            pass
+
+        # Tier 1b: Canonical sites table by vendor_ids JSONB
+        unresolved_sites = [s for s in unique_sites if s not in site_names]
+        if unresolved_sites:
+            try:
+                s_rows2 = await db.fetch(
+                    """
+                    SELECT s.name, v.value AS vendor_site_id
+                    FROM sites s, jsonb_each_text(s.vendor_ids) AS v
+                    WHERE v.value = ANY($1::text[]) AND s.name <> ''
+                    """,
+                    unresolved_sites,
+                )
+                for r in s_rows2:
+                    if r.get("vendor_site_id") and r.get("name"):
+                        site_names[r["vendor_site_id"]] = r["name"]
+            except Exception:
+                pass
+
+        # Tier 2: Inventory table
+        unresolved_sites = [s for s in unique_sites if s not in site_names]
+        if unresolved_sites:
+            try:
+                inv_rows = await db.fetch(
+                    """
+                    SELECT DISTINCT site_id, site_name
+                    FROM inventory
+                    WHERE site_id = ANY($1::text[]) AND site_name <> ''
+                    """,
+                    unresolved_sites,
+                )
+                for r in inv_rows:
+                    if r.get("site_id") and r.get("site_name"):
+                        site_names[r["site_id"]] = r["site_name"]
+            except Exception:
+                pass
+
+        # Tier 3: Events table fallback
+        unresolved_sites = [s for s in unique_sites if s not in site_names]
+        if unresolved_sites:
+            try:
+                ev_rows = await db.fetch(
+                    """
+                    SELECT DISTINCT ON (site_id) site_id, site_name
+                    FROM events
+                    WHERE site_id = ANY($1::text[]) AND site_name <> ''
+                    ORDER BY site_id, timestamp DESC
+                    """,
+                    unresolved_sites,
+                )
+                for r in ev_rows:
+                    if r.get("site_id") and r.get("site_name"):
+                        site_names[r["site_id"]] = r["site_name"]
+            except Exception:
+                pass
+
+    # --- Device Display Name Resolution ---
     if root_device_ids:
-        device_ids = list(dict.fromkeys(root_device_ids))
-        uuid_ids = [d for d in device_ids if "-" in d]
-        if uuid_ids:
-            rows = await db.fetch(
-                """
-                SELECT device_id, hostname
-                FROM inventory
-                WHERE device_id = ANY($1::text[]) AND hostname <> ''
-                """,
-                uuid_ids,
-            )
-            for r in rows:
-                device_names[r["device_id"]] = r["hostname"]
+        unique_devs = list(dict.fromkeys(root_device_ids))
 
-        numeric_ids = [d for d in device_ids if d not in device_names]
-        if numeric_ids:
-            rows = await db.fetch(
+        # Tier 1a: Canonical devices table by device_key
+        try:
+            d_rows = await db.fetch(
                 """
-                SELECT DISTINCT ON (device_id) device_id, device_name
-                FROM events
-                WHERE device_id = ANY($1::text[]) AND device_name <> ''
-                ORDER BY device_id, (device_name = device_id) ASC, timestamp DESC
+                SELECT device_key, display_name FROM devices
+                WHERE device_key = ANY($1::text[]) AND display_name <> ''
                 """,
-                numeric_ids,
+                unique_devs,
             )
-            for r in rows:
-                device_names[r["device_id"]] = r["device_name"]
+            for r in d_rows:
+                if r.get("device_key") and r.get("display_name"):
+                    device_names[r["device_key"]] = r["display_name"]
+        except Exception:
+            pass
+
+        # Tier 1b: Canonical device_identities table (vendor_device_id -> display_name)
+        unresolved_devs = [d for d in unique_devs if d not in device_names]
+        if unresolved_devs:
+            try:
+                di_rows = await db.fetch(
+                    """
+                    SELECT di.vendor_device_id, COALESCE(NULLIF(d.display_name, ''), di.vendor_display_name) AS resolved_name
+                    FROM device_identities di
+                    JOIN devices d ON di.device_key = d.device_key
+                    WHERE di.vendor_device_id = ANY($1::text[])
+                      AND COALESCE(NULLIF(d.display_name, ''), di.vendor_display_name, '') <> ''
+                    """,
+                    unresolved_devs,
+                )
+                for r in di_rows:
+                    if r.get("vendor_device_id") and r.get("resolved_name"):
+                        device_names[r["vendor_device_id"]] = r["resolved_name"]
+            except Exception:
+                pass
+
+        # Tier 2: Inventory table
+        unresolved_devs = [d for d in unique_devs if d not in device_names]
+        if unresolved_devs:
+            try:
+                inv_dev_rows = await db.fetch(
+                    """
+                    SELECT device_id, hostname
+                    FROM inventory
+                    WHERE device_id = ANY($1::text[]) AND hostname <> ''
+                    """,
+                    unresolved_devs,
+                )
+                for r in inv_dev_rows:
+                    if r.get("device_id") and r.get("hostname"):
+                        device_names[r["device_id"]] = r["hostname"]
+            except Exception:
+                pass
+
+        # Tier 3: Events table fallback
+        unresolved_devs = [d for d in unique_devs if d not in device_names]
+        if unresolved_devs:
+            try:
+                ev_dev_rows = await db.fetch(
+                    """
+                    SELECT DISTINCT ON (device_id) device_id, device_name
+                    FROM events
+                    WHERE device_id = ANY($1::text[]) AND device_name <> ''
+                    ORDER BY device_id, (device_name = device_id) ASC, timestamp DESC
+                    """,
+                    unresolved_devs,
+                )
+                for r in ev_dev_rows:
+                    if r.get("device_id") and r.get("device_name"):
+                        device_names[r["device_id"]] = r["device_name"]
+            except Exception:
+                pass
 
     return site_names, device_names
 
