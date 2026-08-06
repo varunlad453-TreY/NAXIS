@@ -136,3 +136,24 @@ async def list_devices(
     except Exception as exc:
         logger.error("Error listing devices: %s", exc, exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
+
+
+@router.get("/{device_id}/history", summary="Get device state transition history")
+async def get_device_history(
+    device_id: str,
+    limit: int = Query(100, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
+):
+    """
+    Get permanent, diff-on-write state transition history for a specific device.
+
+    Returns chronological state transitions with duration_seconds metrics.
+    """
+    try:
+        from shared.database.state_history import get_device_state_history
+        history = await get_device_state_history(device_id, limit=limit, offset=offset)
+        return [h.model_dump() if hasattr(h, "model_dump") else h.dict() for h in history]
+    except Exception as exc:
+        logger.error(f"Error getting device history for {device_id}: {exc}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
+

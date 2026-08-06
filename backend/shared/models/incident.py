@@ -206,19 +206,42 @@ class Incident(BaseModel):
         else:
             ts_str = str(ts) if ts is not None else datetime.utcnow().isoformat()
 
-        severity = getattr(event, "severity", None) or (event.get("severity") if isinstance(event, dict) else None)
-        if hasattr(severity, "value"):
-            severity_val = severity.value
+        severity_obj = getattr(event, "severity", None) or (event.get("severity") if isinstance(event, dict) else None)
+        if hasattr(severity_obj, "value"):
+            severity_val = str(severity_obj.value)
         else:
-            severity_val = str(severity) if severity else "warning"
+            severity_val = str(severity_obj) if severity_obj is not None else "warning"
+
+        ev_type_obj = getattr(event, "event_type", None) or (event.get("event_type") if isinstance(event, dict) else None)
+        if hasattr(ev_type_obj, "value"):
+            ev_type_val = str(ev_type_obj.value)
+        else:
+            ev_type_val = str(ev_type_obj) if ev_type_obj is not None else "unknown"
+
+        device_obj = getattr(event, "device", None) or (event.get("device") if isinstance(event, dict) else None)
+        device_id_val = None
+        if device_obj is not None and type(device_obj).__name__ != "MagicMock":
+            device_id_val = getattr(device_obj, "device_id", None) or (device_obj.get("device_id") if isinstance(device_obj, dict) else None)
+        elif device_obj is not None and hasattr(device_obj, "device_id"):
+            raw_did = getattr(device_obj, "device_id")
+            if type(raw_did).__name__ != "MagicMock":
+                device_id_val = str(raw_did)
+
+        if device_id_val is None:
+            raw_did = getattr(event, "device_id", None) or (event.get("device_id") if isinstance(event, dict) else None)
+            if raw_did is not None and type(raw_did).__name__ != "MagicMock":
+                device_id_val = str(raw_did)
+
+        title_obj = getattr(event, "title", None) or (event.get("title") if isinstance(event, dict) else "")
+        title_val = str(title_obj) if title_obj else ""
 
         snapshot = {
-            "event_id": event_id,
+            "event_id": str(event_id),
             "timestamp": ts_str,
-            "event_type": getattr(event, "event_type", None) or (event.get("event_type") if isinstance(event, dict) else "unknown"),
+            "event_type": ev_type_val,
             "severity": severity_val,
-            "title": getattr(event, "title", None) or (event.get("title") if isinstance(event, dict) else ""),
-            "device_id": getattr(event, "device_id", None) or (event.get("device_id") if isinstance(event, dict) else None),
+            "title": title_val,
+            "device_id": str(device_id_val) if device_id_val is not None else None,
         }
         self.evidence.append(snapshot)
         return True

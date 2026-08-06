@@ -26,7 +26,6 @@ def _row_to_incident(row) -> Incident:
     confidence_breakdown = row.get("confidence_breakdown")
     if confidence_breakdown is not None and not isinstance(confidence_breakdown, dict):
         try:
-            import json
             confidence_breakdown = json.loads(confidence_breakdown) if isinstance(confidence_breakdown, str) else dict(confidence_breakdown)
         except (TypeError, ValueError):
             confidence_breakdown = None

@@ -838,3 +838,32 @@ async def get_blast_radius(incident_id: str) -> BlastRadiusResponse:
     except Exception as exc:
         logger.error("Error fetching blast radius for %s: %s", incident_id, exc, exc_info=True)
         raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@router.get("/links/history", summary="Get link state transition history")
+async def get_link_history(
+    link_key: Optional[str] = Query(None, description="Filter by link key"),
+    parent_node_id: Optional[str] = Query(None, description="Filter by parent node ID"),
+    child_node_id: Optional[str] = Query(None, description="Filter by child node ID"),
+    limit: int = Query(100, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
+):
+    """
+    Get permanent, diff-on-write link state transition history.
+
+    Returns chronological link transitions with duration_seconds metrics.
+    """
+    try:
+        from shared.database.state_history import get_link_state_history
+        history = await get_link_state_history(
+            link_key=link_key,
+            parent_node_id=parent_node_id,
+            child_node_id=child_node_id,
+            limit=limit,
+            offset=offset,
+        )
+        return [h.model_dump() if hasattr(h, "model_dump") else h.dict() for h in history]
+    except Exception as exc:
+        logger.error(f"Error fetching link state history: {exc}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error")
+

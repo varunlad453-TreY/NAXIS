@@ -76,6 +76,45 @@ def _row_to_event(row) -> UnifiedEvent:
     )
 
 
+async def _record_state_history_for_event(event: UnifiedEvent) -> None:
+    """Hook to record device or link state history transitions if applicable."""
+    try:
+        ev_type = event.event_type.value if hasattr(event.event_type, "value") else str(event.event_type)
+        if ev_type in (EventType.DEVICE_UNREACHABLE.value, EventType.DEVICE_REACHABLE.value):
+            if event.device and event.device.device_id:
+                new_state = "offline" if ev_type == EventType.DEVICE_UNREACHABLE.value else "online"
+                from .state_history import record_device_state_transition
+                await record_device_state_transition(
+                    device_key=event.device.device_id,
+                    new_state=new_state,
+                    transition_reason=ev_type,
+                    event_id=event.event_id,
+                    site_key=event.device.site_id if event.device else None,
+                    timestamp=event.timestamp,
+                )
+        elif ev_type in (
+            EventType.LINK_DOWN.value, EventType.LINK_UP.value,
+            EventType.INTERFACE_DOWN.value, EventType.INTERFACE_UP.value,
+            EventType.BGP_DOWN.value, EventType.BGP_UP.value,
+            EventType.TUNNEL_DOWN.value, EventType.TUNNEL_UP.value,
+        ):
+            if event.device and event.device.device_id:
+                new_state = "down" if "down" in ev_type else "up"
+                parent_id = event.device.device_id
+                child_id = (event.interface.interface_name if event.interface else None) or "interface"
+                from .state_history import record_link_state_transition
+                await record_link_state_transition(
+                    parent_node_id=parent_id,
+                    child_node_id=child_id,
+                    new_state=new_state,
+                    transition_reason=ev_type,
+                    event_id=event.event_id,
+                    timestamp=event.timestamp,
+                )
+    except Exception as e:
+        logger.warning(f"Error recording state history for event {event.event_id}: {e}", exc_info=True)
+
+
 async def insert_event(event: UnifiedEvent) -> None:
     """Insert a normalized event. Ignores if event_id already exists."""
     d = event.to_db_row()
@@ -116,6 +155,7 @@ async def insert_event(event: UnifiedEvent) -> None:
         d["tags"], d["incident_id"] or None, d["correlation_key"] or None,
         d["metadata"], d["raw_event"],
     )
+    await _record_state_history_for_event(event)
 
 
 async def insert_events(events: List[UnifiedEvent]) -> None:
