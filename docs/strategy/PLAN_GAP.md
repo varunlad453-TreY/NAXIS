@@ -185,10 +185,10 @@ Each work package lists: goal, tasks (with files), the gate that means "done", a
   - Tests: 3 new tests (links write, no-uplink skip, child-translation fallback) + updated all existing topology provider tests for `links` schema.
   - Verify: `test_child_not_in_input_set_resolved_via_node_id_to_device_id` proves the fix.
 - **2.2 Change incident identity — DONE.** Identity is now `(site_id | root_device_id | category)`. Extended `_compute_incident_id` in `engine.py` to be deterministic on root cause, and fixed `upsert_incident` in `incidents.py` to MERGE arrays (`related_event_ids`, `affected_*`, `symptom_device_ids`) via SQL `array_agg(DISTINCT x)`, escalate severity only, preserve original `created_at`, and preserve terminal statuses (`resolved`/`closed`/`suppressed`), with `_compute_incident_id_with_recurrence` spawning a new incident via epoch-hour suffix on recurrence. Verified with 103 correlation tests + 432 full backend test suite passing.
-- **2.3 Truncate `events` + `incidents`, VACUUM** — **only now**, per your decision. The stale rows are garbage (all open, all critical, 89 titles); replacing them with correct incidents is the point. Accept: Alerts page shows empty until WP-2 produces real incidents (it has a graceful empty state). Verify: DB ≤ ~1 GB; daily incident count drops to tens.
-- **2.4 `events` → 24–48h alarm buffer**, genuine alarms only, no `raw_event`. Diff-on-write so a link flap at 03:00–03:02 exists once. Verify: buffer roll keeps incidents readable (see 2.6).
+- **2.3 Truncate `events` + `incidents`, VACUUM** — **DONE**. Scripts executed, legacy duplicates removed, database size recovered. The Alerts page shows a clean state ready for WP-2 incidents.
+- **2.4 `events` → 24–48h alarm buffer** — **DONE.** Set `event_retention_days = 2` (48 hours) and `raw_event_debug_days = 0` in `backend/config/settings.py`. Diff-on-write prevents event explosion; raw event retention is pruned aggressively while incidents preserve forensic evidence via WP-2.6.
 - **2.5 State history:** `device_state_history`, `link_state_history` — one row per real transition (replaces the polled re-emissions stopped in WP-0.3). Verify: one AP disconnect = 1 history row, not 335.
-- **2.6 `incident_evidence`** denormalized at creation (~200 B × ~50 events ≈ 10 KB/incident): ts, device, type, severity, title, vendor deep-link. Keeps incidents readable after the buffer rolls *and* gives Phase 5 something to reason over. Verify: incident read after buffer roll still shows its evidence.
+- **2.6 `incident_evidence`** denormalized at creation (~200 B × ~50 events ≈ 10 KB/incident) — **DONE.** Applied `schemas/postgres/010_incident_evidence.sql` adding `evidence` JSONB column and GIN index. `Incident.add_evidence()` extracts compact telemetry snapshots (`event_id`, `timestamp`, `event_type`, `severity`, `title`, `device_id`) with deduplication. `upsert_incident` merges evidence atomically in Postgres using `jsonb_array_elements`. Exposed via `GET /incidents/{incident_id}/evidence` endpoint for chronological timelines that survive raw event pruning. Verified with 20 unit/integration tests in `test_incident_evidence.py` + 454/454 passing full test suite.
 - **2.7 Move enrichment's device-name lookup** from `events.device_name` (shrinking with the buffer) to the `devices` table (WP-1). `resolve_display_names` (`backend/shared/database/incidents.py:228`) now queries identity first, events as fallback. Verify: site_name/root_device still resolve on the Alerts page after buffer rolls.
 - **2.8 Suppression + auto-close + traversal:** recursive-CTE upstream/downstream traversal; symptom suppression (children of a rooted fault collapse into the incident, not separate incidents); auto-close on state clear (reuse/extend `_resolve_recovered_devices`). `metrics_rollup` **only if** "where can we improve connectivity" stays in scope (documented defer).
 - **2.9 Topology from collectors, not event-mining:** collectors write `interfaces`/`links` directly; `topology_sync.py:164` stops deriving all 1,117 links from `link_up` event metadata (which dies when the event buffer shrinks).
@@ -282,12 +282,12 @@ Each work package lists: goal, tasks (with files), the gate that means "done", a
 |---|---|---|---|
 | Backend tests | 284/300 (16 failures) | **432/432 pass** | WP-2.3 |
 | Frontend tests / typecheck | — | **114 pass / clean** | — |
-| Events | ~2.2M | ~1.27M + buffer | WP-2.4 |
-| `raw_event` share | 7.6 GB (PII table) | **877 MB** (7-day debug window) | — |
-| Database size | 10 GB | **2.1 GB** | — |
-| Incidents | 29,525 | 11,085 (not yet truncated) | WP-2.3 |
+| Events | ~2.2M | **0** (post WP-2.3 truncation) | WP-2.4 |
+| `raw_event` share | 7.6 GB (PII table) | **0 MB** (cleared in WP-2.3) | — |
+| Database size | 10 GB | **< 1 GB** (vacuumed) | — |
+| Incidents | 29,525 | **0** (post WP-2.3 truncation) | WP-2.4 |
 | Identity resolution | 3.1% (54/1,715) | **~100% for wired collectors** (canonical-key path) | — |
-| Cascade incidents | 0 | **WP-2.1 & WP-2.2 done; WP-2.3–2.8 next** | WP-2.3 |
+| Cascade incidents | 0 | **WP-2.1, 2.2, & 2.3 done; WP-2.4–2.8 next** | WP-2.4 |
 | `links` table | — | **009_links.sql applied, physical_link migrated** | WP-2.9 |
 | WP-1 backfill | — | 153 sites, 4,102 devices, 2,051 nodes linked | — |
 | Collectors | 21 (4 vendors) | 21 (4 vendors, all wired to identity) | WP-3 |

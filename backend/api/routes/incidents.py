@@ -115,6 +115,7 @@ async def _incident_to_detail(incident: Incident) -> IncidentDetail:
         probable_cause=incident.probable_cause,
         confidence_score=incident.confidence_score,
         confidence_breakdown=incident.confidence_breakdown,
+        evidence=list(incident.evidence),
         created_at=incident.created_at,
         updated_at=incident.updated_at,
     )
@@ -195,6 +196,34 @@ async def get_incident(incident_id: str) -> IncidentDetail:
         raise
     except Exception as e:
         logger.error(f"Error retrieving incident {incident_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@router.get(
+    "/{incident_id}/evidence",
+    summary="Get incident evidence timeline",
+    description=(
+        "Returns the compact telemetry snapshots captured at correlation time for each "
+        "event that contributed to this incident. Evidence is persisted permanently inside "
+        "the incident record (WP-2.6) and remains available even after raw events are pruned "
+        "by the 48-hour WP-2.4 retention window."
+    ),
+    response_model=List[Dict],
+)
+async def get_incident_evidence(incident_id: str) -> List[Dict]:
+    try:
+        incident = await incident_service.get_incident(incident_id)
+        if not incident:
+            raise HTTPException(status_code=404, detail=f"Incident not found: {incident_id}")
+        sorted_evidence = sorted(
+            incident.evidence,
+            key=lambda e: e.get("timestamp") or "",
+        )
+        return sorted_evidence
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error retrieving evidence for {incident_id}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Internal server error")
 
 

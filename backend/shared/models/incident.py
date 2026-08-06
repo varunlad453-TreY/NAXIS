@@ -113,6 +113,10 @@ class Incident(BaseModel):
         None,
         description="Factor breakdown of confidence_score: {event_score, avg_severity, device_score, total}",
     )
+    evidence: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        description="Forensic telemetry snapshots of contributing events (WP-2.6)",
+    )
 
     # Temporal
     created_at: datetime = Field(default_factory=datetime.utcnow, description="Creation time (UTC)")
@@ -180,6 +184,45 @@ class Incident(BaseModel):
         self.updated_at = datetime.utcnow()
         return True
 
+    def add_evidence(self, event: Any) -> bool:
+        """
+        Capture a compact forensic telemetry snapshot of a contributing event (WP-2.6).
+
+        Accepts a UnifiedEvent (or dict-like object). Extracts essential key fields
+        and appends to self.evidence if not already present (deduplicated by event_id).
+        Returns True if newly added.
+        """
+        event_id = getattr(event, "event_id", None) or (event.get("event_id") if isinstance(event, dict) else None)
+        if not event_id:
+            return False
+
+        # Deduplicate
+        if any(e.get("event_id") == event_id for e in self.evidence):
+            return False
+
+        ts = getattr(event, "timestamp", None) or (event.get("timestamp") if isinstance(event, dict) else None)
+        if hasattr(ts, "isoformat"):
+            ts_str = ts.isoformat()
+        else:
+            ts_str = str(ts) if ts is not None else datetime.utcnow().isoformat()
+
+        severity = getattr(event, "severity", None) or (event.get("severity") if isinstance(event, dict) else None)
+        if hasattr(severity, "value"):
+            severity_val = severity.value
+        else:
+            severity_val = str(severity) if severity else "warning"
+
+        snapshot = {
+            "event_id": event_id,
+            "timestamp": ts_str,
+            "event_type": getattr(event, "event_type", None) or (event.get("event_type") if isinstance(event, dict) else "unknown"),
+            "severity": severity_val,
+            "title": getattr(event, "title", None) or (event.get("title") if isinstance(event, dict) else ""),
+            "device_id": getattr(event, "device_id", None) or (event.get("device_id") if isinstance(event, dict) else None),
+        }
+        self.evidence.append(snapshot)
+        return True
+
     def update_confidence(self, score: float, probable_cause: Optional[str] = None) -> None:
         """
         Update the RCA confidence score (and optionally the probable cause).
@@ -239,6 +282,7 @@ class Incident(BaseModel):
             "probable_cause": self.probable_cause,
             "confidence_score": float(self.confidence_score),
             "confidence_breakdown": self.confidence_breakdown,
+            "evidence": list(self.evidence),
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }
@@ -252,6 +296,7 @@ class Incident(BaseModel):
             "severity_label": self.severity.label,
             "status": self.status.value,
             "event_count": self.event_count(),
+            "evidence_count": len(self.evidence),
             "affected_sites": len(self.affected_sites),
             "affected_devices": len(self.affected_devices),
             "root_device_count": len(self.root_device_ids),

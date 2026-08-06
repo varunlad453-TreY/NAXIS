@@ -31,6 +31,17 @@ def _row_to_incident(row) -> Incident:
         except (TypeError, ValueError):
             confidence_breakdown = None
 
+    raw_evidence = row.get("evidence")
+    if isinstance(raw_evidence, str):
+        try:
+            evidence = json.loads(raw_evidence)
+        except (TypeError, ValueError):
+            evidence = []
+    elif isinstance(raw_evidence, list):
+        evidence = list(raw_evidence)
+    else:
+        evidence = []
+
     return Incident(
         incident_id=row["incident_id"],
         title=row["title"],
@@ -43,6 +54,7 @@ def _row_to_incident(row) -> Incident:
         symptom_device_ids=list(row.get("symptom_device_ids") or []),
         related_event_ids=list(row["related_event_ids"] or []),
         probable_cause=row["probable_cause"],
+        evidence=evidence,
         confidence_score=float(row["confidence_score"]),
         confidence_breakdown=confidence_breakdown,
         created_at=row["created_at"].replace(tzinfo=None),
@@ -56,6 +68,7 @@ async def insert_incident(incident: Incident) -> None:
     confidence_breakdown = (
         json.dumps(d["confidence_breakdown"]) if d["confidence_breakdown"] else None
     )
+    evidence_json = json.dumps(d.get("evidence", []))
     await db.execute(
         """
         INSERT INTO incidents (
@@ -63,15 +76,15 @@ async def insert_incident(incident: Incident) -> None:
             affected_sites, affected_devices, affected_clients,
             root_device_ids, symptom_device_ids,
             related_event_ids, probable_cause, confidence_score,
-            confidence_breakdown,
+            confidence_breakdown, evidence,
             created_at, updated_at
         ) VALUES (
             $1, $2, $3, $4,
             $5, $6, $7,
             $8, $9,
             $10, $11, $12,
-            $13,
-            $14, $15
+            $13, $14::jsonb,
+            $15, $16
         )
         ON CONFLICT (incident_id) DO NOTHING
         """,
@@ -79,7 +92,7 @@ async def insert_incident(incident: Incident) -> None:
         d["affected_sites"], d["affected_devices"], d["affected_clients"],
         d["root_device_ids"], d["symptom_device_ids"],
         d["related_event_ids"], d["probable_cause"], d["confidence_score"],
-        confidence_breakdown,
+        confidence_breakdown, evidence_json,
         d["created_at"], d["updated_at"],
     )
 
@@ -90,6 +103,7 @@ async def upsert_incident(incident: Incident) -> None:
     On conflict (same incident_id):
       - Arrays (related_event_ids, affected_*, symptom_device_ids) are
         MERGED (union) so evidence accumulates across cycles.
+      - evidence JSONB array is MERGED and deduplicated by event_id.
       - severity only escalates — never downgrades.
       - Terminal statuses (resolved/closed/suppressed) are preserved.
       - created_at is preserved — only updated_at moves forward.
@@ -102,6 +116,7 @@ async def upsert_incident(incident: Incident) -> None:
     confidence_breakdown = (
         json.dumps(d["confidence_breakdown"]) if d["confidence_breakdown"] else None
     )
+    evidence_json = json.dumps(d.get("evidence", []))
     await db.execute(
         """
         INSERT INTO incidents (
@@ -109,15 +124,15 @@ async def upsert_incident(incident: Incident) -> None:
             affected_sites, affected_devices, affected_clients,
             root_device_ids, symptom_device_ids,
             related_event_ids, probable_cause, confidence_score,
-            confidence_breakdown,
+            confidence_breakdown, evidence,
             created_at, updated_at
         ) VALUES (
             $1, $2, $3, $4,
             $5, $6, $7,
             $8, $9,
             $10, $11, $12,
-            $13,
-            $14, $15
+            $13, $14::jsonb,
+            $15, $16
         )
         ON CONFLICT (incident_id) DO UPDATE SET
             title                = EXCLUDED.title,
@@ -153,6 +168,13 @@ async def upsert_incident(incident: Incident) -> None:
             related_event_ids    = (SELECT COALESCE(array_agg(DISTINCT x), '{}') FROM unnest(
                                       incidents.related_event_ids || EXCLUDED.related_event_ids) AS x
                                     WHERE x IS NOT NULL),
+            evidence             = (
+                                     SELECT COALESCE(jsonb_agg(elem), '[]'::jsonb)
+                                     FROM (
+                                         SELECT DISTINCT ON (elem->>'event_id') elem
+                                         FROM jsonb_array_elements(incidents.evidence || EXCLUDED.evidence) AS elem
+                                     ) sub
+                                   ),
             probable_cause       = COALESCE(EXCLUDED.probable_cause, incidents.probable_cause),
             confidence_score     = GREATEST(incidents.confidence_score, EXCLUDED.confidence_score),
             confidence_breakdown = COALESCE(EXCLUDED.confidence_breakdown, incidents.confidence_breakdown),
@@ -163,7 +185,7 @@ async def upsert_incident(incident: Incident) -> None:
         d["affected_sites"], d["affected_devices"], d["affected_clients"],
         d["root_device_ids"], d["symptom_device_ids"],
         d["related_event_ids"], d["probable_cause"], d["confidence_score"],
-        confidence_breakdown,
+        confidence_breakdown, evidence_json,
         d["created_at"], d["updated_at"],
     )
 

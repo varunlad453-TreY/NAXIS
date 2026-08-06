@@ -86,15 +86,15 @@ class Settings(BaseSettings):
     # Collectors
     collector_interval: int = Field(default=60, description="Worker collection interval in seconds")
 
-    # Retention
+    # Retention (WP-2.4)
     event_retention_days: int = Field(
-        default=90, description="Events older than this many days are pruned"
+        default=2, description="Events older than this many days (48h) are pruned (WP-2.4)"
     )
     incident_retention_days: int = Field(
         default=180, description="Resolved incidents older than this many days are pruned"
     )
     raw_event_debug_days: int = Field(
-        default=7, description="Keep raw_event blobs for this many days, then strip them"
+        default=0, description="Keep raw_event blobs for this many days, then strip them (0 = immediate strip)"
     )
 
     # Correlation

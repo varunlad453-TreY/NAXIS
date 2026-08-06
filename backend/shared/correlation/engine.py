@@ -622,6 +622,9 @@ class CorrelationEngine:
         incident.confidence_score = confidence.total
         incident.confidence_breakdown = confidence.to_dict()
 
+        for ev in all_events:
+            incident.add_evidence(ev)
+
         logger.debug(
             "Created cascade incident: %s | root=%s | severity=%s | "
             "root_events=%d | symptoms=%d | confidence=%.2f",
@@ -690,6 +693,9 @@ class CorrelationEngine:
         confidence = calculate_confidence_score(events)
         incident.confidence_score = confidence.total
         incident.confidence_breakdown = confidence.to_dict()
+
+        for ev in events:
+            incident.add_evidence(ev)
 
         logger.debug(
             "Created incident: %s | severity=%s | "

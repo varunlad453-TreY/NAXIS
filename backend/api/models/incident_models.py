@@ -91,6 +91,10 @@ class IncidentDetail(BaseModel):
         None,
         description="Factor breakdown: {event_score, avg_severity, device_score, total}",
     )
+    evidence: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        description="Compact forensic telemetry snapshots of contributing events (WP-2.6)",
+    )
 
     # Timestamps
     created_at: datetime = Field(..., description="Creation time (UTC)")
