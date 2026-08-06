@@ -167,6 +167,15 @@ def _build_rows(
         uptime = int(stats.get("uptime", 0) or 0)
         firmware = d.get("version", "") or stats.get("version", "") or ""
 
+        raw_type = str(d.get("type", "")).lower()
+        model_name = str(d.get("model", "")).lower()
+        if raw_type == "switch" or model_name.startswith("ex") or "switch" in raw_type:
+            device_type = "switch"
+        elif raw_type == "gateway" or model_name.startswith("srx"):
+            device_type = "gateway"
+        else:
+            device_type = raw_type or "ap"
+
         rows.append({
             "device_id": ap_id,
             "platform": "mist",
@@ -174,7 +183,7 @@ def _build_rows(
             "mac": mac,
             "serial": d.get("serial", "") or "",
             "model": d.get("model", "") or "",
-            "device_type": d.get("type", "ap"),
+            "device_type": device_type,
             "ip_address": ip_address,
             "site_id": site_id,
             "site_name": site_name,

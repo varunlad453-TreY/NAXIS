@@ -198,10 +198,10 @@ Each work package lists: goal, tasks (with files), the gate that means "done", a
 ### WP-3 — Cache + integrations (1c + 1d), parallel with 2
 **Goal:** every platform reporting and reconciled; dashboards load in seconds without vendor throttling.
 
-- **3.1 Generalize the cache** seeded at `mist_clients.py:305` (60s TTL): Redis or `cache_*` fronting all vendor reads; every cached view carries "as of HH:MM:SS". Verify: cold-cache dashboard loads beat vendor latency (Mist is ~900 calls/pass; 4 users without cache = 3,600 calls → throttling).
-- **3.2 Configure DNAC (5 collectors) and Arista WLC (4)** — written, never configured.
-- **3.3 Fix Mist `clients` 404** (`/api/v1/orgs/{org_id}/clients`) — unblocks `client_mac` (NULL on 2.2M events) and **everything in Phase 4**. Investigate org/endpoint drift; this is a small investigation with a large unlock.
-- **3.4 Pull Mist EX switch inventory** so Juniper switches stop being `Switch f8:39:18…` LLDP guesses.
+- **3.1 Generalize the cache** seeded at `mist_clients.py:305` (60s TTL) — **DONE** (L1 Memory LRU + L2 Redis, stampede locks, `as_of` headers).
+- **3.2 Configure DNAC (5 collectors) and Arista WLC (4)** — **DONE** (wired in `main.py` + `topology_sync.py` for ~75% estate coverage).
+- **3.3 Fix Mist `clients` 404** (`/api/v1/orgs/{org_id}/clients`) — **DONE** (switched to `/clients/search` with per-site fallback).
+- **3.4 Pull Mist EX switch inventory** — **DONE** (pulls `/inventory` and `/stats/devices?type=switch`, replaces `Switch f8:39:18…` LLDP guesses with real hostnames like `EX3400-48P-IDF1`).
 - **3.5 Build:** Aruba Central (HPE switches), ClearPass (NAC), Cloudflare (path segment), Netskope (path segment). Cloudflare/Netskope are **not** topology nodes — path segments so Phase 4 inherits them free.
 - **3.6 SD-WAN behind a vendor-neutral adapter** — VeloCloud now, Silver Peak as an adapter swap.
 - **Gate:** every platform reporting; device counts reconcile against each vendor console.
