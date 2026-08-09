@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState, useMemo } from "react";
+import React, { useEffect, useState, useMemo, useCallback } from "react";
 import {
   Activity,
   AlertTriangle,
@@ -9,6 +9,7 @@ import {
   ChevronDown,
   ChevronRight,
   Filter,
+  Globe,
   Layers,
   MapPin,
   RefreshCw,
@@ -36,11 +37,11 @@ interface APPlacement {
 interface FloorplanData {
   location_id: string;
   name: string;
-  building_name: string;
+  building_name?: string;
   floor_number?: number;
   floorplan_image_url?: string;
   ap_placements: APPlacement[];
-  health_status: "healthy" | "degraded" | "critical";
+  health_status: string;
 }
 
 interface LocationTreeNode {
@@ -48,10 +49,83 @@ interface LocationTreeNode {
   name: string;
   type: string;
   parent_id?: string;
+  latitude?: number;
+  longitude?: number;
   health_status: string;
   device_count: number;
   children: LocationTreeNode[];
 }
+
+interface TreeNodeItemProps {
+  node: LocationTreeNode;
+  isExpanded: boolean;
+  isSelected: boolean;
+  onSelectNode: (node: LocationTreeNode) => void;
+  onToggleExpand: (id: string) => void;
+  renderChildren: (children: LocationTreeNode[]) => React.ReactNode;
+}
+
+const TreeNodeItem = React.memo(function TreeNodeItem({
+  node,
+  isExpanded,
+  isSelected,
+  onSelectNode,
+  onToggleExpand,
+  renderChildren,
+}: TreeNodeItemProps) {
+  const hasChildren = Boolean(node.children && node.children.length > 0);
+
+  const handleClick = () => {
+    onSelectNode(node);
+    if (hasChildren) {
+      onToggleExpand(node.location_id);
+    }
+  };
+
+  return (
+    <div className="text-xs fast-scroll-item">
+      <div
+        onClick={handleClick}
+        className={`flex items-center justify-between px-2.5 py-1.5 rounded-lg cursor-pointer transition-colors ${
+          isSelected
+            ? "bg-indigo-600/30 text-indigo-300 font-semibold border border-indigo-500/40"
+            : "text-slate-400 hover:bg-slate-800 hover:text-slate-200"
+        }`}
+      >
+        <div className="flex items-center gap-1.5 truncate">
+          {hasChildren ? (
+            isExpanded ? (
+              <ChevronDown className="w-3.5 h-3.5 flex-shrink-0" />
+            ) : (
+              <ChevronRight className="w-3.5 h-3.5 flex-shrink-0" />
+            )
+          ) : (
+            <span className="w-3.5 h-3.5" />
+          )}
+          {node.type === "region" && <Globe className="w-3.5 h-3.5 text-blue-400" />}
+          {node.type === "site" && <MapPin className="w-3.5 h-3.5 text-indigo-400" />}
+          {node.type === "building" && <Building className="w-3.5 h-3.5 text-emerald-400" />}
+          {node.type === "floor" && <Layers className="w-3.5 h-3.5 text-purple-400" />}
+          <span className="truncate">{node.name}</span>
+        </div>
+
+        <div className="flex items-center gap-1">
+          {node.health_status === "critical" && (
+            <span className="w-2 h-2 rounded-full bg-red-500 animate-ping" />
+          )}
+          {node.health_status === "degraded" && (
+            <span className="w-2 h-2 rounded-full bg-amber-400" />
+          )}
+          {node.health_status === "healthy" && (
+            <span className="w-2 h-2 rounded-full bg-emerald-400" />
+          )}
+        </div>
+      </div>
+
+      {hasChildren && isExpanded && renderChildren(node.children)}
+    </div>
+  );
+});
 
 export default function NOCFloorplanPage() {
   const [treeData, setTreeData] = useState<LocationTreeNode[]>([]);
@@ -124,71 +198,37 @@ export default function NOCFloorplanPage() {
     fetchFloorplan("floor-hq-2f");
   }, []);
 
-  const toggleExpand = (id: string) => {
+  const toggleExpand = useCallback((id: string) => {
     setExpandedNodes((prev) => ({ ...prev, [id]: !prev[id] }));
-  };
+  }, []);
 
-  const renderTreeNodes = (nodes: LocationTreeNode[]) => {
-    return (
-      <div className="space-y-1 pl-2">
-        {nodes.map((node) => {
-          const isExpanded = expandedNodes[node.location_id];
-          const hasChildren = node.children && node.children.length > 0;
-          const isSelected = selectedFloorId === node.location_id;
+  const handleSelectNode = useCallback((node: LocationTreeNode) => {
+    if (node.type === "floor" || node.type === "site") {
+      setSelectedFloorId(node.location_id);
+      fetchFloorplan(node.location_id);
+    }
+  }, []);
 
-          return (
-            <div key={node.location_id} className="text-xs">
-              <div
-                onClick={() => {
-                  if (node.type === "floor" || node.type === "site") {
-                    setSelectedFloorId(node.location_id);
-                    fetchFloorplan(node.location_id);
-                  }
-                  if (hasChildren) toggleExpand(node.location_id);
-                }}
-                className={`flex items-center justify-between px-2.5 py-1.5 rounded-lg cursor-pointer transition-colors ${
-                  isSelected
-                    ? "bg-indigo-600/30 text-indigo-300 font-semibold border border-indigo-500/40"
-                    : "text-slate-400 hover:bg-slate-800 hover:text-slate-200"
-                }`}
-              >
-                <div className="flex items-center gap-1.5 truncate">
-                  {hasChildren ? (
-                    isExpanded ? (
-                      <ChevronDown className="w-3.5 h-3.5 flex-shrink-0" />
-                    ) : (
-                      <ChevronRight className="w-3.5 h-3.5 flex-shrink-0" />
-                    )
-                  ) : (
-                    <span className="w-3.5 h-3.5" />
-                  )}
-                  {node.type === "region" && <Globe className="w-3.5 h-3.5 text-blue-400" />}
-                  {node.type === "site" && <MapPin className="w-3.5 h-3.5 text-indigo-400" />}
-                  {node.type === "building" && <Building className="w-3.5 h-3.5 text-emerald-400" />}
-                  {node.type === "floor" && <Layers className="w-3.5 h-3.5 text-purple-400" />}
-                  <span className="truncate">{node.name}</span>
-                </div>
-
-                <div className="flex items-center gap-1">
-                  {node.health_status === "critical" && (
-                    <span className="w-2 h-2 rounded-full bg-red-500 animate-ping" />
-                  )}
-                  {node.health_status === "degraded" && (
-                    <span className="w-2 h-2 rounded-full bg-amber-400" />
-                  )}
-                  {node.health_status === "healthy" && (
-                    <span className="w-2 h-2 rounded-full bg-emerald-400" />
-                  )}
-                </div>
-              </div>
-
-              {hasChildren && isExpanded && renderTreeNodes(node.children)}
-            </div>
-          );
-        })}
-      </div>
-    );
-  };
+  const renderTreeNodes = useCallback(
+    (nodes: LocationTreeNode[]) => {
+      return (
+        <div className="space-y-0.5 pl-2">
+          {nodes.map((node) => (
+            <TreeNodeItem
+              key={node.location_id}
+              node={node}
+              isExpanded={Boolean(expandedNodes[node.location_id])}
+              isSelected={selectedFloorId === node.location_id}
+              onSelectNode={handleSelectNode}
+              onToggleExpand={toggleExpand}
+              renderChildren={renderTreeNodes}
+            />
+          ))}
+        </div>
+      );
+    },
+    [expandedNodes, selectedFloorId, handleSelectNode, toggleExpand]
+  );
 
   const filteredAPs = floorplan
     ? floorplan.ap_placements.filter((ap) =>
@@ -265,7 +305,7 @@ export default function NOCFloorplanPage() {
             />
           </div>
 
-          <div className="overflow-y-auto flex-1 pr-1 space-y-1">
+          <div className="overflow-y-auto flex-1 pr-1 space-y-1 fast-scroll-container">
             {treeLoading ? (
               <div className="text-xs text-slate-500 p-2 flex items-center gap-2">
                 <RefreshCw className="w-3.5 h-3.5 animate-spin" /> Loading facility hierarchy...

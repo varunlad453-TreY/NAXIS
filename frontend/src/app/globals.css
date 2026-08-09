@@ -244,3 +244,17 @@
   scrollbar-width: thin;
   scrollbar-color: rgba(51, 65, 85, 0.7) rgba(15, 23, 42, 0.6);
 }
+
+/* ── 120 FPS High Performance Scroll Utility ────────────────────────────── */
+
+.fast-scroll-container {
+  will-change: transform, scroll-position;
+  transform: translateZ(0);
+  overscroll-behavior: contain;
+}
+
+.fast-scroll-item {
+  content-visibility: auto;
+  contain-intrinsic-size: 32px;
+  contain: content;
+}
