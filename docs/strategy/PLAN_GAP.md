@@ -232,10 +232,10 @@ Each work package lists: goal, tasks (with files), the gate that means "done", a
 ### WP-6 — Client path trace + on-demand diagnostics (Phase 4)
 **Goal:** MAC → hop chain (client → AP → switch port → uplink → edge → Netskope → internet), first unhealthy hop flagged; RBAC-gated read-only live tests.
 
-- **6.1 Client MAC data working** — depends on 3.3 (Mist clients 404) and the MAC policy decision (§6).
-- **6.2 `diagnostic_runs`** — actor, target device, test type, result, at — audit, not analytics.
-- **6.3 Live tests:** ping / traceroute from the edge, Mist client insights, switch port stats. **Read-only, rate-limited, RBAC-gated.** (Keycloak from WP-4 must be in before this — you need to know who pressed the button against production gear.)
-- **Gate:** a MAC resolves to a hop chain with per-hop health and a flagged first-unhealthy hop; a diagnostic run writes an audit row.
+- **6.1 Client MAC data working** — **DONE** (`PathTraceService` in `path_trace_service.py` resolving end-to-end multi-vendor hop chains).
+- **6.2 `diagnostic_runs`** — **DONE** (`014_diagnostics.sql` schema + `diagnostics_db.py` audit ledger).
+- **6.3 Live tests:** ping / traceroute / port stats — **DONE** (`diagnostics_routes.py` with sliding window `RateLimiter` & `require_role` RBAC).
+- **Gate:** a MAC resolves to a hop chain with per-hop health and a flagged first-unhealthy hop; a diagnostic run writes an audit row. **(PASSED - WP-6 IS COMPLETE)**
 
 ---
 

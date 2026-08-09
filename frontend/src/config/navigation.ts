@@ -42,6 +42,7 @@ export const mainNavigation: NavSection[] = [
     title: "Insights",
     items: [
       { href: "/correlation", label: "Alerts", icon: Brain, badge: "Live" },
+      { href: "/path-trace", label: "Path Trace", icon: Activity, badge: "Live" },
       { href: "/performance", label: "Performance", icon: Activity },
       { href: "/connectivity", label: "Connectivity", icon: Wifi },
       { href: "/clients", label: "Clients", icon: Users },
