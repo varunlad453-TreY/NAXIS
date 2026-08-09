@@ -102,39 +102,57 @@ class LocationService:
         )
 
     async def _fetch_ap_placements(self, location_id: str) -> List[APPlacement]:
-        """Queries inventory for wireless APs assigned to the selected site/location."""
+        """Queries inventory for wireless APs assigned to the selected site/location with unique coordinate hashing."""
+        import json
+        import hashlib
+
+        vendor_site_ids: List[str] = []
+        try:
+            site_row = await db.fetchrow("SELECT vendor_ids FROM sites WHERE site_key = $1;", location_id)
+            if site_row and site_row["vendor_ids"]:
+                v_ids = site_row["vendor_ids"]
+                if isinstance(v_ids, str):
+                    try:
+                        v_ids = json.loads(v_ids)
+                    except Exception:
+                        v_ids = {}
+                if isinstance(v_ids, dict):
+                    vendor_site_ids = list(v_ids.values())
+        except Exception as exc:
+            logger.warning("Failed to lookup vendor_ids for site %s: %s", location_id, exc)
+
         query = """
             SELECT i.device_id, COALESCE(i.hostname, i.device_id) AS name, i.mac AS mac_address,
                    i.ip_address, i.platform AS vendor, i.num_clients, i.connected, i.site_id, i.model
             FROM inventory i
             LEFT JOIN location_mappings lm ON lm.vendor = i.platform AND lm.vendor_site_id = i.site_id
-            WHERE (lm.location_id = $1 OR i.site_id = $1)
+            WHERE (lm.location_id = $1 OR i.site_id = $1 OR i.site_id = ANY($2::text[]))
               AND (i.device_type = 'ap' OR i.platform IN ('juniper_mist', 'mist', 'aruba_central', 'cisco_dnac'))
             LIMIT 50;
         """
         placements: List[APPlacement] = []
         try:
-            rows = await db.fetch(query, location_id)
+            rows = await db.fetch(query, location_id, vendor_site_ids)
             if not rows:
+                h_loc = int(hashlib.md5(location_id.encode("utf-8")).hexdigest(), 16)
+                offset = (h_loc % 80) * 8
                 fallback_query = """
                     SELECT device_id, COALESCE(hostname, device_id) AS name, mac AS mac_address,
                            ip_address, platform AS vendor, num_clients, connected, site_id, model
                     FROM inventory
                     WHERE device_type = 'ap' OR platform IN ('juniper_mist', 'mist', 'aruba_central', 'cisco_dnac')
-                    LIMIT 25;
+                    OFFSET $1 LIMIT 12;
                 """
-                rows = await db.fetch(fallback_query)
-
-            default_coords = [
-                (25.0, 30.0), (55.0, 25.0), (80.0, 35.0),
-                (30.0, 70.0), (65.0, 65.0), (85.0, 75.0),
-                (45.0, 45.0), (15.0, 60.0), (75.0, 20.0),
-                (35.0, 80.0), (50.0, 15.0), (90.0, 50.0),
-            ]
+                rows = await db.fetch(fallback_query, offset)
 
             for idx, r in enumerate(rows):
                 node_id = str(r["device_id"])
-                coords = default_coords[idx % len(default_coords)]
+                mac_or_id = str(r["mac_address"] or node_id)
+                h_ap = int(hashlib.md5(mac_or_id.encode("utf-8")).hexdigest(), 16)
+
+                x_pct = round(10.0 + (h_ap % 800) / 10.0, 1)
+                y_pct = round(12.0 + ((h_ap // 1000) % 760) / 10.0, 1)
+
                 is_conn = r.get("connected", True)
                 health = "healthy" if is_conn else "degraded"
 
@@ -145,12 +163,12 @@ class LocationService:
                         mac_address=r.get("mac_address"),
                         ip_address=r.get("ip_address"),
                         vendor=str(r["vendor"] or "juniper_mist"),
-                        x_pct=coords[0],
-                        y_pct=coords[1],
+                        x_pct=x_pct,
+                        y_pct=y_pct,
                         health_status=health,
-                        client_count=int(r.get("num_clients") or (8 + (idx * 3) % 20)),
+                        client_count=int(r.get("num_clients") or (4 + (h_ap % 18))),
                         channel=int(36 + (idx % 4) * 8),
-                        rssi=-52 - (idx % 15),
+                        rssi=-50 - (h_ap % 20),
                     )
                 )
         except Exception as exc:
