@@ -27,6 +27,7 @@ import { StatusBadge } from "@/components/incidents/status-badge";
 import { EventRow } from "@/components/events/event-row";
 import { EventListSkeleton } from "@/components/events/event-list-skeleton";
 import { CorrelationReasoning } from "@/components/incidents/correlation-reasoning";
+import { AIRcaCard } from "@/components/incidents/ai-rca-card";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   formatTimestamp,
@@ -289,6 +290,9 @@ export default function IncidentDetailPage() {
                 </div>
               </div>
             </section>
+
+            {/* AI Root Cause Analysis */}
+            <AIRcaCard incidentId={incidentId} />
 
             {/* Related Events */}
             <section className="space-y-4">

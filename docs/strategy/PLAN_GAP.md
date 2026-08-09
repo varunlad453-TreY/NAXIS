@@ -239,14 +239,13 @@ Each work package lists: goal, tasks (with files), the gate that means "done", a
 
 ---
 
-### WP-7 — LLM-led RCA (Phase 5) — cut-first if time halves
+### WP-7 — LLM-led RCA (Phase 5)
 **Goal:** "Why did it break?" from deterministic, citable evidence.
 
-- **7.1 Evidence pack** from WP-2 incident + WP-6 path + state history. **No raw vendor payloads, no credentials, no client PII in egress.**
-- **7.2 `llm_enabled` flag** — deterministic correlation (WP-2) unaffected when off.
-- **7.3 `llm_calls` logged** (request, response, evidence IDs cited). Model must cite an evidence ID for every claim → falsifiable output.
-- **Gate:** a claim can be checked against its cited evidence row; with the flag off, WP-2 still works.
-- **Cut-first** (per manager): this is the first thing to cut if time halves — highest visibility, lowest certainty.
+- **7.1 Evidence pack** — **DONE** (`EvidenceSanitizer` in `sanitizer.py` anonymizing MACs/IPs, redacting secrets, and stripping raw payloads).
+- **7.2 `llm_enabled` flag & offline fallback** — **DONE** (deterministic correlation unaffected; offline synthesis engine supported when LLM API unavailable).
+- **7.3 `llm_calls` & mandatory citations** — **DONE** (`016_rca.sql` schema + `rca_service.py` enforcing mandatory `[EVD-XX]` citations + interactive UI inspector).
+- **Gate:** a claim can be checked against its cited evidence row; with the flag off, WP-2 still works. **(PASSED - WP-7 IS COMPLETE)**
 
 ---
 

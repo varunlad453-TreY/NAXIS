@@ -28,6 +28,7 @@ from api.routes.sdwan_chat import router as sdwan_router
 from api.routes.topology import router as topology_router
 from api.routes.diagnostics_routes import router as diagnostics_router
 from api.routes.location_routes import router as location_router
+from api.routes.rca_routes import router as rca_router
 from config.settings import get_settings
 from shared.database.client import db
 from shared.database.collector_telemetry import ensure_collector_telemetry_schema
@@ -101,6 +102,7 @@ app.include_router(sdwan_router)
 app.include_router(topology_router)
 app.include_router(diagnostics_router)
 app.include_router(location_router)
+app.include_router(rca_router)
 
 
 @app.get("/", include_in_schema=False)
