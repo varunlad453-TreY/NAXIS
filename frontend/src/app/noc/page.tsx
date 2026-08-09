@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useMemo } from "react";
 import {
   Activity,
   AlertTriangle,
@@ -12,6 +12,7 @@ import {
   Layers,
   MapPin,
   RefreshCw,
+  Search,
   Server,
   Users,
   Wifi,
@@ -66,6 +67,27 @@ export default function NOCFloorplanPage() {
   });
 
   const [treeLoading, setTreeLoading] = useState(true);
+  const [searchQuery, setSearchQuery] = useState("");
+
+  const filteredTreeData = useMemo(() => {
+    if (!searchQuery.trim()) return treeData;
+    const q = searchQuery.toLowerCase();
+    const filterNodes = (nodes: LocationTreeNode[]): LocationTreeNode[] => {
+      const result: LocationTreeNode[] = [];
+      for (const n of nodes) {
+        const nameMatch = n.name.toLowerCase().includes(q);
+        const filteredChildren = n.children ? filterNodes(n.children) : [];
+        if (nameMatch || filteredChildren.length > 0) {
+          result.push({
+            ...n,
+            children: filteredChildren,
+          });
+        }
+      }
+      return result;
+    };
+    return filterNodes(treeData);
+  }, [treeData, searchQuery]);
 
   const fetchTree = async () => {
     setTreeLoading(true);
@@ -221,26 +243,44 @@ export default function NOCFloorplanPage() {
       {/* Main Grid: Tree Sidebar + Floorplan Canvas */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         {/* Left Facility Tree (3 Cols) */}
-        <div className="lg:col-span-3 bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-4">
-          <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+        <div className="lg:col-span-3 bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-3 flex flex-col h-[680px]">
+          <div className="flex items-center justify-between border-b border-slate-800 pb-3 flex-shrink-0">
             <h2 className="text-sm font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">
               <Building className="w-4 h-4 text-indigo-400" /> Facility Hierarchy
             </h2>
-            <span className="text-[10px] text-slate-500 font-mono">NAXIS-GIS</span>
+            <span className="text-[10px] text-slate-500 font-mono font-semibold bg-slate-950 px-2 py-0.5 rounded border border-slate-800">
+              {treeData.length} SITES
+            </span>
           </div>
 
-          <div className="overflow-y-auto max-h-[600px] pr-1">
+          {/* Quick Search Bar */}
+          <div className="relative flex-shrink-0">
+            <Search className="w-3.5 h-3.5 absolute left-2.5 top-2.5 text-slate-500" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search 153 sites..."
+              className="w-full bg-slate-950 border border-slate-800 text-slate-200 text-xs rounded-lg pl-8 pr-3 py-1.5 focus:outline-none focus:border-indigo-500 transition-colors"
+            />
+          </div>
+
+          <div className="overflow-y-auto flex-1 pr-1 space-y-1">
             {treeLoading ? (
               <div className="text-xs text-slate-500 p-2 flex items-center gap-2">
                 <RefreshCw className="w-3.5 h-3.5 animate-spin" /> Loading facility hierarchy...
               </div>
-            ) : treeData.length > 0 ? (
-              renderTreeNodes(treeData)
+            ) : filteredTreeData.length > 0 ? (
+              renderTreeNodes(filteredTreeData)
             ) : (
               <div className="text-xs text-slate-400 p-2 space-y-2">
-                <p className="font-medium text-slate-300">No facilities registered</p>
+                <p className="font-medium text-slate-300">
+                  {searchQuery ? "No matching sites found" : "No facilities registered"}
+                </p>
                 <p className="text-[11px] text-slate-500 leading-relaxed">
-                  Register physical locations (sites, buildings, floors) to visualize live AP placement.
+                  {searchQuery
+                    ? `No sites match "${searchQuery}". Clear search to view all.`
+                    : "Register physical locations (sites, buildings, floors) to visualize live AP placement."}
                 </p>
               </div>
             )}
