@@ -170,6 +170,11 @@ export default function NOCFloorplanPage() {
       if (res.ok) {
         const data = await res.json();
         setTreeData(data);
+        if (data && data.length > 0) {
+          const first = data[0];
+          setSelectedFloorId(first.location_id);
+          fetchFloorplan(first.location_id);
+        }
       }
     } catch (err) {
       console.error("Failed to fetch location tree:", err);
@@ -195,7 +200,6 @@ export default function NOCFloorplanPage() {
 
   useEffect(() => {
     fetchTree();
-    fetchFloorplan("floor-hq-2f");
   }, []);
 
   const toggleExpand = useCallback((id: string) => {
@@ -203,10 +207,8 @@ export default function NOCFloorplanPage() {
   }, []);
 
   const handleSelectNode = useCallback((node: LocationTreeNode) => {
-    if (node.type === "floor" || node.type === "site") {
-      setSelectedFloorId(node.location_id);
-      fetchFloorplan(node.location_id);
-    }
+    setSelectedFloorId(node.location_id);
+    fetchFloorplan(node.location_id);
   }, []);
 
   const renderTreeNodes = useCallback(
