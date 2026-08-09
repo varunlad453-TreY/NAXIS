@@ -373,14 +373,26 @@ export default function NOCFloorplanPage() {
             />
 
             {/* Architectural Room Outline Blueprint */}
-            <div className="absolute inset-8 border-2 border-indigo-500/20 rounded-lg pointer-events-none flex flex-col justify-between p-4">
-              <div className="flex justify-between text-[10px] text-indigo-400/40 font-mono">
-                <span>ZONE-NORTH (Engineering)</span>
-                <span>ZONE-EAST (Exec)</span>
+            <div className="absolute inset-6 border border-indigo-500/20 rounded-xl pointer-events-none p-4 flex flex-col justify-between">
+              {/* Partition Dividers */}
+              <div className="absolute inset-x-0 top-1/2 border-b border-dashed border-indigo-500/15" />
+              <div className="absolute inset-y-0 left-1/2 border-r border-dashed border-indigo-500/15" />
+
+              <div className="flex justify-between text-[11px] font-mono tracking-wider text-indigo-400/50">
+                <span className="bg-slate-950/80 px-2 py-0.5 rounded border border-indigo-500/20">
+                  ZONE-NORTH: Conf Room 3 & Engineering
+                </span>
+                <span className="bg-slate-950/80 px-2 py-0.5 rounded border border-indigo-500/20">
+                  ZONE-EAST: Executive Boardroom
+                </span>
               </div>
-              <div className="flex justify-between text-[10px] text-indigo-400/40 font-mono">
-                <span>ZONE-WEST (NOC Ops)</span>
-                <span>ZONE-SOUTH (Cafeteria)</span>
+              <div className="flex justify-between text-[11px] font-mono tracking-wider text-indigo-400/50">
+                <span className="bg-slate-950/80 px-2 py-0.5 rounded border border-indigo-500/20">
+                  ZONE-WEST: NOC Ops & Data Center
+                </span>
+                <span className="bg-slate-950/80 px-2 py-0.5 rounded border border-indigo-500/20">
+                  ZONE-SOUTH: Cafeteria & Lounge
+                </span>
               </div>
             </div>
 
