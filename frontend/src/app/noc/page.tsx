@@ -65,7 +65,10 @@ export default function NOCFloorplanPage() {
     "bldg-hq-main": true,
   });
 
+  const [treeLoading, setTreeLoading] = useState(true);
+
   const fetchTree = async () => {
+    setTreeLoading(true);
     try {
       const res = await fetch("http://localhost:8000/locations/tree");
       if (res.ok) {
@@ -74,6 +77,8 @@ export default function NOCFloorplanPage() {
       }
     } catch (err) {
       console.error("Failed to fetch location tree:", err);
+    } finally {
+      setTreeLoading(false);
     }
   };
 
@@ -225,10 +230,19 @@ export default function NOCFloorplanPage() {
           </div>
 
           <div className="overflow-y-auto max-h-[600px] pr-1">
-            {treeData.length > 0 ? (
+            {treeLoading ? (
+              <div className="text-xs text-slate-500 p-2 flex items-center gap-2">
+                <RefreshCw className="w-3.5 h-3.5 animate-spin" /> Loading facility hierarchy...
+              </div>
+            ) : treeData.length > 0 ? (
               renderTreeNodes(treeData)
             ) : (
-              <div className="text-xs text-slate-500 p-2">Loading facility hierarchy...</div>
+              <div className="text-xs text-slate-400 p-2 space-y-2">
+                <p className="font-medium text-slate-300">No facilities registered</p>
+                <p className="text-[11px] text-slate-500 leading-relaxed">
+                  Register physical locations (sites, buildings, floors) to visualize live AP placement.
+                </p>
+              </div>
             )}
           </div>
         </div>

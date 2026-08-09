@@ -409,6 +409,30 @@ class IdentityResolver:
             """,
             site_key, site_name, parent_key, json.dumps({vendor: vendor_site_id}),
         )
+
+        try:
+            await db.execute(
+                """
+                INSERT INTO locations (location_id, parent_id, name, type, metadata)
+                VALUES ($1, $2, $3, 'site', $4::jsonb)
+                ON CONFLICT (location_id) DO UPDATE SET
+                    name = EXCLUDED.name,
+                    parent_id = EXCLUDED.parent_id;
+                """,
+                site_key, parent_key, site_name, json.dumps({vendor: vendor_site_id})
+            )
+            await db.execute(
+                """
+                INSERT INTO location_mappings (location_id, vendor, vendor_site_id)
+                VALUES ($1, $2, $3)
+                ON CONFLICT (vendor, vendor_site_id) DO UPDATE SET
+                    location_id = EXCLUDED.location_id;
+                """,
+                site_key, vendor, vendor_site_id
+            )
+        except Exception as exc:
+            logger.warning("Failed to mirror site into locations table: %s", exc)
+
         return site_key
 
     # ------------------------------------------------------------------

@@ -88,11 +88,17 @@ async def get_location(location_id: str) -> Optional[Dict[str, Any]]:
 
 
 async def get_all_locations() -> List[Dict[str, Any]]:
-    """Lists all locations ordered by type and name."""
+    """Lists all locations ordered by type and name, including canonical sites."""
     query = """
         SELECT location_id, parent_id, name, type, latitude, longitude,
                address, floorplan_image_url, floor_number, metadata, created_at
         FROM locations
+        UNION ALL
+        SELECT site_key AS location_id, parent_key AS parent_id, name, 'site' AS type,
+               NULL AS latitude, NULL AS longitude, NULL AS address, NULL AS floorplan_image_url,
+               NULL AS floor_number, vendor_ids AS metadata, created_at
+        FROM sites
+        WHERE site_key NOT IN (SELECT location_id FROM locations WHERE location_id IS NOT NULL)
         ORDER BY parent_id NULLS FIRST, name ASC;
     """
     try:
