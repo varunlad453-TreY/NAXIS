@@ -389,7 +389,7 @@ export default function NOCFloorplanPage() {
                 key={ap.device_id}
                 onClick={() => setSelectedAP(ap)}
                 style={{ left: `${ap.x_pct}%`, top: `${ap.y_pct}%` }}
-                className="absolute -translate-x-1/2 -translate-y-1/2 cursor-pointer group z-10"
+                className="absolute -translate-x-1/2 -translate-y-1/2 cursor-pointer group z-10 hover:z-[100]"
               >
                 {/* Pulsing Halo */}
                 <div
@@ -416,7 +416,11 @@ export default function NOCFloorplanPage() {
                 </div>
 
                 {/* Tooltip Card on Hover */}
-                <div className="absolute left-1/2 bottom-10 -translate-x-1/2 hidden group-hover:block w-52 bg-slate-900/95 border border-slate-700 rounded-lg p-2.5 shadow-2xl backdrop-blur-md z-30 pointer-events-none">
+                <div
+                  className={`absolute left-1/2 -translate-x-1/2 hidden group-hover:block w-56 bg-slate-900/98 border border-slate-700 rounded-lg p-2.5 shadow-2xl backdrop-blur-md z-[100] pointer-events-none ${
+                    ap.y_pct < 30 ? "top-10" : "bottom-10"
+                  }`}
+                >
                   <div className="text-xs font-bold text-white truncate">{ap.name}</div>
                   <div className="text-[10px] font-medium text-indigo-300 mt-0.5 truncate">
                     {ap.x_pct < 50 && ap.y_pct < 50
@@ -429,7 +433,7 @@ export default function NOCFloorplanPage() {
                   </div>
                   <div className="text-[10px] text-slate-400 mt-0.5 flex justify-between">
                     <span>IP: {ap.ip_address || "N/A"}</span>
-                    <span className="uppercase text-indigo-400">{ap.vendor}</span>
+                    <span className="uppercase text-indigo-400 font-semibold">{ap.vendor}</span>
                   </div>
                   <div className="mt-1.5 flex items-center justify-between text-[10px] text-slate-300 border-t border-slate-800 pt-1">
                     <span>Clients: {ap.client_count}</span>
