@@ -16,6 +16,8 @@ import {
   Server,
   Cpu,
   ArrowUpRight,
+  X,
+  Radio,
 } from "lucide-react";
 
 interface LocationItem {
@@ -278,133 +280,131 @@ export default function LocationsRegistryPage() {
         </table>
       </div>
 
-      {/* Comprehensive Location & Asset Inspector Drawer Modal */}
+      {/* Sleek Right Slide-Over Inspector Drawer (Fortune-50 Enterprise Grade) */}
       {selectedLocation && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 z-50 overflow-y-auto">
-          <div className="bg-slate-900 border border-slate-800 rounded-xl max-w-3xl w-full p-6 space-y-6 shadow-2xl my-8">
-            {/* Modal Header */}
-            <div className="flex items-center justify-between border-b border-slate-800 pb-4">
-              <div className="flex items-center gap-3">
-                <div className="p-2.5 bg-indigo-500/10 border border-indigo-500/30 rounded-xl text-indigo-400">
-                  {getTypeIcon(selectedLocation.type)}
+        <div className="fixed inset-0 z-50 overflow-hidden bg-black/60 backdrop-blur-sm flex justify-end">
+          <div className="w-full max-w-xl bg-slate-950 h-full shadow-2xl border-l border-slate-800 flex flex-col justify-between animate-in slide-in-from-right duration-200">
+            {/* Drawer Top Header */}
+            <div className="p-6 border-b border-slate-800/80 space-y-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="px-2.5 py-1 rounded-full bg-indigo-500/10 text-indigo-400 text-[10px] font-mono font-bold uppercase tracking-wider border border-indigo-500/30">
+                    {selectedLocation.type} Node
+                  </span>
+                  <span className="text-slate-500 text-xs font-mono">{selectedLocation.location_id}</span>
                 </div>
-                <div>
-                  <div className="flex items-center gap-2">
-                    <span className="px-2 py-0.5 rounded text-[10px] uppercase font-mono font-bold bg-slate-950 text-indigo-300 border border-indigo-500/30">
-                      {selectedLocation.type}
-                    </span>
-                    <span className="text-slate-400 text-xs font-mono">{selectedLocation.location_id}</span>
+                <button
+                  onClick={() => setSelectedLocation(null)}
+                  className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-900 transition-colors"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div>
+                <h2 className="text-2xl font-bold text-white tracking-tight">{selectedLocation.name}</h2>
+                <p className="text-xs text-slate-400 mt-1">{selectedLocation.address}</p>
+              </div>
+
+              {/* Seamless Pivot Buttons */}
+              <div className="flex items-center gap-2 pt-1">
+                <Link
+                  href="/noc"
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-bold transition-all shadow-md"
+                >
+                  <MapPin className="w-3.5 h-3.5" /> 2D Blueprint Canvas <ArrowUpRight className="w-3 h-3" />
+                </Link>
+                <Link
+                  href="/topology"
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-indigo-300 border border-indigo-500/30 rounded-lg text-xs font-bold transition-all"
+                >
+                  <GlobeIcon className="w-3.5 h-3.5 text-blue-400" /> Topology Graph <ArrowUpRight className="w-3 h-3" />
+                </Link>
+              </div>
+            </div>
+
+            {/* Drawer Body Details */}
+            <div className="p-6 space-y-6 overflow-y-auto flex-1 divide-y divide-slate-800/80">
+              {/* Site Details List */}
+              <div className="space-y-3 pb-4">
+                <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-2">
+                  <Radio className="w-4 h-4 text-indigo-400" /> Site Metadata & Controller Bindings
+                </h3>
+                <div className="grid grid-cols-2 gap-4 text-xs font-mono pt-1">
+                  <div>
+                    <span className="text-slate-500 block text-[10px] uppercase font-bold">GPS Coordinates</span>
+                    <span className="text-slate-200">{selectedLocation.latitude}° N, {selectedLocation.longitude}° E</span>
                   </div>
-                  <h3 className="text-xl font-bold text-white mt-0.5">{selectedLocation.name}</h3>
-                </div>
-              </div>
-              <button
-                onClick={() => setSelectedLocation(null)}
-                className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 transition-colors"
-              >
-                ✕
-              </button>
-            </div>
-
-            {/* Quick Action Navigation Links */}
-            <div className="flex flex-wrap items-center gap-3 bg-slate-950/80 border border-slate-800 p-3 rounded-xl">
-              <span className="text-xs font-bold text-slate-400 uppercase tracking-wider mr-2">Cross-Pivot Navigation:</span>
-              <Link
-                href="/noc"
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-bold transition-all shadow-md"
-              >
-                <MapPin className="w-3.5 h-3.5" /> Open 2D Floorplan Canvas <ArrowUpRight className="w-3 h-3" />
-              </Link>
-              <Link
-                href="/topology"
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-indigo-300 border border-indigo-500/30 rounded-lg text-xs font-bold transition-all"
-              >
-                <GlobeIcon className="w-3.5 h-3.5 text-blue-400" /> Inspect Topology Graph <ArrowUpRight className="w-3 h-3" />
-              </Link>
-            </div>
-
-            {/* Location Metadata Grid */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
-              <div className="p-3.5 bg-slate-950/60 border border-slate-800 rounded-xl space-y-2">
-                <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Physical Site Address</span>
-                <p className="text-slate-200 font-medium">{selectedLocation.address}</p>
-                <div className="flex items-center gap-2 pt-1">
-                  <span className="text-slate-500 font-mono text-[10px]">GPS: {selectedLocation.latitude}° N, {selectedLocation.longitude}° E</span>
+                  <div>
+                    <span className="text-slate-500 block text-[10px] uppercase font-bold">Parent Enterprise</span>
+                    <span className="text-slate-200">{selectedLocation.parent_id || "Root Enterprise"}</span>
+                  </div>
+                  <div className="col-span-2">
+                    <span className="text-slate-500 block text-[10px] uppercase font-bold">Vendor Controllers Bound</span>
+                    <span className="text-emerald-400 font-bold">Juniper Mist API / VeloCloud SD-WAN Orchestrator</span>
+                  </div>
                 </div>
               </div>
 
-              <div className="p-3.5 bg-slate-950/60 border border-slate-800 rounded-xl space-y-2">
-                <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Multi-Vendor Controller Mappings</span>
-                <p className="font-mono text-emerald-400 font-bold">Juniper Mist / VeloCloud Edge / Cisco DNA</p>
-                <div className="flex items-center gap-2 pt-1 text-slate-400 text-[10px]">
-                  <span>Parent: {selectedLocation.parent_id || "Root Asia Enterprise"}</span>
+              {/* Real Assigned Hardware Asset List */}
+              <div className="pt-5 space-y-4">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-2">
+                    <Server className="w-4 h-4 text-indigo-400" /> Registered Hardware Assets ({assignedDevices.length})
+                  </h3>
+                  <span className={`text-[11px] font-mono font-bold ${onlineCount === assignedDevices.length ? "text-emerald-400" : "text-amber-400"}`}>
+                    {onlineCount}/{assignedDevices.length} Online
+                  </span>
                 </div>
-              </div>
-            </div>
 
-            {/* Hardware Asset Inventory Table */}
-            <div className="space-y-3">
-              <div className="flex items-center justify-between border-b border-slate-800 pb-2">
-                <h4 className="text-sm font-bold text-white flex items-center gap-2">
-                  <Server className="w-4 h-4 text-indigo-400" /> Hardware Asset Inventory ({assignedDevices.length} {assignedDevices.length === 1 ? "Assigned Asset" : "Assigned Assets"})
-                </h4>
-                <span className={`text-[11px] font-mono font-bold ${onlineCount === assignedDevices.length ? "text-emerald-400" : "text-amber-400"}`}>
-                  {onlineCount} of {assignedDevices.length} Devices Online
-                </span>
-              </div>
-
-              <div className="bg-slate-950 border border-slate-800 rounded-xl overflow-hidden">
-                <table className="w-full text-left border-collapse">
-                  <thead>
-                    <tr className="border-b border-slate-800 bg-slate-900/80 text-slate-400 text-[10px] uppercase font-bold tracking-wider">
-                      <th className="py-2.5 px-3">Device Hostname</th>
-                      <th className="py-2.5 px-3">Type</th>
-                      <th className="py-2.5 px-3">Vendor / Model</th>
-                      <th className="py-2.5 px-3">MAC Address</th>
-                      <th className="py-2.5 px-3">IP Address</th>
-                      <th className="py-2.5 px-3 text-right">Status / Diagnostic</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-800/60 text-xs font-mono">
-                    {assignedDevices.map((dev) => (
-                      <tr key={dev.device_id} className="hover:bg-slate-900/50">
-                        <td className="py-2.5 px-3 font-semibold text-white font-sans flex items-center gap-2">
-                          <Cpu className="w-3.5 h-3.5 text-indigo-400 flex-shrink-0" />
-                          {dev.hostname}
-                        </td>
-                        <td className="py-2.5 px-3">
-                          <span className="px-2 py-0.5 rounded text-[9px] uppercase font-bold bg-slate-900 text-indigo-300 border border-indigo-500/20">
+                {/* Clean Asset Cards List (Zero Box-in-Box Framing) */}
+                <div className="space-y-2.5">
+                  {assignedDevices.map((dev) => (
+                    <div
+                      key={dev.device_id}
+                      className="p-3.5 rounded-xl bg-slate-900/60 border border-slate-800/80 hover:border-indigo-500/40 transition-all flex items-start justify-between gap-3"
+                    >
+                      <div className="space-y-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <Cpu className="w-4 h-4 text-indigo-400 shrink-0" />
+                          <span className="font-bold text-white text-xs truncate">{dev.hostname}</span>
+                          <span className="px-2 py-0.5 rounded text-[9px] font-mono font-bold uppercase bg-slate-950 text-indigo-300 border border-indigo-500/20">
                             {dev.device_type}
                           </span>
-                        </td>
-                        <td className="py-2.5 px-3 font-sans text-slate-300">{dev.vendor} ({dev.model})</td>
-                        <td className="py-2.5 px-3 text-slate-400 text-[11px]">{dev.mac}</td>
-                        <td className="py-2.5 px-3 text-slate-200">{dev.ip_address}</td>
-                        <td className="py-2.5 px-3 text-right font-sans">
-                          {dev.status === "online" ? (
-                            <span className="inline-flex items-center gap-1 text-emerald-400 text-[10px] font-bold uppercase">
-                              <CheckCircle2 className="w-3 h-3" /> Online
-                            </span>
-                          ) : (
-                            <span className="inline-flex items-center gap-1 text-amber-400 text-[10px] font-bold uppercase" title={dev.health_reason}>
-                              <AlertTriangle className="w-3 h-3" /> Degraded ({dev.health_reason || "Unreachable"})
-                            </span>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                        </div>
+                        <p className="text-[11px] text-slate-400 font-sans">
+                          {dev.vendor} • Model: <span className="text-slate-200 font-mono">{dev.model}</span>
+                        </p>
+                        <div className="flex items-center gap-4 text-[10px] font-mono text-slate-500 pt-1">
+                          <span>MAC: {dev.mac}</span>
+                          <span>IP: {dev.ip_address}</span>
+                        </div>
+                      </div>
+
+                      <div className="shrink-0 text-right">
+                        {dev.status === "online" ? (
+                          <span className="inline-flex items-center gap-1 text-emerald-400 text-[10px] font-bold uppercase bg-emerald-500/10 px-2.5 py-1 rounded-full border border-emerald-500/20">
+                            <CheckCircle2 className="w-3 h-3" /> Online
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 text-amber-400 text-[10px] font-bold uppercase bg-amber-500/10 px-2.5 py-1 rounded-full border border-amber-500/20">
+                            <AlertTriangle className="w-3 h-3" /> Degraded
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </div>
             </div>
 
-            {/* Footer Close */}
-            <div className="flex justify-end pt-3 border-t border-slate-800">
+            {/* Drawer Footer */}
+            <div className="p-4 border-t border-slate-800/80 bg-slate-950 flex justify-end">
               <button
                 onClick={() => setSelectedLocation(null)}
-                className="px-5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold rounded-lg transition-colors"
+                className="px-5 py-2 bg-slate-900 hover:bg-slate-800 text-slate-200 text-xs font-bold rounded-lg transition-colors border border-slate-800"
               >
-                Close Asset Inspector
+                Close Panel
               </button>
             </div>
           </div>
