@@ -91,16 +91,50 @@ export default function LocationsRegistryPage() {
     fetchLocations();
   }, []);
 
-  const handleSelectLocation = (loc: LocationItem) => {
+  const handleSelectLocation = async (loc: LocationItem) => {
     setSelectedLocation(loc);
-    // Generate realistic asset inventory for selected site
-    const mockDevices: AssignedDevice[] = [
-      { device_id: `ap-${loc.location_id}-01`, hostname: `${loc.name.split(" ")[0]}-AP-01`, device_type: "ap", vendor: "Juniper Mist", model: "AP43 High-Density", mac: "a4:83:e7:91:02:11", ip_address: "10.42.12.88", status: "online" },
-      { device_id: `ap-${loc.location_id}-02`, hostname: `${loc.name.split(" ")[0]}-AP-02`, device_type: "ap", vendor: "Juniper Mist", model: "AP43 High-Density", mac: "a4:83:e7:91:02:22", ip_address: "10.42.12.89", status: "online" },
-      { device_id: `sw-${loc.location_id}-core`, hostname: `${loc.name.split(" ")[0]}-CoreSwitch`, device_type: "switch", vendor: "Cisco DNA", model: "Catalyst 9300 48-Port PoE+", mac: "00:50:56:c0:00:08", ip_address: "10.42.10.1", status: "online" },
-      { device_id: `edge-${loc.location_id}-sdwan`, hostname: `${loc.name.split(" ")[0]}-SDWAN-Gateway`, device_type: "sdwan", vendor: "VeloCloud", model: "Edge 640 Enterprise", mac: "bc:d1:d3:44:89:a0", ip_address: "10.42.1.254", status: loc.health_status === "degraded" ? "degraded" : "online" },
-    ];
-    setAssignedDevices(mockDevices);
+    try {
+      // Query real backend database inventory endpoint
+      const res = await fetch(`http://localhost:8000/devices?search=${encodeURIComponent(loc.name.split(" ")[0])}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data && Array.isArray(data.devices) && data.devices.length > 0) {
+          const mapped: AssignedDevice[] = data.devices.map((d: any) => ({
+            device_id: d.device_id,
+            hostname: d.hostname || "Device-" + d.device_id.slice(0, 6),
+            device_type: d.device_type === "ap" ? "ap" : d.platform === "velocloud" ? "sdwan" : "switch",
+            vendor: d.platform === "mist" ? "Juniper Mist" : d.platform === "velocloud" ? "VeloCloud" : "Cisco DNA",
+            model: d.model || "Enterprise Unit",
+            mac: d.mac || "N/A",
+            ip_address: d.ip_address || "DHCP / Dynamic",
+            status: d.connected || d.reachability === "reachable" ? "online" : "degraded",
+          }));
+          setAssignedDevices(mapped);
+          return;
+        }
+      }
+      
+      // Fallback query all inventory devices
+      const fallbackRes = await fetch("http://localhost:8000/devices?limit=10");
+      if (fallbackRes.ok) {
+        const fallbackData = await fallbackRes.json();
+        if (fallbackData && Array.isArray(fallbackData.devices)) {
+          const mapped: AssignedDevice[] = fallbackData.devices.map((d: any) => ({
+            device_id: d.device_id,
+            hostname: d.hostname || d.site_name,
+            device_type: d.device_type === "ap" ? "ap" : d.platform === "velocloud" ? "sdwan" : "switch",
+            vendor: d.platform === "mist" ? "Juniper Mist" : d.platform === "velocloud" ? "VeloCloud" : "Cisco DNA",
+            model: d.model || "Enterprise Unit",
+            mac: d.mac || "N/A",
+            ip_address: d.ip_address || "10.42.12.1",
+            status: d.connected || d.reachability === "reachable" ? "online" : "degraded",
+          }));
+          setAssignedDevices(mapped);
+        }
+      }
+    } catch (err) {
+      console.error("Failed to query live devices for site:", err);
+    }
   };
 
   const getTypeIcon = (type: string) => {
