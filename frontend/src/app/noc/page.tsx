@@ -84,41 +84,41 @@ const TreeNodeItem = React.memo(function TreeNodeItem({
   };
 
   return (
-    <div className="text-xs fast-scroll-item">
+    <div className="text-xs fast-scroll-item py-0.5">
       <div
         onClick={handleClick}
-        className={`flex items-center justify-between px-2.5 py-1.5 rounded-lg cursor-pointer transition-colors ${
+        className={`flex items-center justify-between px-3 py-2 rounded-lg cursor-pointer transition-all duration-150 ${
           isSelected
-            ? "bg-indigo-600/30 text-indigo-300 font-semibold border border-indigo-500/40"
-            : "text-slate-400 hover:bg-slate-800 hover:text-slate-200"
+            ? "bg-indigo-600/25 text-indigo-200 font-semibold border border-indigo-500/40 shadow-sm"
+            : "text-slate-300 hover:bg-slate-800/70 hover:text-white border border-transparent"
         }`}
       >
-        <div className="flex items-center gap-1.5 truncate">
+        <div className="flex items-center gap-2 min-w-0 flex-1 pr-2">
           {hasChildren ? (
             isExpanded ? (
-              <ChevronDown className="w-3.5 h-3.5 flex-shrink-0" />
+              <ChevronDown className="w-3.5 h-3.5 flex-shrink-0 text-slate-400" />
             ) : (
-              <ChevronRight className="w-3.5 h-3.5 flex-shrink-0" />
+              <ChevronRight className="w-3.5 h-3.5 flex-shrink-0 text-slate-400" />
             )
-          ) : (
-            <span className="w-3.5 h-3.5" />
-          )}
-          {node.type === "region" && <Globe className="w-3.5 h-3.5 text-blue-400" />}
-          {node.type === "site" && <MapPin className="w-3.5 h-3.5 text-indigo-400" />}
-          {node.type === "building" && <Building className="w-3.5 h-3.5 text-emerald-400" />}
-          {node.type === "floor" && <Layers className="w-3.5 h-3.5 text-purple-400" />}
-          <span className="truncate">{node.name}</span>
+          ) : null}
+
+          {node.type === "region" && <Globe className="w-3.5 h-3.5 flex-shrink-0 text-blue-400" />}
+          {node.type === "site" && <MapPin className="w-3.5 h-3.5 flex-shrink-0 text-indigo-400" />}
+          {node.type === "building" && <Building className="w-3.5 h-3.5 flex-shrink-0 text-emerald-400" />}
+          {node.type === "floor" && <Layers className="w-3.5 h-3.5 flex-shrink-0 text-purple-400" />}
+
+          <span className="truncate text-xs tracking-tight">{node.name}</span>
         </div>
 
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1.5 flex-shrink-0">
           {node.health_status === "critical" && (
-            <span className="w-2 h-2 rounded-full bg-red-500 animate-ping" />
+            <span className="w-2 h-2 rounded-full bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.8)] animate-pulse" />
           )}
           {node.health_status === "degraded" && (
-            <span className="w-2 h-2 rounded-full bg-amber-400" />
+            <span className="w-2 h-2 rounded-full bg-amber-400 shadow-[0_0_6px_rgba(251,191,36,0.6)]" />
           )}
           {node.health_status === "healthy" && (
-            <span className="w-2 h-2 rounded-full bg-emerald-400" />
+            <span className="w-2 h-2 rounded-full bg-emerald-400/80" />
           )}
         </div>
       </div>
