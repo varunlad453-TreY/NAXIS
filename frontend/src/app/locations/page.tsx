@@ -12,10 +12,8 @@ import {
   RefreshCw,
   Search,
   Wifi,
-  ChevronRight,
   SlidersHorizontal,
   Server,
-  ExternalLink,
   Cpu,
   ArrowUpRight,
 } from "lucide-react";
@@ -41,6 +39,7 @@ interface AssignedDevice {
   mac: string;
   ip_address: string;
   status: "online" | "degraded" | "offline";
+  health_reason?: string;
 }
 
 export default function LocationsRegistryPage() {
@@ -68,7 +67,7 @@ export default function LocationsRegistryPage() {
             latitude: node.latitude || 18.6271,
             longitude: node.longitude || 73.8131,
             address: node.address || "Pimpri Industrial Belt, Facility Zone 4",
-            device_count: node.device_count || 12,
+            device_count: typeof node.device_count === "number" ? node.device_count : (Array.isArray(node.children) ? node.children.length : 1),
             health_status: node.health_status || "healthy",
           });
           if (Array.isArray(node.children)) {
@@ -108,6 +107,7 @@ export default function LocationsRegistryPage() {
             mac: d.mac || "N/A",
             ip_address: d.ip_address || "DHCP / Dynamic",
             status: d.connected || d.reachability === "reachable" ? "online" : "degraded",
+            health_reason: d.connected || d.reachability === "reachable" ? "Operational" : "Unreachable (ICMP Timeout)",
           }));
           setAssignedDevices(mapped);
           return;
@@ -128,6 +128,7 @@ export default function LocationsRegistryPage() {
             mac: d.mac || "N/A",
             ip_address: d.ip_address || "10.42.12.1",
             status: d.connected || d.reachability === "reachable" ? "online" : "degraded",
+            health_reason: d.connected || d.reachability === "reachable" ? "Operational" : "Unreachable (ICMP Timeout)",
           }));
           setAssignedDevices(mapped);
         }
@@ -157,6 +158,8 @@ export default function LocationsRegistryPage() {
     const matchesType = typeFilter === "all" || loc.type === typeFilter;
     return matchesSearch && matchesType;
   });
+
+  const onlineCount = assignedDevices.filter((d) => d.status === "online").length;
 
   return (
     <div className="p-6 space-y-6 max-w-7xl mx-auto">
@@ -226,7 +229,7 @@ export default function LocationsRegistryPage() {
               <th className="py-4 px-5">Canonical ID</th>
               <th className="py-4 px-5">Taxonomy Level</th>
               <th className="py-4 px-5">Parent Location</th>
-              <th className="py-4 px-5 text-center">Assigned Assets</th>
+              <th className="py-4 px-5 text-center">Registered Assets</th>
               <th className="py-4 px-5 text-right">Health Telemetry</th>
             </tr>
           </thead>
@@ -254,7 +257,7 @@ export default function LocationsRegistryPage() {
                 </td>
                 <td className="py-3.5 px-5 text-center font-bold text-slate-200">
                   <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-slate-950 text-slate-300 border border-slate-800 font-mono">
-                    <Wifi className="w-3 h-3 text-indigo-400" /> {loc.device_count} Assets
+                    <Wifi className="w-3 h-3 text-indigo-400" /> {loc.device_count} {loc.device_count === 1 ? "Asset" : "Assets"}
                   </span>
                 </td>
                 <td className="py-3.5 px-5 text-right">
@@ -343,9 +346,11 @@ export default function LocationsRegistryPage() {
             <div className="space-y-3">
               <div className="flex items-center justify-between border-b border-slate-800 pb-2">
                 <h4 className="text-sm font-bold text-white flex items-center gap-2">
-                  <Server className="w-4 h-4 text-indigo-400" /> Hardware Asset Inventory ({selectedLocation.device_count} Assigned Assets)
+                  <Server className="w-4 h-4 text-indigo-400" /> Hardware Asset Inventory ({assignedDevices.length} {assignedDevices.length === 1 ? "Assigned Asset" : "Assigned Assets"})
                 </h4>
-                <span className="text-[11px] text-emerald-400 font-mono font-bold">All 12 Devices Telemetry Active</span>
+                <span className={`text-[11px] font-mono font-bold ${onlineCount === assignedDevices.length ? "text-emerald-400" : "text-amber-400"}`}>
+                  {onlineCount} of {assignedDevices.length} Devices Online
+                </span>
               </div>
 
               <div className="bg-slate-950 border border-slate-800 rounded-xl overflow-hidden">
@@ -357,7 +362,7 @@ export default function LocationsRegistryPage() {
                       <th className="py-2.5 px-3">Vendor / Model</th>
                       <th className="py-2.5 px-3">MAC Address</th>
                       <th className="py-2.5 px-3">IP Address</th>
-                      <th className="py-2.5 px-3 text-right">Status</th>
+                      <th className="py-2.5 px-3 text-right">Status / Diagnostic</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-800/60 text-xs font-mono">
@@ -377,9 +382,13 @@ export default function LocationsRegistryPage() {
                         <td className="py-2.5 px-3 text-slate-200">{dev.ip_address}</td>
                         <td className="py-2.5 px-3 text-right font-sans">
                           {dev.status === "online" ? (
-                            <span className="text-emerald-400 text-[10px] font-bold uppercase">Online</span>
+                            <span className="inline-flex items-center gap-1 text-emerald-400 text-[10px] font-bold uppercase">
+                              <CheckCircle2 className="w-3 h-3" /> Online
+                            </span>
                           ) : (
-                            <span className="text-amber-400 text-[10px] font-bold uppercase">Degraded</span>
+                            <span className="inline-flex items-center gap-1 text-amber-400 text-[10px] font-bold uppercase" title={dev.health_reason}>
+                              <AlertTriangle className="w-3 h-3" /> Degraded ({dev.health_reason || "Unreachable"})
+                            </span>
                           )}
                         </td>
                       </tr>
