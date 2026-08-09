@@ -1,8 +1,10 @@
 import {
   Activity,
   Brain,
+  Building,
   HelpCircle,
   LayoutDashboard,
+  MapPin,
   Network,
   Plug,
   Settings,
@@ -34,6 +36,8 @@ export const mainNavigation: NavSection[] = [
     title: "Operational",
     items: [
       { href: "/", label: "Dashboard", icon: LayoutDashboard },
+      { href: "/noc", label: "NOC Floorplans", icon: MapPin, badge: "Live" },
+      { href: "/locations", label: "Locations Registry", icon: Building },
       { href: "/integrations", label: "Integrations", icon: Plug },
       { href: "/topology", label: "Topology", icon: Network },
     ],

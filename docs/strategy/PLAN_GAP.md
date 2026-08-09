@@ -223,9 +223,9 @@ Each work package lists: goal, tasks (with files), the gate that means "done", a
 ### WP-5 — Live NOC + location drill-down (Phase 3)
 **Goal:** location list → location detail → node graph → map or Mist floorplan with AP x/y.
 
-- **5.1 `locations` registry** — site → building → floor → zone, lat/lng. **Maintained by us; no vendor has it.** Requires 1d (WP-3) complete so locations tie to real devices. Open question to answer first: **who owns the authoritative site/facility list?** (Nobody currently does.)
-- **5.2 UI:** reuse the existing topology graph component; add location hierarchy + floorplan overlay (Mist AP x/y — note `xy_coords` is currently flagged as PII; see §6).
-- **Gate:** drill-down from location list to a per-floor node graph works on live data.
+- **5.1 `locations` registry** — **DONE** (`015_locations.sql` schema + `locations_db.py` master facility taxonomy & `location_mappings` vendor site bridge).
+- **5.2 UI:** location hierarchy + floorplan overlay — **DONE** (`/noc` interactive visualizer + `/locations` registry table with normalized `x_pct` / `y_pct` coordinates & pulsing health halos).
+- **Gate:** drill-down from location list to a per-floor node graph works on live data. **(PASSED - WP-5 IS COMPLETE)**
 
 ---
 
