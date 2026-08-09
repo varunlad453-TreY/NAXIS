@@ -170,11 +170,13 @@ export default function NOCFloorplanPage() {
       const res = await fetch("http://localhost:8000/locations/tree");
       if (res.ok) {
         const data = await res.json();
-        setTreeData(data);
-        if (data && data.length > 0) {
-          const first = data[0];
-          setSelectedFloorId(first.location_id);
-          fetchFloorplan(first.location_id);
+        if (Array.isArray(data)) {
+          setTreeData(data);
+          if (data.length > 0) {
+            const first = data[0];
+            setSelectedFloorId(first.location_id);
+            fetchFloorplan(first.location_id);
+          }
         }
       }
     } catch (err) {

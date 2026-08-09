@@ -43,21 +43,24 @@ export default function LocationsRegistryPage() {
         const data = await res.json();
         const flattened: LocationItem[] = [];
         const traverse = (node: any) => {
+          if (!node) return;
           flattened.push({
-            location_id: node.location_id,
-            name: node.name,
-            type: node.type,
+            location_id: node.location_id || "loc-unk",
+            name: node.name || "Unknown Location",
+            type: node.type || "site",
             parent_id: node.parent_id,
             latitude: node.latitude,
             longitude: node.longitude,
             device_count: node.device_count || 12,
             health_status: node.health_status || "healthy",
           });
-          if (node.children) {
+          if (Array.isArray(node.children)) {
             node.children.forEach(traverse);
           }
         };
-        data.forEach(traverse);
+        if (Array.isArray(data)) {
+          data.forEach(traverse);
+        }
         setLocations(flattened);
       }
     } catch (err) {
