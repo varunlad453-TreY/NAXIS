@@ -17,7 +17,7 @@ interface EvidenceItem {
   evidence_id: string;
   item_type: string;
   timestamp: string;
-  source: str;
+  source: string;
   summary: string;
   details?: Record<string, any>;
 }

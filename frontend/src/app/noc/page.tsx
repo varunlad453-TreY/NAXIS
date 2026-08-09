@@ -560,7 +560,3 @@ export default function NOCFloorplanPage() {
     </div>
   );
 }
-
-function Globe(props: any) {
-  return <Activity {...props} />;
-}

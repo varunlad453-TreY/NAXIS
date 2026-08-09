@@ -20,7 +20,7 @@ import {
 
 interface PathHop {
   hop_index: number;
-  node_id: str;
+  node_id: string;
   node_name: string;
   node_type: "client" | "ap" | "switch" | "sdwan" | "sase" | "internet";
   vendor?: string;
