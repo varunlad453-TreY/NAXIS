@@ -72,12 +72,19 @@ async def create_location(
 
 
 async def get_location(location_id: str) -> Optional[Dict[str, Any]]:
-    """Fetches location details by ID."""
+    """Fetches location details by ID (checks locations table and sites table)."""
     query = """
         SELECT location_id, parent_id, name, type, latitude, longitude,
                address, floorplan_image_url, floor_number, metadata, created_at
         FROM locations
-        WHERE location_id = $1;
+        WHERE location_id = $1
+        UNION ALL
+        SELECT site_key AS location_id, parent_key AS parent_id, name, 'site' AS type,
+               NULL AS latitude, NULL AS longitude, NULL AS address, NULL AS floorplan_image_url,
+               NULL AS floor_number, vendor_ids AS metadata, created_at
+        FROM sites
+        WHERE site_key = $1
+        LIMIT 1;
     """
     try:
         row = await db.fetchrow(query, location_id)
