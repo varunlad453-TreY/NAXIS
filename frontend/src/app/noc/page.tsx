@@ -416,8 +416,17 @@ export default function NOCFloorplanPage() {
                 </div>
 
                 {/* Tooltip Card on Hover */}
-                <div className="absolute left-1/2 bottom-10 -translate-x-1/2 hidden group-hover:block w-48 bg-slate-900/95 border border-slate-700 rounded-lg p-2.5 shadow-2xl backdrop-blur-md z-30 pointer-events-none">
+                <div className="absolute left-1/2 bottom-10 -translate-x-1/2 hidden group-hover:block w-52 bg-slate-900/95 border border-slate-700 rounded-lg p-2.5 shadow-2xl backdrop-blur-md z-30 pointer-events-none">
                   <div className="text-xs font-bold text-white truncate">{ap.name}</div>
+                  <div className="text-[10px] font-medium text-indigo-300 mt-0.5 truncate">
+                    {ap.x_pct < 50 && ap.y_pct < 50
+                      ? "Conf Room 3 / Engineering"
+                      : ap.x_pct >= 50 && ap.y_pct < 50
+                      ? "Exec Boardroom"
+                      : ap.x_pct < 50 && ap.y_pct >= 50
+                      ? "NOC Ops / Data Center"
+                      : "Cafeteria / Lounge"}
+                  </div>
                   <div className="text-[10px] text-slate-400 mt-0.5 flex justify-between">
                     <span>IP: {ap.ip_address || "N/A"}</span>
                     <span className="uppercase text-indigo-400">{ap.vendor}</span>
@@ -434,7 +443,7 @@ export default function NOCFloorplanPage() {
         </div>
       </div>
 
-      {/* AP Details Drawer Modal */}
+            {/* AP Details Drawer Modal */}
       {selectedAP && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 z-50">
           <div className="bg-slate-900 border border-slate-800 rounded-xl max-w-md w-full p-6 space-y-4">
@@ -452,6 +461,18 @@ export default function NOCFloorplanPage() {
             </div>
 
             <div className="space-y-2 text-xs">
+              <div className="flex justify-between py-1 border-b border-slate-800">
+                <span className="text-slate-400">Physical Room / Wing</span>
+                <span className="font-semibold text-indigo-300">
+                  {selectedAP.x_pct < 50 && selectedAP.y_pct < 50
+                    ? "Conf Room 3 / Engineering (Zone North)"
+                    : selectedAP.x_pct >= 50 && selectedAP.y_pct < 50
+                    ? "Executive Boardroom (Zone East)"
+                    : selectedAP.x_pct < 50 && selectedAP.y_pct >= 50
+                    ? "NOC Ops & Data Center (Zone West)"
+                    : "Cafeteria & Lounge (Zone South)"}
+                </span>
+              </div>
               <div className="flex justify-between py-1 border-b border-slate-800">
                 <span className="text-slate-400">Device ID</span>
                 <span className="font-mono text-slate-200">{selectedAP.device_id}</span>
