@@ -7,7 +7,7 @@ CREATE TABLE IF NOT EXISTS path_segment_telemetry (
     provider VARCHAR(64) NOT NULL,            -- 'cloudflare', 'netskope', etc.
     segment_name VARCHAR(128) NOT NULL,        -- e.g. 'netskope-npa-mumbai', 'cloudflare-warp-primary'
     segment_type VARCHAR(64) NOT NULL,        -- 'sase_tunnel', 'zero_trust_access', 'magic_transit'
-    site_key UUID REFERENCES sites(site_key) ON DELETE SET NULL,
+    site_key TEXT REFERENCES sites(site_key) ON DELETE SET NULL,
     pop_region VARCHAR(64),                   -- e.g. 'ap-south-1', 'mumbai-pop-01'
     status VARCHAR(32) NOT NULL DEFAULT 'healthy', -- 'healthy', 'degraded', 'down'
     latency_ms FLOAT DEFAULT 0.0,
