@@ -40,6 +40,7 @@ class APPlacement(BaseModel):
     x_pct: float = Field(..., description="X position as percentage of canvas width (0.0 to 100.0)")
     y_pct: float = Field(..., description="Y position as percentage of canvas height (0.0 to 100.0)")
     health_status: str = Field("healthy", description="Health: 'healthy' | 'degraded' | 'critical'")
+    health_reason: Optional[str] = Field(None, description="Diagnostic issue reason if degraded or critical")
     client_count: int = Field(0, description="Connected client count")
     channel: Optional[int] = Field(None, description="Operating Wi-Fi channel")
     rssi: Optional[int] = Field(None, description="Average RSSI")

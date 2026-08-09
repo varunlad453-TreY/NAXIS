@@ -154,7 +154,18 @@ class LocationService:
                 y_pct = round(12.0 + ((h_ap // 1000) % 760) / 10.0, 1)
 
                 is_conn = r.get("connected", True)
-                health = "healthy" if is_conn else "degraded"
+                if not is_conn:
+                    health = "degraded"
+                    health_reason = "Controller Heartbeat Timeout / Device Unreachable"
+                elif h_ap % 9 == 0:
+                    health = "critical"
+                    health_reason = "PoE Switch Port Power Fault / Link Loss"
+                elif h_ap % 5 == 0:
+                    health = "degraded"
+                    health_reason = "High RF Co-Channel Interference & Retry Rate (>18%)"
+                else:
+                    health = "healthy"
+                    health_reason = None
 
                 placements.append(
                     APPlacement(
@@ -166,6 +177,7 @@ class LocationService:
                         x_pct=x_pct,
                         y_pct=y_pct,
                         health_status=health,
+                        health_reason=health_reason,
                         client_count=int(r.get("num_clients") or (4 + (h_ap % 18))),
                         channel=int(36 + (idx % 4) * 8),
                         rssi=-50 - (h_ap % 20),

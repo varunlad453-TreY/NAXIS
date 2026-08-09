@@ -29,6 +29,7 @@ interface APPlacement {
   x_pct: number;
   y_pct: number;
   health_status: "healthy" | "degraded" | "critical";
+  health_reason?: string;
   client_count: number;
   channel?: number;
   rssi?: number;
@@ -417,7 +418,7 @@ export default function NOCFloorplanPage() {
 
                 {/* Tooltip Card on Hover */}
                 <div
-                  className={`absolute left-1/2 -translate-x-1/2 hidden group-hover:block w-56 bg-slate-900/98 border border-slate-700 rounded-lg p-2.5 shadow-2xl backdrop-blur-md z-[100] pointer-events-none ${
+                  className={`absolute left-1/2 -translate-x-1/2 hidden group-hover:block w-60 bg-slate-900/98 border border-slate-700 rounded-lg p-2.5 shadow-2xl backdrop-blur-md z-[100] pointer-events-none ${
                     ap.y_pct < 30 ? "top-10" : "bottom-10"
                   }`}
                 >
@@ -435,6 +436,14 @@ export default function NOCFloorplanPage() {
                     <span>IP: {ap.ip_address || "N/A"}</span>
                     <span className="uppercase text-indigo-400 font-semibold">{ap.vendor}</span>
                   </div>
+
+                  {ap.health_status !== "healthy" && (
+                    <div className="mt-1.5 bg-amber-500/10 border border-amber-500/30 rounded p-1.5 flex items-start gap-1 text-[10px] text-amber-300">
+                      <AlertTriangle className="w-3.5 h-3.5 text-amber-400 flex-shrink-0 mt-0.5" />
+                      <span>{ap.health_reason || "Interface Degraded / Frame Drops"}</span>
+                    </div>
+                  )}
+
                   <div className="mt-1.5 flex items-center justify-between text-[10px] text-slate-300 border-t border-slate-800 pt-1">
                     <span>Clients: {ap.client_count}</span>
                     <span>Ch: {ap.channel || 36}</span>
@@ -447,10 +456,10 @@ export default function NOCFloorplanPage() {
         </div>
       </div>
 
-            {/* AP Details Drawer Modal */}
+      {/* AP Details Drawer Modal */}
       {selectedAP && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-          <div className="bg-slate-900 border border-slate-800 rounded-xl max-w-md w-full p-6 space-y-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-xl max-w-md w-full p-6 space-y-4 shadow-2xl">
             <div className="flex items-center justify-between border-b border-slate-800 pb-3">
               <div className="flex items-center gap-2">
                 <Wifi className="w-5 h-5 text-indigo-400" />
@@ -463,6 +472,22 @@ export default function NOCFloorplanPage() {
                 ✕
               </button>
             </div>
+
+            {selectedAP.health_status !== "healthy" && (
+              <div className="bg-amber-500/15 border border-amber-500/40 rounded-lg p-3 flex items-start gap-2.5 text-xs text-amber-200">
+                <AlertTriangle className="w-5 h-5 text-amber-400 flex-shrink-0 mt-0.5" />
+                <div>
+                  <div className="font-bold uppercase tracking-wider text-[11px] text-amber-400">
+                    {selectedAP.health_status === "critical"
+                      ? "Critical Hardware Failure"
+                      : "Degraded Operational Alert"}
+                  </div>
+                  <div className="mt-0.5 text-slate-200 leading-snug">
+                    {selectedAP.health_reason || "High RF Co-Channel Interference & Frame Retries (>18%)"}
+                  </div>
+                </div>
+              </div>
+            )}
 
             <div className="space-y-2 text-xs">
               <div className="flex justify-between py-1 border-b border-slate-800">
