@@ -42,9 +42,6 @@ class LocationService:
     async def get_location_tree(self) -> List[LocationNode]:
         """Constructs recursive tree of physical locations with aggregated health scores."""
         all_locs = await get_all_locations()
-        if not all_locs:
-            await self._seed_default_locations()
-            all_locs = await get_all_locations()
 
         nodes_by_id: Dict[str, LocationNode] = {}
         for l in all_locs:
@@ -160,63 +157,6 @@ class LocationService:
                 )
         except Exception as exc:
             logger.warning("Could not fetch topology AP placements: %s", exc)
-
-        if not placements:
-            # Fallback mock AP placements for interactive visualizer demo
-            placements = [
-                APPlacement(
-                    device_id="ap-hq-01",
-                    name="AP-Bldg1-Floor2-North",
-                    mac_address="5c:5b:35:00:11:01",
-                    ip_address="10.10.2.11",
-                    vendor="juniper_mist",
-                    x_pct=22.5,
-                    y_pct=32.0,
-                    health_status="healthy",
-                    client_count=18,
-                    channel=36,
-                    rssi=-58,
-                ),
-                APPlacement(
-                    device_id="ap-hq-02",
-                    name="AP-Bldg1-Floor2-East",
-                    mac_address="5c:5b:35:00:11:02",
-                    ip_address="10.10.2.12",
-                    vendor="juniper_mist",
-                    x_pct=58.0,
-                    y_pct=28.5,
-                    health_status="degraded",
-                    client_count=24,
-                    channel=44,
-                    rssi=-64,
-                ),
-                APPlacement(
-                    device_id="ap-hq-03",
-                    name="AP-Bldg1-Floor2-South",
-                    mac_address="5c:5b:35:00:11:03",
-                    ip_address="10.10.2.13",
-                    vendor="juniper_mist",
-                    x_pct=78.5,
-                    y_pct=70.0,
-                    health_status="healthy",
-                    client_count=11,
-                    channel=149,
-                    rssi=-52,
-                ),
-                APPlacement(
-                    device_id="ap-hq-04",
-                    name="AP-Bldg1-Floor2-West",
-                    mac_address="5c:5b:35:00:11:04",
-                    ip_address="10.10.2.14",
-                    vendor="juniper_mist",
-                    x_pct=34.0,
-                    y_pct=68.0,
-                    health_status="healthy",
-                    client_count=9,
-                    channel=157,
-                    rssi=-55,
-                ),
-            ]
 
         return placements
 

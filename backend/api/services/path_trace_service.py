@@ -220,17 +220,7 @@ class PathTraceService:
         except Exception:
             pass
 
-        return {
-            "client_mac": formatted_mac,
-            "username": "employee@enterprise.com",
-            "ip": "10.10.50.142",
-            "ap_mac": "5c:5b:35:00:11:22",
-            "site_id": "site-hq",
-            "site_name": "Enterprise HQ - Main Campus",
-            "vlan": 50,
-            "rssi": -62,
-            "ssid": "Enterprise-Corporate",
-        }
+        return {}
 
     async def _lookup_device(self, device_id_or_mac: str) -> Optional[Dict[str, Any]]:
         query = """
