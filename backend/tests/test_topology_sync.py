@@ -79,13 +79,14 @@ class FakeIdentityResolver:
         return vendor_device_id
 
 
-def _make_topology_sync(mist_enabled=False, velo_enabled=True, dnac_enabled=False, arista_enabled=False):
+def _make_topology_sync(mist_enabled=False, velo_enabled=True, dnac_enabled=False, arista_enabled=False, aruba_enabled=False):
     with patch("backend.worker.collectors.topology_sync.get_settings") as gs:
         settings = MagicMock()
         settings.mist_enabled = mist_enabled
         settings.velocloud_enabled = velo_enabled
         settings.dnac_enabled = dnac_enabled
         settings.arista_wlc_enabled = arista_enabled
+        settings.aruba_central_enabled = aruba_enabled
         gs.return_value = settings
         ts = TopologySync()
     ts._identity = FakeIdentityResolver()

@@ -19,7 +19,12 @@ class EventSource(str, Enum):
     VELOCLOUD = "velocloud"
     ARISTA_SDWAN = "arista_sdwan"
     ARISTA_WLC = "arista_wlc"
+    ARUBA_CENTRAL = "aruba_central"
+    CLEARPASS = "clearpass"
+    CLOUDFLARE = "cloudflare"
+    NETSKOPE = "netskope"
     SYSTEM = "system"
+    OTHER = "other"
 
 
 class EventSeverity(str, Enum):

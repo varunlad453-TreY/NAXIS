@@ -39,6 +39,14 @@ class Settings(BaseSettings):
     postgres_user: str = Field(default="naxis", description="PostgreSQL user")
     postgres_password: str = Field(default="naxis_dev", description="PostgreSQL password")
     postgres_database: str = Field(default="naxis", description="PostgreSQL database")
+    postgres_ssl: bool = Field(default=False, description="Enforce SSL (require) for PostgreSQL pool")
+
+    # Keycloak OIDC Auth (WP-4)
+    keycloak_server_url: str = Field(default="http://localhost:8080", description="Keycloak base server URL")
+    keycloak_realm: str = Field(default="naxis", description="Keycloak realm name")
+    keycloak_client_id: str = Field(default="naxis-platform", description="Keycloak OIDC client ID")
+    keycloak_client_secret: str = Field(default="", description="Keycloak OIDC client secret")
+    keycloak_enabled: bool = Field(default=False, description="Enable Keycloak OIDC authentication")
 
     # Redis (used only for real-time notifications)
     redis_url: str = Field(default="redis://localhost:6379/0", description="Redis URL")
@@ -58,10 +66,39 @@ class Settings(BaseSettings):
     dnac_enabled: bool = Field(default=False, description="Enable DNAC integration")
     dnac_verify_ssl: bool = Field(default=True, description="Verify SSL for DNAC requests")
 
-    # VeloCloud
+    # VeloCloud & SD-WAN Adapter (WP-3.6)
     velocloud_url: str = Field(default="", description="VeloCloud orchestrator URL")
     velocloud_api_key: str = Field(default="", description="VeloCloud API key")
     velocloud_enabled: bool = Field(default=False, description="Enable VeloCloud integration")
+    sdwan_provider: str = Field(default="velocloud", description="Active SD-WAN provider ('velocloud' | 'silverpeak')")
+    silverpeak_host: str = Field(default="", description="Silver Peak Orchestrator URL")
+    silverpeak_api_key: str = Field(default="", description="Silver Peak API Key")
+    silverpeak_enabled: bool = Field(default=False, description="Enable Silver Peak SD-WAN integration")
+
+    # HPE Aruba Central (WP-3.5)
+    aruba_central_base_url: str = Field(
+        default="https://apigw-uswest.central.arubanetworks.com", description="Aruba Central API Base URL"
+    )
+    aruba_central_client_id: str = Field(default="", description="Aruba Central Client ID")
+    aruba_central_client_secret: str = Field(default="", description="Aruba Central Client Secret")
+    aruba_central_customer_id: str = Field(default="", description="Aruba Central Customer ID")
+    aruba_central_enabled: bool = Field(default=False, description="Enable Aruba Central integration")
+
+    # Aruba ClearPass (WP-3.5)
+    clearpass_host: str = Field(default="", description="ClearPass Server FQDN or IP")
+    clearpass_client_id: str = Field(default="", description="ClearPass Client ID")
+    clearpass_client_secret: str = Field(default="", description="ClearPass Client Secret")
+    clearpass_enabled: bool = Field(default=False, description="Enable Aruba ClearPass integration")
+
+    # Cloudflare Zero Trust / Magic Transit (WP-3.5)
+    cloudflare_api_token: str = Field(default="", description="Cloudflare API Token")
+    cloudflare_account_id: str = Field(default="", description="Cloudflare Account ID")
+    cloudflare_enabled: bool = Field(default=False, description="Enable Cloudflare Path Segment Telemetry")
+
+    # Netskope SASE & NPA (WP-3.5)
+    netskope_tenant_url: str = Field(default="", description="Netskope Tenant URL (e.g. tenant.goskope.com)")
+    netskope_api_token: str = Field(default="", description="Netskope REST API v2 Token")
+    netskope_enabled: bool = Field(default=False, description="Enable Netskope SASE Path Segment Telemetry")
 
     # Arista WLC
     arista_wlc_host: str = Field(default="", description="Arista WLC host")

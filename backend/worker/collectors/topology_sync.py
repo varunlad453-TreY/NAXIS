@@ -61,6 +61,7 @@ class TopologySync:
         self._velo_enabled = settings.velocloud_enabled
         self._dnac_enabled = settings.dnac_enabled
         self._arista_enabled = settings.arista_wlc_enabled
+        self._aruba_enabled = settings.aruba_central_enabled
         self._identity = IdentityResolver()
 
     async def sync(self) -> None:
@@ -72,7 +73,9 @@ class TopologySync:
             await self._sync_dnac_topology()
         if self._arista_enabled:
             await self._sync_arista_wlc_topology()
-        if self._mist_enabled or self._velo_enabled or self._dnac_enabled or self._arista_enabled:
+        if self._aruba_enabled:
+            await self._sync_aruba_topology()
+        if self._mist_enabled or self._velo_enabled or self._dnac_enabled or self._arista_enabled or self._aruba_enabled:
             await self._sync_cross_vendor_links()
         logger.info("Topology sync complete")
 
@@ -580,6 +583,92 @@ class TopologySync:
                 )
 
         logger.info("Arista WLC topology: %d devices upserted", len(rows))
+
+    # ── HPE Aruba Central topology ─────────────────────────────────────────────
+
+    async def _sync_aruba_topology(self) -> None:
+        """
+        Builds topology from inventory for platform='aruba'.
+        """
+        rows = await db.fetch(
+            "SELECT device_id, hostname, ip_address, model, site_id, site_name, "
+            "       connected, reachability, firmware_version, device_type "
+            "FROM inventory WHERE platform = 'aruba'"
+        )
+        if not rows:
+            return
+
+        site_specs = [
+            (row["site_id"], row["site_name"] or row["site_id"], "aruba", None)
+            for row in rows
+            if row["site_id"]
+        ]
+        site_map = await self._identity.resolve_sites(site_specs)
+
+        device_pairs = [
+            ("aruba", row["device_id"], {
+                "display_name": row["hostname"] or row["device_id"],
+                "device_type": row.get("device_type") or "ap",
+                "model": row["model"] or "",
+                "site_key": site_map.get(("aruba", row["site_id"])),
+            })
+            for row in rows
+            if row["device_id"]
+        ]
+        device_map = await self._identity.resolve_devices(device_pairs)
+
+        for site_id, site_name in {(row["site_id"], row["site_name"] or row["site_id"]) for row in rows if row["site_id"]}:
+            site_key = site_map.get(("aruba", site_id))
+            if not site_key:
+                continue
+            await _upsert_node(
+                node_id=f"aruba-site-{site_key}",
+                node_type="site",
+                name=site_name,
+                vendor="aruba",
+                site_id=site_id,
+                canonical_key=site_key,
+                props={"platform": "aruba", "vendor_site_id": site_id},
+            )
+
+        for row in rows:
+            device_key = device_map.get(("aruba", row["device_id"]))
+            if not device_key:
+                continue
+
+            dev_type = str(row.get("device_type") or "ap").lower()
+            node_type = "switch" if "switch" in dev_type or "switch" in str(row["model"]).lower() else "ap"
+            aruba_node_id = f"aruba-{node_type}-{device_key}"
+            site_key = site_map.get(("aruba", row["site_id"]))
+
+            await _upsert_node(
+                node_id=aruba_node_id,
+                node_type=node_type,
+                name=row["hostname"] or row["device_id"],
+                ip_address=row["ip_address"] or "",
+                vendor="aruba",
+                model=row["model"] or "",
+                site_id=row["site_id"] or "",
+                canonical_key=device_key,
+                props={
+                    "connected": bool(row["connected"]),
+                    "reachability": row["reachability"] or "",
+                    "firmware": row["firmware_version"] or "",
+                    "platform": "aruba",
+                    "vendor_device_id": row["device_id"],
+                },
+            )
+
+            if site_key:
+                site_node_id = f"aruba-site-{site_key}"
+                await _upsert_edge(
+                    src_id=aruba_node_id,
+                    dst_id=site_node_id,
+                    edge_type="site_membership",
+                    props={"platform": "aruba"},
+                )
+
+        logger.info("Aruba topology: %d devices upserted", len(rows))
 
     # ── Cross-vendor logical links ─────────────────────────────────────────────
 

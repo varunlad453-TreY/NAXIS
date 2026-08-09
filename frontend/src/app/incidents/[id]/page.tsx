@@ -143,7 +143,7 @@ export default function IncidentDetailPage() {
               {error instanceof Error ? error.message : "Unknown error"}
             </p>
             <Link
-              href="/"
+              href="/correlation"
               className="mt-4 inline-flex items-center gap-2 text-sm font-medium text-primary hover:text-primary-hover"
             >
               <ArrowLeft className="h-4 w-4" />
@@ -159,7 +159,7 @@ export default function IncidentDetailPage() {
     <div className="container mx-auto px-4 py-10 sm:px-6">
       <div className="mx-auto max-w-6xl space-y-10">
         <Link
-          href="/"
+          href="/correlation"
           className="inline-flex items-center gap-2 text-sm text-foreground-muted transition-colors hover:text-foreground"
         >
           <ArrowLeft className="h-4 w-4" />

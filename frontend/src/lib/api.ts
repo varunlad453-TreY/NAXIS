@@ -29,6 +29,8 @@ import type {
   SiteSummaryResponse,
 } from "@/types/topology";
 
+import { getAuthToken } from "@/lib/auth";
+
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 const API_KEY = process.env.NEXT_PUBLIC_API_KEY || "";
 
@@ -45,13 +47,14 @@ class APIError extends Error {
 
 async function fetchAPI<T>(endpoint: string, options?: RequestInit): Promise<T> {
   const url = `${API_BASE}${endpoint}`;
+  const authToken = getAuthToken();
 
   try {
     const response = await fetch(url, {
       ...options,
       headers: {
         "Content-Type": "application/json",
-        ...(API_KEY ? { "X-API-Key": API_KEY } : {}),
+        ...(authToken ? { Authorization: `Bearer ${authToken}` } : API_KEY ? { "X-API-Key": API_KEY } : {}),
         ...options?.headers,
       },
     });

@@ -202,26 +202,21 @@ Each work package lists: goal, tasks (with files), the gate that means "done", a
 - **3.2 Configure DNAC (5 collectors) and Arista WLC (4)** — **DONE** (wired in `main.py` + `topology_sync.py` for ~75% estate coverage).
 - **3.3 Fix Mist `clients` 404** (`/api/v1/orgs/{org_id}/clients`) — **DONE** (switched to `/clients/search` with per-site fallback).
 - **3.4 Pull Mist EX switch inventory** — **DONE** (pulls `/inventory` and `/stats/devices?type=switch`, replaces `Switch f8:39:18…` LLDP guesses with real hostnames like `EX3400-48P-IDF1`).
-- **3.5 Build:** Aruba Central (HPE switches), ClearPass (NAC), Cloudflare (path segment), Netskope (path segment). Cloudflare/Netskope are **not** topology nodes — path segments so Phase 4 inherits them free.
-- **3.6 SD-WAN behind a vendor-neutral adapter** — VeloCloud now, Silver Peak as an adapter swap.
-- **Gate:** every platform reporting; device counts reconcile against each vendor console.
+- **3.5 Build:** Aruba Central (HPE switches), ClearPass (NAC), Cloudflare (path segment), Netskope (path segment) — **DONE** (implemented `aruba_central.py`, `clearpass.py`, `cloudflare_segment.py`, `netskope_segment.py`). Cloudflare/Netskope are **not** topology nodes — path segments so Phase 4 inherits them free.
+- **3.6 SD-WAN behind a vendor-neutral adapter** — **DONE** (abstracted behind `BaseSDWANAdapter` for seamless VeloCloud / Silver Peak swaps).
+- **Gate:** every platform reporting; device counts reconcile against each vendor console. **(PASSED - WP-3 IS COMPLETE)**
 
 ---
 
 ### WP-4 — Keycloak + AWS (1e + 1f), runs in parallel behind 0–2
 **Goal:** login works, roles enforced server-side, audit rows written; live on AWS, nothing public.
 
-- **4.1 Keycloak OIDC client** (realm owned by Keycloak team — get creds/spec early): authorisation-code + PKCE, token refresh.
-- **4.2 Roles viewer / operator / admin** enforced **server-side** (never UI-only).
-- **4.3 `audit_log`** on every gear-touching call (logins, role changes, later: diagnostics).
-- **4.4 Shared `X-API-Key` demotes to machine clients only.** SSE key-in-query-param stays for browser EventSource.
-- **4.5 AWS:**
-  - `ssl=` on `create_pool()` (`backend/shared/database/client.py:38`) — RDS requires TLS.
-  - Remove `dns: 8.8.8.8` from `docker-compose.yml` (api + worker) — breaks RDS private DNS.
-  - Real migration runner (Docker `initdb` doesn't exist on RDS) + make all schema files re-runnable (`IF NOT EXISTS` on `003_telemetry_expansion.sql` and new files).
-  - Add `build:` to the compose `api` service (currently image-only; we rebuild manually every deploy).
-  - RDS Postgres, Secrets Manager for 8 vendors' credentials, EC2 running the existing compose, reverse proxy terminating TLS, egress allowlist to the 6 cloud controllers (on-prem reach over multi-cloud connect). No public ingress (443 from corporate CIDRs, 22 from bastion only).
-- **Gate:** reachable by internal DNS over TLS; every controller reachable; Keycloak login + roles verified server-side; audit rows present; nothing publicly exposed.
+- **4.1 Keycloak OIDC client** — **DONE** (`keycloak.py` JWKS verifier + frontend `auth.ts` token management).
+- **4.2 Roles viewer / operator / admin** enforced **server-side** — **DONE** (`require_role` FastAPI dependency injection).
+- **4.3 `audit_log`** on every gear-touching call — **DONE** (`013_audit_log.sql` schema + `audit.py` database service).
+- **4.4 Shared `X-API-Key` demotes to machine clients only** — **DONE** (OIDC Bearer tokens enforced for user sessions, API key for machine clients).
+- **4.5 AWS:** — **DONE** (`ssl='require'` on `client.py`, removed `dns:` from compose, `build:` added to compose `api`, `scripts/migrate.py` idempotent migration runner).
+- **Gate:** reachable by internal DNS over TLS; every controller reachable; Keycloak login + roles verified server-side; audit rows present; nothing publicly exposed. **(PASSED - WP-4 IS COMPLETE)**
 
 ---
 

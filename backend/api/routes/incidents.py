@@ -6,8 +6,10 @@ import logging
 from datetime import datetime
 from typing import Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
+from shared.auth.dependencies import require_role
+from shared.auth.keycloak import UserPrincipal
 from shared.database.incidents import resolve_display_names
 from shared.database.topology import resolve_node_id as resolve_topology_node_id
 from shared.models.incident import Incident, IncidentStatus
@@ -224,6 +226,52 @@ async def get_incident_evidence(incident_id: str) -> List[Dict]:
         raise
     except Exception as e:
         logger.error(f"Error retrieving evidence for {incident_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@router.put(
+    "/{incident_id}/status",
+    summary="Update incident status (RBAC & Audit Log)",
+    description="Updates the incident status (open, investigating, mitigated, resolved). Requires operator or admin role.",
+)
+async def update_incident_status(
+    incident_id: str,
+    status_value: str = Query(..., description="New status (open, investigating, mitigated, resolved)"),
+    user: UserPrincipal = Depends(require_role(["operator", "admin"])),
+) -> Dict[str, str]:
+    try:
+        from shared.database.audit import log_audit_event
+        from shared.database.incidents import update_incident_status as db_update_status
+
+        updated = await db_update_status(incident_id, status_value)
+        if not updated:
+            await log_audit_event(
+                user_id=user.user_id,
+                username=user.username,
+                user_role=user.roles[0] if user.roles else "operator",
+                action="UPDATE_INCIDENT_STATUS",
+                resource_type="incident",
+                resource_id=incident_id,
+                status="failure",
+                details={"new_status": status_value, "reason": "Incident not found"},
+            )
+            raise HTTPException(status_code=404, detail=f"Incident not found: {incident_id}")
+
+        await log_audit_event(
+            user_id=user.user_id,
+            username=user.username,
+            user_role=user.roles[0] if user.roles else "operator",
+            action="UPDATE_INCIDENT_STATUS",
+            resource_type="incident",
+            resource_id=incident_id,
+            status="success",
+            details={"new_status": status_value},
+        )
+        return {"incident_id": incident_id, "status": status_value, "message": "Incident status updated"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating status for {incident_id}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Internal server error")
 
 

@@ -62,9 +62,6 @@ services:
       retries: 3
       start_period: 300s
     restart: unless-stopped
-    dns:
-      - 8.8.8.8
-      - 1.1.1.1
     networks:
       - naxis-net
     deploy:
@@ -73,9 +70,13 @@ services:
           memory: 1G
 
   api:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+      target: production
     image: naxis-api
     container_name: naxis-api
-    command: uvicorn main:app --host 0.0.0.0 --port 8000 --workers 2
+    command: uvicorn backend.main:app --host 0.0.0.0 --port 8000 --workers 2
     ports:
       - "${API_HOST_PORT:-8000}:8000"
     env_file: config/.env
@@ -83,9 +84,6 @@ services:
       SERVICE_NAME: naxis-api
       LOG_LEVEL: INFO
       PYTHONPATH: /app
-    dns:
-      - 8.8.8.8
-      - 1.1.1.1
     depends_on:
       postgres:
         condition: service_healthy
@@ -113,9 +111,6 @@ services:
       - "${WEB_HOST_PORT:-3000}:3000"
     environment:
       NEXT_PUBLIC_API_URL: http://localhost:${API_HOST_PORT:-8000}
-    dns:
-      - 8.8.8.8
-      - 1.1.1.1
     depends_on:
       api:
         condition: service_healthy
