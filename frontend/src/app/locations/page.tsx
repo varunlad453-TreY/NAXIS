@@ -122,7 +122,7 @@ export default function LocationsRegistryPage() {
     setSelectedLocation(loc);
     try {
       // 1. Fetch real floorplan AP placements for this site
-      const fpRes = await fetch(`http://localhost:8000/locations/${loc.location_id}/floorplan`);
+      const fpRes = await fetch(`http://localhost:8000/locations/${loc.location_id}/floorplan?name=${encodeURIComponent(loc.name)}`);
       let floorplanAPs: any[] = [];
       if (fpRes.ok) {
         const fpData = await fpRes.json();
@@ -132,7 +132,7 @@ export default function LocationsRegistryPage() {
       }
 
       // 2. Fetch inventory hardware devices assigned to this site
-      const res = await fetch(`http://localhost:8000/devices?search=${encodeURIComponent(loc.name.split(" ")[0])}`);
+      const res = await fetch(`http://localhost:8000/devices?site_id=${encodeURIComponent(loc.location_id)}`);
       let invDevices: any[] = [];
       if (res.ok) {
         const data = await res.json();
@@ -142,56 +142,55 @@ export default function LocationsRegistryPage() {
       }
 
       const mappedDevices: AssignedDevice[] = [];
+      const seenIds = new Set<string>();
 
-      invDevices.forEach((d: any) => {
-        const isDegraded = loc.health_status === "degraded" || floorplanAPs.some((ap) => ap.health_status !== "healthy");
-        const matchingAPFault = floorplanAPs.find((ap) => ap.health_status !== "healthy");
-
+      // Add the 4 site APs from the floorplan engine (matching 2D Blueprint Canvas 1:1)
+      floorplanAPs.forEach((ap: any) => {
+        seenIds.add(ap.device_id);
+        const isHealthy = ap.health_status === "healthy";
         mappedDevices.push({
-          device_id: d.device_id,
-          hostname: d.hostname || d.site_name || "Device-" + d.device_id.slice(0, 6),
-          device_type: d.device_type === "ap" ? "ap" : d.platform === "velocloud" ? "sdwan" : "switch",
-          vendor: d.platform === "mist" ? "Juniper Mist" : d.platform === "velocloud" ? "VeloCloud" : "Cisco DNA",
-          model: d.model || "Enterprise Edge",
-          serial: d.serial || "VC05100029366",
-          firmware_version: d.firmware_version || "R431-20220331-GA",
-          last_seen: d.last_seen || "2026-08-11T14:30:00Z",
-          mac: d.mac || "N/A",
-          ip_address: d.ip_address || "122.187.159.2",
-          status: isDegraded ? "degraded" : "online",
-          health_reason: isDegraded
-            ? (matchingAPFault?.health_reason || "Uplink packet loss > 4.2% & High RF Co-Channel Interference (>18% retry rate)")
-            : "All WAN Tunnels & control planes operating within SLA parameters.",
-          impact_radius: isDegraded
-            ? "Site Telemetry Warning: 12 active AP markers affected; 5GHz channel congestion exceeding 78% SLA threshold."
-            : "Zero impact — site operating normally.",
+          device_id: ap.device_id,
+          hostname: ap.name,
+          device_type: "ap",
+          vendor: ap.vendor === "juniper_mist" ? "Juniper Mist" : ap.vendor,
+          model: "Mist AP43",
+          serial: "AP-" + ap.device_id.slice(0, 8),
+          firmware_version: "v0.14.2490",
+          last_seen: "2026-08-11T14:40:00Z",
+          mac: ap.mac_address || "5c:5b:35:aa:bb:cc",
+          ip_address: ap.ip_address || "10.42.12.50",
+          status: isHealthy ? "online" : "degraded",
+          health_reason: isHealthy ? "All wireless channels & radios operating normally." : (ap.health_reason || "RF interference warning"),
+          impact_radius: isHealthy
+            ? "Zero impact — site operating normally."
+            : `Degraded Wi-Fi performance for ${ap.client_count || 12} connected clients on 5GHz band.`,
         });
       });
 
-      // Also list specific site AP placements from floorplan engine for full visibility
-      if (floorplanAPs.length > 0) {
-        floorplanAPs.slice(0, 4).forEach((ap: any) => {
-          if (!mappedDevices.some((md) => md.device_id === ap.device_id)) {
-            mappedDevices.push({
-              device_id: ap.device_id,
-              hostname: ap.name,
-              device_type: "ap",
-              vendor: ap.vendor === "juniper_mist" ? "Juniper Mist" : ap.vendor,
-              model: "Mist AP43",
-              serial: "AP-" + ap.device_id.slice(0, 8),
-              firmware_version: "v0.14.2490",
-              last_seen: "2026-08-11T14:40:00Z",
-              mac: ap.mac_address || "5c:5b:35:aa:bb:cc",
-              ip_address: ap.ip_address || "10.42.12.50",
-              status: ap.health_status === "healthy" ? "online" : "degraded",
-              health_reason: ap.health_reason || "All wireless channels & radios operating normally.",
-              impact_radius: ap.health_status === "healthy"
-                ? "Zero impact."
-                : `Degraded Wi-Fi performance for ${ap.client_count || 12} connected clients on 5GHz band.`,
-            });
-          }
-        });
-      }
+      // Add non-AP site devices (e.g. SD-WAN router) if not already included
+      invDevices.forEach((d: any) => {
+        if (!seenIds.has(d.device_id) && d.device_type !== "ap") {
+          seenIds.add(d.device_id);
+          const isOnline = d.connected !== false && d.reachability !== "unreachable";
+          mappedDevices.push({
+            device_id: d.device_id,
+            hostname: d.hostname || d.site_name || "Device-" + d.device_id.slice(0, 6),
+            device_type: d.platform === "velocloud" ? "sdwan" : "switch",
+            vendor: d.platform === "velocloud" ? "VeloCloud" : "Cisco DNA",
+            model: d.model || "Enterprise Edge SD-WAN",
+            serial: d.serial || "VC05100029366",
+            firmware_version: d.firmware_version || "R431-20220331-GA",
+            last_seen: d.last_seen || "2026-08-11T14:30:00Z",
+            mac: d.mac || "N/A",
+            ip_address: d.ip_address || "122.187.159.2",
+            status: isOnline ? "online" : "degraded",
+            health_reason: isOnline
+              ? "All WAN Tunnels & control planes operating within SLA parameters."
+              : "Uplink packet loss > 4.2% on WAN Edge interface.",
+            impact_radius: isOnline ? "Zero impact." : "Degraded uplink routing failover SLA.",
+          });
+        }
+      });
 
       setAssignedDevices(mappedDevices);
     } catch (err) {
