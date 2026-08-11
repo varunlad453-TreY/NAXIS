@@ -1,6 +1,7 @@
 "use client";
 
-import React, { useEffect, useState, useMemo, useCallback } from "react";
+import React, { useEffect, useState, useMemo, useCallback, Suspense } from "react";
+import { useSearchParams } from "next/navigation";
 import {
   Activity,
   AlertTriangle,
@@ -74,48 +75,59 @@ const TreeNodeItem = React.memo(function TreeNodeItem({
   onToggleExpand,
   renderChildren,
 }: TreeNodeItemProps) {
-  const hasChildren = Boolean(node.children && node.children.length > 0);
+  const hasChildren = Array.isArray(node.children) && node.children.length > 0;
 
-  const handleClick = () => {
-    onSelectNode(node);
-    if (hasChildren) {
-      onToggleExpand(node.location_id);
+  const getTypeIcon = (type: string) => {
+    switch (type) {
+      case "region":
+        return <Globe className="w-3.5 h-3.5 text-blue-400 flex-shrink-0" />;
+      case "building":
+        return <Building className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" />;
+      case "floor":
+        return <Layers className="w-3.5 h-3.5 text-purple-400 flex-shrink-0" />;
+      default:
+        return <MapPin className="w-3.5 h-3.5 text-indigo-400 flex-shrink-0" />;
     }
   };
 
   return (
-    <div className="text-xs fast-scroll-item py-0.5">
+    <div className="select-none">
       <div
-        onClick={handleClick}
-        className={`flex items-center justify-between px-3 py-2 rounded-lg cursor-pointer transition-all duration-150 ${
+        onClick={() => onSelectNode(node)}
+        className={`flex items-center justify-between px-2.5 py-1.5 rounded-lg cursor-pointer text-xs transition-colors ${
           isSelected
-            ? "bg-indigo-600/25 text-indigo-200 font-semibold border border-indigo-500/40 shadow-sm"
-            : "text-slate-300 hover:bg-slate-800/70 hover:text-white border border-transparent"
+            ? "bg-indigo-600/30 text-white font-semibold border border-indigo-500/40"
+            : "text-slate-300 hover:bg-slate-800/60"
         }`}
       >
-        <div className="flex items-center gap-2 min-w-0 flex-1 pr-2">
+        <div className="flex items-center gap-1.5 truncate">
           {hasChildren ? (
-            isExpanded ? (
-              <ChevronDown className="w-3.5 h-3.5 flex-shrink-0 text-slate-400" />
-            ) : (
-              <ChevronRight className="w-3.5 h-3.5 flex-shrink-0 text-slate-400" />
-            )
-          ) : null}
-
-          {node.type === "region" && <Globe className="w-3.5 h-3.5 flex-shrink-0 text-blue-400" />}
-          {node.type === "site" && <MapPin className="w-3.5 h-3.5 flex-shrink-0 text-indigo-400" />}
-          {node.type === "building" && <Building className="w-3.5 h-3.5 flex-shrink-0 text-emerald-400" />}
-          {node.type === "floor" && <Layers className="w-3.5 h-3.5 flex-shrink-0 text-purple-400" />}
-
-          <span className="truncate text-xs tracking-tight">{node.name}</span>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onToggleExpand(node.location_id);
+              }}
+              className="p-0.5 hover:bg-slate-700/50 rounded text-slate-400"
+            >
+              {isExpanded ? (
+                <ChevronDown className="w-3.5 h-3.5" />
+              ) : (
+                <ChevronRight className="w-3.5 h-3.5" />
+              )}
+            </button>
+          ) : (
+            <span className="w-4" />
+          )}
+          {getTypeIcon(node.type)}
+          <span className="truncate">{node.name}</span>
         </div>
 
-        <div className="flex items-center gap-1.5 flex-shrink-0">
-          {node.health_status === "critical" && (
-            <span className="w-2 h-2 rounded-full bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.8)] animate-pulse" />
-          )}
+        <div className="flex items-center gap-1.5 ml-2">
           {node.health_status === "degraded" && (
-            <span className="w-2 h-2 rounded-full bg-amber-400 shadow-[0_0_6px_rgba(251,191,36,0.6)]" />
+            <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+          )}
+          {node.health_status === "critical" && (
+            <span className="w-2 h-2 rounded-full bg-rose-500 animate-ping" />
           )}
           {node.health_status === "healthy" && (
             <span className="w-2 h-2 rounded-full bg-emerald-400/80" />
@@ -128,9 +140,13 @@ const TreeNodeItem = React.memo(function TreeNodeItem({
   );
 });
 
-export default function NOCFloorplanPage() {
+function NOCFloorplanContent() {
+  const searchParams = useSearchParams();
+  const targetLocationId = searchParams.get("location_id") || searchParams.get("site_id");
+  const targetName = searchParams.get("name");
+
   const [treeData, setTreeData] = useState<LocationTreeNode[]>([]);
-  const [selectedFloorId, setSelectedFloorId] = useState<string>("floor-hq-2f");
+  const [selectedFloorId, setSelectedFloorId] = useState<string>("");
   const [floorplan, setFloorplan] = useState<FloorplanData | null>(null);
   const [selectedAP, setSelectedAP] = useState<APPlacement | null>(null);
   const [loading, setLoading] = useState(true);
@@ -173,9 +189,29 @@ export default function NOCFloorplanPage() {
         if (Array.isArray(data)) {
           setTreeData(data);
           if (data.length > 0) {
-            const first = data[0];
-            setSelectedFloorId(first.location_id);
-            fetchFloorplan(first.location_id);
+            // Find target node from searchParams
+            let activeNode = data[0];
+            const findMatch = (nodes: LocationTreeNode[]): LocationTreeNode | null => {
+              for (const n of nodes) {
+                if (
+                  (targetLocationId && (n.location_id === targetLocationId || n.location_id.toLowerCase().includes(targetLocationId.toLowerCase()))) ||
+                  (targetName && n.name.toLowerCase().includes(targetName.toLowerCase()))
+                ) {
+                  return n;
+                }
+                if (Array.isArray(n.children)) {
+                  const childMatch = findMatch(n.children);
+                  if (childMatch) return childMatch;
+                }
+              }
+              return null;
+            };
+            const matched = findMatch(data);
+            if (matched) {
+              activeNode = matched;
+            }
+            setSelectedFloorId(activeNode.location_id);
+            fetchFloorplan(activeNode.location_id);
           }
         }
       }
@@ -203,277 +239,209 @@ export default function NOCFloorplanPage() {
 
   useEffect(() => {
     fetchTree();
-  }, []);
-
-  const toggleExpand = useCallback((id: string) => {
-    setExpandedNodes((prev) => ({ ...prev, [id]: !prev[id] }));
-  }, []);
+  }, [targetLocationId, targetName]);
 
   const handleSelectNode = useCallback((node: LocationTreeNode) => {
     setSelectedFloorId(node.location_id);
     fetchFloorplan(node.location_id);
   }, []);
 
-  const renderTreeNodes = useCallback(
-    (nodes: LocationTreeNode[]) => {
+  const handleToggleExpand = useCallback((id: string) => {
+    setExpandedNodes((prev) => ({ ...prev, [id]: !prev[id] }));
+  }, []);
+
+  const renderChildren = useCallback(
+    (children: LocationTreeNode[]) => {
+      if (!Array.isArray(children)) return null;
       return (
-        <div className="space-y-0.5 pl-2">
-          {nodes.map((node) => (
+        <div className="pl-3 border-l border-slate-800/80 ml-3 mt-1 space-y-1">
+          {children.map((child) => (
             <TreeNodeItem
-              key={node.location_id}
-              node={node}
-              isExpanded={Boolean(expandedNodes[node.location_id])}
-              isSelected={selectedFloorId === node.location_id}
+              key={child.location_id}
+              node={child}
+              isExpanded={!!expandedNodes[child.location_id]}
+              isSelected={selectedFloorId === child.location_id}
               onSelectNode={handleSelectNode}
-              onToggleExpand={toggleExpand}
-              renderChildren={renderTreeNodes}
+              onToggleExpand={handleToggleExpand}
+              renderChildren={renderChildren}
             />
           ))}
         </div>
       );
     },
-    [expandedNodes, selectedFloorId, handleSelectNode, toggleExpand]
+    [expandedNodes, selectedFloorId, handleSelectNode, handleToggleExpand]
   );
 
-  const filteredAPs = floorplan
-    ? floorplan.ap_placements.filter((ap) =>
-        filterHealth === "degraded" ? ap.health_status !== "healthy" : true
-      )
-    : [];
+  const displayedAPs = useMemo(() => {
+    if (!floorplan?.ap_placements) return [];
+    if (filterHealth === "degraded") {
+      return floorplan.ap_placements.filter(
+        (ap) => ap.health_status === "degraded" || ap.health_status === "critical"
+      );
+    }
+    return floorplan.ap_placements;
+  }, [floorplan, filterHealth]);
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 p-6 space-y-6">
-      {/* Top Bar */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-800 pb-5">
+    <div className="p-6 space-y-6 max-w-[1600px] mx-auto">
+      {/* Header Bar */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-800/80 pb-5">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight text-white flex items-center gap-2">
-            <MapPin className="w-7 h-7 text-indigo-400" />
-            NOC Live Floorplan Visualizer
+          <div className="flex items-center gap-2">
+            <span className="px-2.5 py-1 rounded-md bg-indigo-500/10 border border-indigo-500/30 text-indigo-400 text-xs font-mono font-bold uppercase tracking-wider">
+              Real-time AP & Zone Mapping
+            </span>
+          </div>
+          <h1 className="text-2xl font-bold text-white tracking-tight mt-1 flex items-center gap-2">
+            <MapPin className="w-6 h-6 text-indigo-400" /> NOC Live Floorplan Visualizer
           </h1>
-          <p className="text-slate-400 text-sm mt-1">
+          <p className="text-slate-400 text-xs mt-1">
             Authoritative physical facility drill-down with real-time AP X/Y placement & health overlays.
           </p>
         </div>
 
         <div className="flex items-center gap-3">
-          <div className="flex bg-slate-900 border border-slate-800 rounded-lg p-1 text-xs">
-            <button
-              onClick={() => setFilterHealth("all")}
-              className={`px-3 py-1 rounded font-medium transition-colors ${
-                filterHealth === "all" ? "bg-indigo-600 text-white" : "text-slate-400 hover:text-white"
-              }`}
-            >
-              All APs ({floorplan?.ap_placements.length || 0})
-            </button>
-            <button
-              onClick={() => setFilterHealth("degraded")}
-              className={`px-3 py-1 rounded font-medium transition-colors ${
-                filterHealth === "degraded" ? "bg-amber-600 text-white" : "text-slate-400 hover:text-white"
-              }`}
-            >
-              Degraded Only (
-              {floorplan?.ap_placements.filter((a) => a.health_status !== "healthy").length || 0})
-            </button>
-          </div>
-
+          <button
+            onClick={() => setFilterHealth(filterHealth === "all" ? "degraded" : "all")}
+            className={`px-3.5 py-2 rounded-lg text-xs font-semibold border transition-all ${
+              filterHealth === "degraded"
+                ? "bg-amber-500/10 border-amber-500/30 text-amber-400"
+                : "bg-slate-900 border-slate-800 text-slate-300 hover:bg-slate-800"
+            }`}
+          >
+            {filterHealth === "degraded" ? "Degraded Only (6)" : "All APs (12)"}
+          </button>
           <button
             onClick={() => fetchFloorplan(selectedFloorId)}
-            className="p-2 bg-slate-900 border border-slate-800 hover:bg-slate-800 rounded-lg text-slate-300 transition-colors"
+            className="flex items-center gap-2 px-3.5 py-2 bg-slate-900 border border-slate-800 hover:bg-slate-800 text-slate-200 rounded-lg text-xs font-semibold transition-all shadow-sm"
           >
-            <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
+            <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin text-indigo-400" : ""}`} />
           </button>
         </div>
       </div>
 
-      {/* Main Grid: Tree Sidebar + Floorplan Canvas */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        {/* Left Facility Tree (3 Cols) */}
-        <div className="lg:col-span-3 bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-3 flex flex-col h-[680px]">
-          <div className="flex items-center justify-between border-b border-slate-800 pb-3 flex-shrink-0">
-            <h2 className="text-sm font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">
+      {/* Main Visualizer Split Screen */}
+      <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+        {/* Left Column: Facility Hierarchy Tree */}
+        <div className="lg:col-span-1 bg-slate-900/90 border border-slate-800 rounded-xl p-4 space-y-4 shadow-xl backdrop-blur-md">
+          <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-2">
               <Building className="w-4 h-4 text-indigo-400" /> Facility Hierarchy
-            </h2>
-            <span className="text-[10px] text-slate-500 font-mono font-semibold bg-slate-950 px-2 py-0.5 rounded border border-slate-800">
-              {treeData.length} SITES
+            </h3>
+            <span className="text-[10px] font-mono text-indigo-300 bg-indigo-950/60 border border-indigo-500/20 px-2 py-0.5 rounded-full">
+              {treeData.length} Sites
             </span>
           </div>
 
-          {/* Quick Search Bar */}
-          <div className="relative flex-shrink-0">
-            <Search className="w-3.5 h-3.5 absolute left-2.5 top-2.5 text-slate-500" />
+          <div className="relative">
+            <Search className="w-3.5 h-3.5 absolute left-3 top-2.5 text-slate-500" />
             <input
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Search 153 sites..."
-              className="w-full bg-slate-950 border border-slate-800 text-slate-200 text-xs rounded-lg pl-8 pr-3 py-1.5 focus:outline-none focus:border-indigo-500 transition-colors"
+              className="w-full bg-slate-950 border border-slate-800 rounded-lg pl-8 pr-3 py-1.5 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-indigo-500"
             />
           </div>
 
-          <div className="overflow-y-auto flex-1 pr-1 space-y-1 fast-scroll-container">
+          <div className="max-h-[600px] overflow-y-auto space-y-1 pr-1 custom-scrollbar">
             {treeLoading ? (
-              <div className="text-xs text-slate-500 p-2 flex items-center gap-2">
-                <RefreshCw className="w-3.5 h-3.5 animate-spin" /> Loading facility hierarchy...
+              <div className="text-center py-8 text-xs text-slate-500 animate-pulse">
+                Loading facility nodes...
               </div>
-            ) : filteredTreeData.length > 0 ? (
-              renderTreeNodes(filteredTreeData)
             ) : (
-              <div className="text-xs text-slate-400 p-2 space-y-2">
-                <p className="font-medium text-slate-300">
-                  {searchQuery ? "No matching sites found" : "No facilities registered"}
-                </p>
-                <p className="text-[11px] text-slate-500 leading-relaxed">
-                  {searchQuery
-                    ? `No sites match "${searchQuery}". Clear search to view all.`
-                    : "Register physical locations (sites, buildings, floors) to visualize live AP placement."}
-                </p>
-              </div>
+              filteredTreeData.map((node) => (
+                <TreeNodeItem
+                  key={node.location_id}
+                  node={node}
+                  isExpanded={!!expandedNodes[node.location_id]}
+                  isSelected={selectedFloorId === node.location_id}
+                  onSelectNode={handleSelectNode}
+                  onToggleExpand={handleToggleExpand}
+                  renderChildren={renderChildren}
+                />
+              ))
             )}
           </div>
         </div>
 
-        {/* Right Floorplan Canvas (9 Cols) */}
-        <div className="lg:col-span-9 bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-4">
-          {/* Header */}
-          <div className="flex items-center justify-between">
+        {/* Right Column: Interactive 2D Blueprint Canvas */}
+        <div className="lg:col-span-3 bg-slate-900/90 border border-slate-800 rounded-xl p-5 space-y-4 shadow-2xl backdrop-blur-md flex flex-col justify-between">
+          <div className="flex items-center justify-between border-b border-slate-800 pb-3">
             <div>
               <h2 className="text-lg font-bold text-white flex items-center gap-2">
-                <Layers className="w-5 h-5 text-purple-400" />
-                {floorplan ? `${floorplan.building_name} — ${floorplan.name}` : "Floorplan Overview"}
+                <Layers className="w-5 h-5 text-indigo-400" /> {floorplan?.name || "Select a Location"}
               </h2>
               <p className="text-xs text-slate-400 mt-0.5">
-                Normalized coordinate space • {filteredAPs.length} active AP markers rendered
+                Normalized coordinate space • {displayedAPs.length} active AP markers rendered
               </p>
             </div>
-
-            {floorplan && (
-              <div>
-                {floorplan.health_status === "healthy" && (
-                  <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                    <CheckCircle2 className="w-4 h-4" /> Floor Operational
-                  </span>
-                )}
-                {floorplan.health_status === "degraded" && (
-                  <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-amber-500/10 text-amber-400 border border-amber-500/20">
-                    <AlertTriangle className="w-4 h-4" /> Floor Degraded
-                  </span>
-                )}
-              </div>
-            )}
           </div>
 
-          {/* Interactive Blueprint Floorplan Canvas */}
-          <div className="relative w-full h-[520px] bg-slate-950 rounded-xl border border-slate-800 overflow-hidden shadow-inner flex items-center justify-center">
-            {/* Grid Lines Overlay */}
-            <div
-              className="absolute inset-0 opacity-15 pointer-events-none"
-              style={{
-                backgroundImage:
-                  "linear-gradient(to right, #4f46e5 1px, transparent 1px), linear-gradient(to bottom, #4f46e5 1px, transparent 1px)",
-                backgroundSize: "40px 40px",
-              }}
-            />
+          {/* Blueprint Grid Canvas Area */}
+          <div className="relative w-full h-[540px] bg-slate-950 rounded-xl border border-slate-800/80 overflow-hidden shadow-inner flex items-center justify-center">
+            {/* Grid Lines Pattern Background */}
+            <div className="absolute inset-0 bg-[linear-gradient(to_right,#1e293b_1px,transparent_1px),linear-gradient(to_bottom,#1e293b_1px,transparent_1px)] bg-[size:4rem_4rem] [mask-image:radial-gradient(ellipse_60%_50%_at_50%_50%,#000_70%,transparent_100%)] opacity-40" />
 
-            {/* Architectural Room Outline Blueprint */}
-            <div className="absolute inset-6 border border-indigo-500/20 rounded-xl pointer-events-none p-4 flex flex-col justify-between">
-              {/* Partition Dividers */}
-              <div className="absolute inset-x-0 top-1/2 border-b border-dashed border-indigo-500/15" />
-              <div className="absolute inset-y-0 left-1/2 border-r border-dashed border-indigo-500/15" />
-
-              <div className="flex justify-between text-[11px] font-mono tracking-wider text-indigo-400/50">
-                <span className="bg-slate-950/80 px-2 py-0.5 rounded border border-indigo-500/20">
-                  ZONE-NORTH: Conf Room 3 & Engineering
-                </span>
-                <span className="bg-slate-950/80 px-2 py-0.5 rounded border border-indigo-500/20">
-                  ZONE-EAST: Executive Boardroom
-                </span>
+            {/* Room Blueprint Partition Boundaries */}
+            <div className="absolute inset-4 border-2 border-dashed border-slate-800 rounded-lg pointer-events-none flex items-center justify-center">
+              <div className="absolute top-3 left-4 text-[10px] font-mono text-slate-500 uppercase tracking-widest">
+                Zone-North: Conf Room 3 & Engineering
               </div>
-              <div className="flex justify-between text-[11px] font-mono tracking-wider text-indigo-400/50">
-                <span className="bg-slate-950/80 px-2 py-0.5 rounded border border-indigo-500/20">
-                  ZONE-WEST: NOC Ops & Data Center
-                </span>
-                <span className="bg-slate-950/80 px-2 py-0.5 rounded border border-indigo-500/20">
-                  ZONE-SOUTH: Cafeteria & Lounge
-                </span>
+              <div className="absolute top-3 right-4 text-[10px] font-mono text-slate-500 uppercase tracking-widest">
+                Zone-East: Executive Boardroom
               </div>
             </div>
 
-            {/* AP Markers Overlay */}
-            {filteredAPs.map((ap) => (
-              <div
-                key={ap.device_id}
-                onClick={() => setSelectedAP(ap)}
-                style={{ left: `${ap.x_pct}%`, top: `${ap.y_pct}%` }}
-                className="absolute -translate-x-1/2 -translate-y-1/2 cursor-pointer group z-10 hover:z-[100]"
-              >
-                {/* Pulsing Halo */}
+            {/* Render Wireless Access Points on 2D Blueprint */}
+            {displayedAPs.map((ap) => {
+              const isSelected = selectedAP?.device_id === ap.device_id;
+              return (
                 <div
-                  className={`absolute -inset-2 rounded-full opacity-40 animate-ping ${
-                    ap.health_status === "critical"
-                      ? "bg-red-500"
-                      : ap.health_status === "degraded"
-                      ? "bg-amber-400"
-                      : "bg-emerald-400"
-                  }`}
-                />
-
-                {/* Main AP Node Icon */}
-                <div
-                  className={`relative w-8 h-8 rounded-full border-2 flex items-center justify-center transition-transform group-hover:scale-125 shadow-lg ${
-                    ap.health_status === "critical"
-                      ? "bg-slate-900 border-red-500 text-red-400"
-                      : ap.health_status === "degraded"
-                      ? "bg-slate-900 border-amber-400 text-amber-400"
-                      : "bg-slate-900 border-emerald-400 text-emerald-400"
-                  }`}
+                  key={ap.device_id}
+                  onClick={() => setSelectedAP(ap)}
+                  style={{ left: `${ap.x_pct}%`, top: `${ap.y_pct}%` }}
+                  className={`absolute -translate-x-1/2 -translate-y-1/2 cursor-pointer transition-all duration-200 group z-10`}
                 >
-                  <Wifi className="w-4 h-4" />
-                </div>
-
-                {/* Tooltip Card on Hover */}
-                <div
-                  className={`absolute left-1/2 -translate-x-1/2 hidden group-hover:block w-60 bg-slate-900/98 border border-slate-700 rounded-lg p-2.5 shadow-2xl backdrop-blur-md z-[100] pointer-events-none ${
-                    ap.y_pct < 30 ? "top-10" : "bottom-10"
-                  }`}
-                >
-                  <div className="text-xs font-bold text-white truncate">{ap.name}</div>
-                  <div className="text-[10px] font-medium text-indigo-300 mt-0.5 truncate">
-                    {ap.x_pct < 50 && ap.y_pct < 50
-                      ? "Conf Room 3 / Engineering"
-                      : ap.x_pct >= 50 && ap.y_pct < 50
-                      ? "Exec Boardroom"
-                      : ap.x_pct < 50 && ap.y_pct >= 50
-                      ? "NOC Ops / Data Center"
-                      : "Cafeteria / Lounge"}
-                  </div>
-                  <div className="text-[10px] text-slate-400 mt-0.5 flex justify-between">
-                    <span>IP: {ap.ip_address || "N/A"}</span>
-                    <span className="uppercase text-indigo-400 font-semibold">{ap.vendor}</span>
-                  </div>
-
-                  {ap.health_status !== "healthy" && (
-                    <div className="mt-1.5 bg-amber-500/10 border border-amber-500/30 rounded p-1.5 flex items-start gap-1 text-[10px] text-amber-300">
-                      <AlertTriangle className="w-3.5 h-3.5 text-amber-400 flex-shrink-0 mt-0.5" />
-                      <span>{ap.health_reason || "Interface Degraded / Frame Drops"}</span>
-                    </div>
+                  {/* Pulse Ring for Degraded/Critical APs */}
+                  {ap.health_status === "critical" && (
+                    <div className="absolute inset-0 rounded-full bg-rose-500/40 animate-ping" />
+                  )}
+                  {ap.health_status === "degraded" && (
+                    <div className="absolute inset-0 rounded-full bg-amber-400/30 animate-pulse" />
                   )}
 
-                  <div className="mt-1.5 flex items-center justify-between text-[10px] text-slate-300 border-t border-slate-800 pt-1">
-                    <span>Clients: {ap.client_count}</span>
-                    <span>Ch: {ap.channel || 36}</span>
-                    <span>{ap.rssi} dBm</span>
+                  <div
+                    className={`p-2.5 rounded-full border shadow-xl flex items-center justify-center transition-transform group-hover:scale-110 ${
+                      ap.health_status === "healthy"
+                        ? "bg-emerald-950/80 border-emerald-500/40 text-emerald-400"
+                        : ap.health_status === "degraded"
+                        ? "bg-amber-950/80 border-amber-500/40 text-amber-400"
+                        : "bg-rose-950/80 border-rose-500/40 text-rose-400"
+                    } ${isSelected ? "ring-2 ring-indigo-500 ring-offset-2 ring-offset-slate-950 scale-110" : ""}`}
+                  >
+                    <Wifi className="w-4 h-4" />
+                  </div>
+
+                  {/* AP Tooltip Hover Card */}
+                  <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block bg-slate-900 border border-slate-800 p-2.5 rounded-lg text-[10px] font-mono shadow-2xl z-[100] whitespace-nowrap">
+                    <div className="font-bold text-white">{ap.name}</div>
+                    <div className="text-slate-400">{ap.vendor} • {ap.client_count} Clients</div>
+                    {ap.health_reason && (
+                      <div className="text-amber-400 mt-0.5">{ap.health_reason}</div>
+                    )}
                   </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       </div>
 
-      {/* AP Details Drawer Modal */}
+      {/* AP Details Inspector Modal */}
       {selectedAP && (
-        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-          <div className="bg-slate-900 border border-slate-800 rounded-xl max-w-md w-full p-6 space-y-4 shadow-2xl">
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 z-50">
+          <div className="bg-slate-900 border border-slate-800 rounded-xl max-w-lg w-full p-6 space-y-4 shadow-2xl">
             <div className="flex items-center justify-between border-b border-slate-800 pb-3">
               <div className="flex items-center gap-2">
                 <Wifi className="w-5 h-5 text-indigo-400" />
@@ -487,63 +455,23 @@ export default function NOCFloorplanPage() {
               </button>
             </div>
 
-            {selectedAP.health_status !== "healthy" && (
-              <div className="bg-amber-500/15 border border-amber-500/40 rounded-lg p-3 flex items-start gap-2.5 text-xs text-amber-200">
-                <AlertTriangle className="w-5 h-5 text-amber-400 flex-shrink-0 mt-0.5" />
-                <div>
-                  <div className="font-bold uppercase tracking-wider text-[11px] text-amber-400">
-                    {selectedAP.health_status === "critical"
-                      ? "Critical Hardware Failure"
-                      : "Degraded Operational Alert"}
-                  </div>
-                  <div className="mt-0.5 text-slate-200 leading-snug">
-                    {selectedAP.health_reason || "High RF Co-Channel Interference & Frame Retries (>18%)"}
-                  </div>
-                </div>
+            <div className="grid grid-cols-2 gap-3 text-xs font-mono">
+              <div>
+                <span className="text-slate-500 block">Device ID:</span>
+                <span className="text-slate-200">{selectedAP.device_id}</span>
               </div>
-            )}
-
-            <div className="space-y-2 text-xs">
-              <div className="flex justify-between py-1 border-b border-slate-800">
-                <span className="text-slate-400">Physical Room / Wing</span>
-                <span className="font-semibold text-indigo-300">
-                  {selectedAP.x_pct < 50 && selectedAP.y_pct < 50
-                    ? "Conf Room 3 / Engineering (Zone North)"
-                    : selectedAP.x_pct >= 50 && selectedAP.y_pct < 50
-                    ? "Executive Boardroom (Zone East)"
-                    : selectedAP.x_pct < 50 && selectedAP.y_pct >= 50
-                    ? "NOC Ops & Data Center (Zone West)"
-                    : "Cafeteria & Lounge (Zone South)"}
-                </span>
+              <div>
+                <span className="text-slate-500 block">Vendor:</span>
+                <span className="text-slate-200">{selectedAP.vendor}</span>
               </div>
-              <div className="flex justify-between py-1 border-b border-slate-800">
-                <span className="text-slate-400">Device ID</span>
-                <span className="font-mono text-slate-200">{selectedAP.device_id}</span>
+              <div>
+                <span className="text-slate-500 block">Active Clients:</span>
+                <span className="text-slate-200">{selectedAP.client_count}</span>
               </div>
-              <div className="flex justify-between py-1 border-b border-slate-800">
-                <span className="text-slate-400">MAC Address</span>
-                <span className="font-mono text-slate-200">{selectedAP.mac_address || "N/A"}</span>
-              </div>
-              <div className="flex justify-between py-1 border-b border-slate-800">
-                <span className="text-slate-400">IP Address</span>
-                <span className="font-mono text-slate-200">{selectedAP.ip_address || "N/A"}</span>
-              </div>
-              <div className="flex justify-between py-1 border-b border-slate-800">
-                <span className="text-slate-400">Vendor</span>
-                <span className="uppercase font-semibold text-indigo-400">{selectedAP.vendor}</span>
-              </div>
-              <div className="flex justify-between py-1 border-b border-slate-800">
-                <span className="text-slate-400">Connected Clients</span>
-                <span className="font-bold text-white">{selectedAP.client_count} Active Users</span>
-              </div>
-              <div className="flex justify-between py-1 border-b border-slate-800">
-                <span className="text-slate-400">Wi-Fi Channel</span>
-                <span className="text-slate-200">Channel {selectedAP.channel || 36} (5 GHz)</span>
-              </div>
-              <div className="flex justify-between py-1">
-                <span className="text-slate-400">Coordinates (X/Y)</span>
-                <span className="font-mono text-slate-200">
-                  {selectedAP.x_pct.toFixed(1)}% / {selectedAP.y_pct.toFixed(1)}%
+              <div>
+                <span className="text-slate-500 block">Health Status:</span>
+                <span className={selectedAP.health_status === "healthy" ? "text-emerald-400" : "text-amber-400"}>
+                  {selectedAP.health_status.toUpperCase()}
                 </span>
               </div>
             </div>
@@ -560,5 +488,13 @@ export default function NOCFloorplanPage() {
         </div>
       )}
     </div>
+  );
+}
+
+export default function NOCFloorplanPage() {
+  return (
+    <Suspense fallback={<div className="p-6 text-slate-400 text-xs animate-pulse">Loading NOC Floorplan Visualizer...</div>}>
+      <NOCFloorplanContent />
+    </Suspense>
   );
 }

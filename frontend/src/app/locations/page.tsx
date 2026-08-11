@@ -357,13 +357,13 @@ export default function LocationsRegistryPage() {
               {/* Seamless Pivot Buttons */}
               <div className="flex items-center gap-2 pt-1">
                 <Link
-                  href="/noc"
+                  href={`/noc?location_id=${encodeURIComponent(selectedLocation.location_id)}&name=${encodeURIComponent(selectedLocation.name)}`}
                   className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-bold transition-all shadow-md"
                 >
                   <MapPin className="w-3.5 h-3.5" /> 2D Blueprint Canvas <ArrowUpRight className="w-3 h-3" />
                 </Link>
                 <Link
-                  href="/topology"
+                  href={`/topology?site_id=${encodeURIComponent(selectedLocation.location_id)}&name=${encodeURIComponent(selectedLocation.name)}`}
                   className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-indigo-300 border border-indigo-500/30 rounded-lg text-xs font-bold transition-all"
                 >
                   <GlobeIcon className="w-3.5 h-3.5 text-blue-400" /> Topology Graph <ArrowUpRight className="w-3 h-3" />
