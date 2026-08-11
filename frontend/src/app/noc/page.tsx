@@ -19,6 +19,7 @@ import {
   Radio,
   Eye,
   Sliders,
+  Wifi,
 } from "lucide-react";
 
 interface APPlacement {
@@ -480,25 +481,33 @@ function NOCFloorplanContent() {
                     <div className="absolute inset-0 rounded-full bg-amber-400/30 animate-pulse" />
                   )}
 
+                  {/* Glowing Wi-Fi AP Circular Marker */}
                   <div
-                    className={`px-3 py-1.5 rounded-full border shadow-xl flex items-center gap-1.5 font-mono text-[11px] font-bold transition-transform group-hover:scale-110 ${
+                    className={`p-3 rounded-full border shadow-2xl flex items-center justify-center transition-all duration-200 group-hover:scale-125 ${
                       ap.health_status === "healthy"
-                        ? "bg-emerald-950/90 border-emerald-500/40 text-emerald-300"
+                        ? "bg-emerald-950/90 border-emerald-500/50 text-emerald-400 shadow-emerald-900/40"
                         : ap.health_status === "degraded"
-                        ? "bg-amber-950/90 border-amber-500/40 text-amber-300"
-                        : "bg-rose-950/90 border-rose-500/40 text-rose-300"
-                    } ${isSelected ? "ring-2 ring-indigo-500 ring-offset-2 ring-offset-slate-950 scale-110" : ""}`}
+                        ? "bg-amber-950/90 border-amber-500/50 text-amber-400 shadow-amber-900/40 animate-pulse"
+                        : "bg-rose-950/90 border-rose-500/50 text-rose-400 shadow-rose-900/40 animate-bounce"
+                    } ${isSelected ? "ring-4 ring-indigo-500 ring-offset-2 ring-offset-slate-950 scale-125 z-20" : ""}`}
                   >
-                    <span className="w-2 h-2 rounded-full bg-current" />
-                    <span>{ap.name}</span>
+                    <Wifi className="w-4 h-4" />
+                  </div>
+
+                  {/* AP Name Badge Sub-Label */}
+                  <div className="absolute top-full left-1/2 -translate-x-1/2 mt-1 px-2 py-0.5 bg-slate-900/90 border border-slate-800 rounded text-[10px] font-semibold text-slate-300 whitespace-nowrap shadow">
+                    {ap.name}
                   </div>
 
                   {/* AP Tooltip Hover Card */}
-                  <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block bg-slate-900 border border-slate-800 p-2.5 rounded-lg text-[10px] font-mono shadow-2xl z-[100] whitespace-nowrap">
-                    <div className="font-bold text-white">{ap.name}</div>
-                    <div className="text-slate-400">{ap.vendor.toUpperCase()} • {ap.client_count} Clients</div>
+                  <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2.5 hidden group-hover:block bg-slate-900 border border-slate-800 p-2.5 rounded-xl text-[11px] shadow-2xl z-[100] whitespace-nowrap">
+                    <div className="font-bold text-white flex items-center gap-1.5">
+                      <Wifi className="w-3.5 h-3.5 text-indigo-400" />
+                      <span>{ap.name}</span>
+                    </div>
+                    <div className="text-slate-400 mt-0.5">{ap.vendor.toUpperCase()} • {ap.client_count} Clients</div>
                     {ap.health_reason && (
-                      <div className="text-amber-400 mt-0.5">{ap.health_reason}</div>
+                      <div className="text-amber-400 text-[10px] font-medium mt-1">{ap.health_reason}</div>
                     )}
                   </div>
                 </div>
@@ -511,73 +520,73 @@ function NOCFloorplanContent() {
       {/* AP Details Inspector Portal Modal (Mounted directly on document.body with ZERO top gap) */}
       {mounted && selectedAP && typeof document !== "undefined" && createPortal(
         <div className="fixed top-0 left-0 right-0 bottom-0 w-full h-full bg-slate-950/90 backdrop-blur-md flex items-center justify-center p-4 z-[999999] overflow-hidden">
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-xl w-full p-6 space-y-5 shadow-2xl animate-in fade-in zoom-in-95 duration-200">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-xl w-full p-6 space-y-5 shadow-2xl animate-in fade-in zoom-in-95 duration-200 font-sans">
             {/* Header */}
             <div className="flex items-center justify-between border-b border-slate-800/80 pb-4">
               <div>
                 <div className="flex items-center gap-2">
-                  <span className="text-[10px] font-mono uppercase tracking-wider text-slate-400 font-bold">WIRELESS ACCESS POINT</span>
-                  <span className={`px-2 py-0.5 text-[9px] font-mono font-bold uppercase rounded ${selectedAP.health_status === "healthy" ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/40" : selectedAP.health_status === "critical" ? "bg-rose-500/20 text-rose-300 border border-rose-500/40" : "bg-amber-500/20 text-amber-300 border border-amber-500/40"}`}>
+                  <span className="text-[10px] uppercase tracking-wider text-slate-400 font-bold">WIRELESS ACCESS POINT</span>
+                  <span className={`px-2 py-0.5 text-[9px] font-bold uppercase rounded ${selectedAP.health_status === "healthy" ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/40" : selectedAP.health_status === "critical" ? "bg-rose-500/20 text-rose-300 border border-rose-500/40" : "bg-amber-500/20 text-amber-300 border border-amber-500/40"}`}>
                     {selectedAP.health_status}
                   </span>
                 </div>
-                <h3 className="text-lg font-extrabold text-white tracking-tight mt-0.5">{selectedAP.name}</h3>
+                <h3 className="text-xl font-extrabold text-white tracking-tight mt-0.5">{selectedAP.name}</h3>
               </div>
               <button
                 onClick={() => setSelectedAP(null)}
-                className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-mono rounded-lg transition-colors border border-slate-700"
+                className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold rounded-lg transition-colors border border-slate-700"
               >
-                ESC / CLOSE
+                Close
               </button>
             </div>
 
             {/* Hardware Identifiers Grid */}
-            <div className="grid grid-cols-2 gap-3 p-3.5 bg-slate-950/80 rounded-xl border border-slate-800/70 text-xs font-mono">
+            <div className="grid grid-cols-2 gap-3 p-4 bg-slate-950/80 rounded-xl border border-slate-800/70 text-xs">
               <div>
-                <span className="text-slate-500 text-[10px] uppercase block tracking-wider mb-0.5">DEVICE UUID</span>
-                <span className="text-slate-200 font-semibold truncate block select-all">{selectedAP.device_id}</span>
+                <span className="text-slate-400 text-[10px] uppercase block tracking-wider font-bold mb-0.5">DEVICE UUID</span>
+                <span className="text-slate-100 font-semibold truncate block select-all">{selectedAP.device_id}</span>
               </div>
               <div>
-                <span className="text-slate-500 text-[10px] uppercase block tracking-wider mb-0.5">MAC ADDRESS</span>
-                <span className="text-slate-200 font-semibold block">{selectedAP.mac_address || "5c:5b:35:aa:bb:cc"}</span>
+                <span className="text-slate-400 text-[10px] uppercase block tracking-wider font-bold mb-0.5">MAC ADDRESS</span>
+                <span className="text-slate-100 font-semibold block">{selectedAP.mac_address || "5c:5b:35:aa:bb:cc"}</span>
               </div>
               <div>
-                <span className="text-slate-500 text-[10px] uppercase block tracking-wider mb-0.5">MANAGEMENT IP</span>
-                <span className="text-slate-200 font-semibold block">{selectedAP.ip_address || "10.42.12.50"}</span>
+                <span className="text-slate-400 text-[10px] uppercase block tracking-wider font-bold mb-0.5">MANAGEMENT IP</span>
+                <span className="text-slate-100 font-semibold block">{selectedAP.ip_address || "10.42.12.50"}</span>
               </div>
               <div>
-                <span className="text-slate-500 text-[10px] uppercase block tracking-wider mb-0.5">PLATFORM / VENDOR</span>
-                <span className="text-slate-200 font-semibold block">{selectedAP.vendor.toUpperCase()}</span>
+                <span className="text-slate-400 text-[10px] uppercase block tracking-wider font-bold mb-0.5">PLATFORM / VENDOR</span>
+                <span className="text-slate-100 font-semibold block">{selectedAP.vendor.toUpperCase()}</span>
               </div>
             </div>
 
             {/* Radio & Telemetry Grid */}
             <div className="space-y-2">
-              <span className="text-[10px] font-mono font-bold text-slate-400 uppercase tracking-wider block">RADIO TELEMETRY & CLIENT METRICS</span>
-              <div className="grid grid-cols-3 gap-3 font-mono">
-                <div className="p-3 bg-slate-950/60 rounded-xl border border-slate-800/70">
-                  <span className="text-[10px] text-slate-500 uppercase block">CONNECTED CLIENTS</span>
-                  <span className="text-base font-bold text-white mt-1 block">{selectedAP.client_count} Clients</span>
+              <span className="text-[11px] font-bold text-slate-300 uppercase tracking-wider block">RADIO TELEMETRY & CLIENT METRICS</span>
+              <div className="grid grid-cols-3 gap-3">
+                <div className="p-3.5 bg-slate-950/60 rounded-xl border border-slate-800/70">
+                  <span className="text-[10px] font-semibold text-slate-400 uppercase block">CONNECTED CLIENTS</span>
+                  <span className="text-base font-extrabold text-white mt-1 block">{selectedAP.client_count} Clients</span>
                 </div>
-                <div className="p-3 bg-slate-950/60 rounded-xl border border-slate-800/70">
-                  <span className="text-[10px] text-slate-500 uppercase block">OPERATING CHANNEL</span>
-                  <span className="text-base font-bold text-white mt-1 block">Ch {selectedAP.channel || 36} (5GHz)</span>
+                <div className="p-3.5 bg-slate-950/60 rounded-xl border border-slate-800/70">
+                  <span className="text-[10px] font-semibold text-slate-400 uppercase block">OPERATING CHANNEL</span>
+                  <span className="text-base font-extrabold text-white mt-1 block">Ch {selectedAP.channel || 36} (5GHz)</span>
                 </div>
-                <div className="p-3 bg-slate-950/60 rounded-xl border border-slate-800/70">
-                  <span className="text-[10px] text-slate-500 uppercase block">SIGNAL STRENGTH</span>
-                  <span className="text-base font-bold text-white mt-1 block">{selectedAP.rssi || -56} dBm</span>
+                <div className="p-3.5 bg-slate-950/60 rounded-xl border border-slate-800/70">
+                  <span className="text-[10px] font-semibold text-slate-400 uppercase block">SIGNAL STRENGTH</span>
+                  <span className="text-base font-extrabold text-white mt-1 block">{selectedAP.rssi || -56} dBm</span>
                 </div>
               </div>
             </div>
 
             {/* Diagnostic Root Cause Analysis (when unhealthy) */}
             {selectedAP.health_status !== "healthy" && (
-              <div className="p-3.5 bg-rose-500/10 border border-rose-500/25 rounded-xl space-y-1 text-xs">
-                <span className="text-[10px] font-mono font-bold text-rose-400 uppercase tracking-wider block">DIAGNOSTIC ROOT CAUSE</span>
-                <p className="text-slate-200 text-xs font-medium leading-relaxed">
+              <div className="p-4 bg-rose-500/10 border border-rose-500/25 rounded-xl space-y-1 text-xs">
+                <span className="text-[11px] font-bold text-rose-400 uppercase tracking-wider block">DIAGNOSTIC ROOT CAUSE</span>
+                <p className="text-slate-200 text-xs font-semibold leading-relaxed">
                   {selectedAP.health_reason || "High RF Co-Channel Interference & Retry Rate (>18%) on 5GHz radio."}
                 </p>
-                <div className="text-[10px] text-slate-400 pt-1 font-mono">
+                <div className="text-[11px] text-slate-400 pt-1 font-medium">
                   IMPACT BLAST RADIUS: {selectedAP.client_count || 4} active client sessions experiencing packet retransmissions.
                 </div>
               </div>
@@ -587,7 +596,7 @@ function NOCFloorplanContent() {
             <div className="flex items-center justify-between border-t border-slate-800/80 pt-4">
               <button
                 onClick={() => alert(`Triggered RRM Channel Optimization for ${selectedAP.name}`)}
-                className="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-mono font-semibold rounded-lg transition-colors border border-slate-700 flex items-center gap-2"
+                className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-lg transition-colors border border-slate-700 flex items-center gap-2"
               >
                 <RefreshCw className="w-3.5 h-3.5 text-indigo-400" />
                 <span>OPTIMIZE RRM CHANNEL</span>
@@ -595,7 +604,7 @@ function NOCFloorplanContent() {
 
               <button
                 onClick={() => setSelectedAP(null)}
-                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold rounded-lg transition-colors shadow-lg shadow-indigo-600/20"
+                className="px-5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold rounded-lg transition-colors shadow-lg shadow-indigo-600/20"
               >
                 Close Inspector
               </button>
