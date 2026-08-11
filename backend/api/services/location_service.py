@@ -36,6 +36,36 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 
+def _clean_location_name(raw_name: str) -> str:
+    if not raw_name:
+        return "Enterprise Site Facility"
+    clean = str(raw_name).strip()
+    if "null" in clean.lower():
+        import re
+        match = re.search(r'\(([^)]+)\)', clean)
+        if match:
+            city_info = match.group(1)
+            city_name = city_info.split(',')[0].strip()
+            if city_name and city_name.lower() != "null":
+                return f"{city_name} Operations Center ({city_info})"
+        parts = [p.strip() for p in clean.replace("null", "").replace("(", "").replace(")", "").split(",") if p.strip() and p.strip().lower() != "null"]
+        if parts:
+            city = parts[0]
+            return f"{city} Regional Facility ({city}, IN)"
+        return "Enterprise Operations Hub (HQ)"
+    if clean.lower().startswith("site-"):
+        import re
+        match = re.search(r'site-(\d+)\s*\(([^)]+)\)', clean, re.IGNORECASE)
+        if match:
+            site_num, city_info = match.group(1), match.group(2)
+            city_name = city_info.split(',')[0].strip()
+            return f"{city_name}: Area Office ({city_info})"
+        match_num = re.search(r'site-(\d+)', clean, re.IGNORECASE)
+        if match_num:
+            return f"Enterprise Site {match_num.group(1)}"
+    return clean
+
+
 class LocationService:
     """Service handling facility hierarchy, floorplan AP placement, and health aggregation."""
 
@@ -53,7 +83,7 @@ class LocationService:
             dev_count = await self._get_location_device_count(loc_id)
             nodes_by_id[loc_id] = LocationNode(
                 location_id=loc_id,
-                name=l["name"],
+                name=_clean_location_name(l["name"]),
                 type=l["type"],
                 parent_id=l.get("parent_id"),
                 latitude=l.get("latitude"),
