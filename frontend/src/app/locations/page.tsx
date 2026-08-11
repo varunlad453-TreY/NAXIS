@@ -268,11 +268,10 @@ export default function LocationsRegistryPage() {
             <button
               key={type}
               onClick={() => setTypeFilter(type)}
-              className={`px-3 py-1.5 rounded-lg text-[11px] font-bold uppercase tracking-wider transition-all ${
-                typeFilter === type
+              className={`px-3 py-1.5 rounded-lg text-[11px] font-bold uppercase tracking-wider transition-all ${typeFilter === type
                   ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/30"
                   : "bg-slate-950 text-slate-400 border border-slate-800 hover:bg-slate-800 hover:text-slate-200"
-              }`}
+                }`}
             >
               {type}
             </button>
@@ -473,11 +472,10 @@ export default function LocationsRegistryPage() {
                       </div>
 
                       {/* Diagnostic Reason & Impact Breakdown */}
-                      <div className={`p-3.5 rounded-xl border space-y-2 text-xs ${
-                        dev.status === "online" 
+                      <div className={`p-3.5 rounded-xl border space-y-2 text-xs ${dev.status === "online"
                           ? "bg-emerald-950/20 border-emerald-500/20 text-emerald-300"
                           : "bg-amber-950/20 border-amber-500/30 text-amber-200"
-                      }`}>
+                        }`}>
                         <div className="flex items-start gap-2">
                           <ShieldAlert className={`w-4 h-4 shrink-0 mt-0.5 ${dev.status === "online" ? "text-emerald-400" : "text-amber-400"}`} />
                           <div>

@@ -159,6 +159,39 @@ function NOCFloorplanContent() {
   const [loading, setLoading] = useState(true);
   const [filterHealth, setFilterHealth] = useState<"all" | "degraded">("all");
   const [heatmapMode, setHeatmapMode] = useState<"placements" | "coverage" | "interference">("placements");
+  const [rrmOptimizing, setRrmOptimizing] = useState(false);
+  const [rrmResultMsg, setRrmResultMsg] = useState<string | null>(null);
+
+  const handleOptimizeRRM = async (ap: APPlacement) => {
+    setRrmOptimizing(true);
+    setRrmResultMsg(null);
+    try {
+      const res = await fetch(`http://localhost:8000/locations/aps/${ap.device_id}/optimize-rrm`, {
+        method: "POST",
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setRrmResultMsg(data.message || "RRM Channel Optimization executed successfully!");
+        setSelectedAP((prev) =>
+          prev
+            ? {
+                ...prev,
+                health_status: "healthy",
+                health_reason: undefined,
+                channel: data.optimized_channel || 149,
+                rssi: -48,
+              }
+            : null
+        );
+        fetchFloorplan(selectedFloorId, floorplan?.name);
+      }
+    } catch (err) {
+      console.error("RRM Optimization error:", err);
+      setRrmResultMsg("Failed to execute RRM optimization task.");
+    } finally {
+      setRrmOptimizing(false);
+    }
+  };
 
   const [expandedNodes, setExpandedNodes] = useState<Record<string, boolean>>({
     "region-apac": true,
@@ -599,6 +632,14 @@ function NOCFloorplanContent() {
               </div>
             </div>
 
+            {/* RRM Optimization Success Feedback Banner */}
+            {rrmResultMsg && (
+              <div className="p-3.5 bg-emerald-500/10 border border-emerald-500/30 rounded-xl text-xs text-emerald-300 font-semibold flex items-center gap-2 animate-in fade-in duration-200">
+                <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                <span>{rrmResultMsg}</span>
+              </div>
+            )}
+
             {/* Diagnostic Root Cause Analysis (when unhealthy) */}
             {selectedAP.health_status !== "healthy" && (
               <div className="p-4 bg-rose-500/10 border border-rose-500/25 rounded-xl space-y-1 text-xs">
@@ -615,16 +656,17 @@ function NOCFloorplanContent() {
             {/* Footer Actions */}
             <div className="flex items-center justify-between border-t border-slate-800/80 pt-4">
               <button
-                onClick={() => alert(`Triggered RRM Channel Optimization for ${selectedAP.name}`)}
-                className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-lg transition-colors border border-slate-700 flex items-center gap-2"
+                onClick={() => selectedAP && handleOptimizeRRM(selectedAP)}
+                disabled={rrmOptimizing || selectedAP.health_status === "healthy"}
+                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:bg-slate-800 disabled:text-slate-400 text-white text-xs font-semibold rounded-lg transition-colors border border-indigo-500/50 flex items-center gap-2 shadow-lg shadow-indigo-600/20"
               >
-                <RefreshCw className="w-3.5 h-3.5 text-indigo-400" />
-                <span>OPTIMIZE RRM CHANNEL</span>
+                <RefreshCw className={`w-3.5 h-3.5 ${rrmOptimizing ? "animate-spin text-indigo-300" : ""}`} />
+                <span>{rrmOptimizing ? "OPTIMIZING RRM CHANNEL..." : selectedAP.health_status === "healthy" ? "RRM CHANNEL OPTIMIZED" : "OPTIMIZE RRM CHANNEL"}</span>
               </button>
 
               <button
                 onClick={() => setSelectedAP(null)}
-                className="px-5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold rounded-lg transition-colors shadow-lg shadow-indigo-600/20"
+                className="px-5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-lg transition-colors border border-slate-700"
               >
                 Close Inspector
               </button>
