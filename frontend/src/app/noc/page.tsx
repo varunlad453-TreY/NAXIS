@@ -490,15 +490,18 @@ function NOCFloorplanContent() {
                   style={{ left: `${ap.x_pct}%`, top: `${ap.y_pct}%` }}
                   className="absolute -translate-x-1/2 -translate-y-1/2 cursor-pointer transition-all duration-200 group z-10"
                 >
-                  {/* RF Coverage Heatmap Gradients */}
+                  {/* RF Coverage Heatmap Gradients (Evaluated by RSSI signal strength) */}
                   {heatmapMode === "coverage" && (
                     <div
                       style={{
-                        width: "220px",
-                        height: "220px",
-                        background: ap.health_status === "healthy"
-                          ? "radial-gradient(circle, rgba(16, 185, 129, 0.35) 0%, rgba(16, 185, 129, 0.1) 45%, transparent 70%)"
-                          : "radial-gradient(circle, rgba(245, 158, 11, 0.4) 0%, rgba(245, 158, 11, 0.12) 50%, transparent 70%)",
+                        width: "240px",
+                        height: "240px",
+                        background:
+                          (ap.rssi ?? -56) >= -65
+                            ? "radial-gradient(circle, rgba(16, 185, 129, 0.4) 0%, rgba(16, 185, 129, 0.12) 50%, transparent 75%)"
+                            : (ap.rssi ?? -56) >= -75
+                            ? "radial-gradient(circle, rgba(245, 158, 11, 0.4) 0%, rgba(245, 158, 11, 0.12) 50%, transparent 75%)"
+                            : "radial-gradient(circle, rgba(239, 68, 68, 0.35) 0%, rgba(239, 68, 68, 0.1) 50%, transparent 75%)",
                       }}
                       className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full pointer-events-none animate-pulse"
                     />
