@@ -121,23 +121,27 @@ class LocationService:
         except Exception as exc:
             logger.warning("Failed to lookup vendor_ids for site %s: %s", location_id, exc)
 
-        # Extract specific site token (e.g. "Ahmedabad", "Bhubaneshwar", "Pimpri")
-        raw_token = loc_name.split(":")[0].split("(")[0].strip() if loc_name else ""
-        is_specific_token = len(raw_token) >= 4 and raw_token.lower() not in ("site", "building", "floor", "region", "root", "unknown")
-        search_term = f"%{raw_token}%" if is_specific_token else "___NONE___"
+        # Extract specific site tokens (e.g. "Ahmedabad", "B109", "PVBU")
+        tokens = [t.strip(" ()[]:") for t in loc_name.replace(":", " ").replace("(", " ").replace(")", " ").split() if len(t.strip(" ()[]:")) >= 3]
+        specific_tokens = [t for t in tokens if t.lower() not in ("site", "building", "floor", "region", "root", "unknown", "office", "area")]
+        patterns = [f"%{t}%" for t in specific_tokens] if specific_tokens else ["___NONE___"]
 
         query = """
             SELECT i.device_id, COALESCE(i.hostname, i.device_id) AS name, i.mac AS mac_address,
                    i.ip_address, i.platform AS vendor, i.num_clients, i.connected, i.site_id, i.model
             FROM inventory i
             LEFT JOIN location_mappings lm ON lm.vendor = i.platform AND lm.vendor_site_id = i.site_id
-            WHERE (lm.location_id = $1 OR i.site_id = $1 OR i.site_id = ANY($2::text[]) OR ($3 != '___NONE___' AND (i.site_name ILIKE $3 OR i.hostname ILIKE $3)))
+            WHERE (lm.location_id = $1 OR i.site_id = $1 OR i.site_id = ANY($2::text[])
+               OR EXISTS (
+                   SELECT 1 FROM unnest($3::text[]) pat
+                   WHERE pat != '___NONE___' AND (i.site_name ILIKE pat OR i.hostname ILIKE pat OR i.device_id ILIKE pat)
+               ))
               AND (i.device_type = 'ap' OR i.platform IN ('juniper_mist', 'mist', 'aruba_central', 'cisco_dnac'))
             LIMIT 50;
         """
         placements: List[APPlacement] = []
         try:
-            rows = await db.fetch(query, location_id, vendor_site_ids, search_term)
+            rows = await db.fetch(query, location_id, vendor_site_ids, patterns)
             if not rows:
                 h_loc = int(hashlib.md5(location_id.encode("utf-8")).hexdigest(), 16)
                 offset = (h_loc % 80) * 8
