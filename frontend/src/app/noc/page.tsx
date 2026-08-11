@@ -95,20 +95,21 @@ const TreeNodeItem = React.memo(function TreeNodeItem({
     <div className="select-none">
       <div
         onClick={() => onSelectNode(node)}
-        className={`flex items-center justify-between px-2.5 py-1.5 rounded-lg cursor-pointer text-xs transition-colors ${
+        title={node.name}
+        className={`flex items-center justify-between px-3 py-2 rounded-lg cursor-pointer text-xs transition-all ${
           isSelected
-            ? "bg-indigo-600/30 text-white font-semibold border border-indigo-500/40"
-            : "text-slate-300 hover:bg-slate-800/60"
+            ? "bg-indigo-600/30 text-white font-semibold border border-indigo-500/50 shadow-sm"
+            : "text-slate-300 hover:bg-slate-800/60 hover:text-white"
         }`}
       >
-        <div className="flex items-center gap-1.5 truncate">
+        <div className="flex items-center gap-2 min-w-0 flex-1">
           {hasChildren ? (
             <button
               onClick={(e) => {
                 e.stopPropagation();
                 onToggleExpand(node.location_id);
               }}
-              className="p-0.5 hover:bg-slate-700/50 rounded text-slate-400"
+              className="p-0.5 hover:bg-slate-700/60 rounded text-slate-400 flex-shrink-0"
             >
               {isExpanded ? (
                 <ChevronDown className="w-3.5 h-3.5" />
@@ -117,21 +118,21 @@ const TreeNodeItem = React.memo(function TreeNodeItem({
               )}
             </button>
           ) : (
-            <span className="w-4" />
+            <span className="w-3.5 flex-shrink-0" />
           )}
           {getTypeIcon(node.type)}
-          <span className="truncate">{node.name}</span>
+          <span className="truncate font-medium text-slate-200">{node.name}</span>
         </div>
 
-        <div className="flex items-center gap-1.5 ml-2">
+        <div className="flex items-center gap-1.5 ml-2 flex-shrink-0">
           {node.health_status === "degraded" && (
-            <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+            <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" title="Degraded Status" />
           )}
           {node.health_status === "critical" && (
-            <span className="w-2 h-2 rounded-full bg-rose-500 animate-ping" />
+            <span className="w-2 h-2 rounded-full bg-rose-500 animate-ping" title="Critical Status" />
           )}
           {node.health_status === "healthy" && (
-            <span className="w-2 h-2 rounded-full bg-emerald-400/80" />
+            <span className="w-2 h-2 rounded-full bg-emerald-400/90" title="Healthy Status" />
           )}
         </div>
       </div>
@@ -343,14 +344,14 @@ function NOCFloorplanContent() {
       </div>
 
       {/* Main Visualizer Split Screen */}
-      <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-        {/* Left Column: Facility Hierarchy Tree */}
-        <div className="lg:col-span-1 bg-slate-900/90 border border-slate-800 rounded-xl p-4 space-y-4 shadow-xl backdrop-blur-md">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+        {/* Left Column: Facility Hierarchy Tree (col-span-4 = 33% width for un-clipped site names) */}
+        <div className="lg:col-span-4 bg-slate-900/90 border border-slate-800 rounded-xl p-4 space-y-4 shadow-xl backdrop-blur-md">
           <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-2">
+            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">
               <Building className="w-4 h-4 text-indigo-400" /> Facility Hierarchy
             </h3>
-            <span className="text-[10px] font-mono text-indigo-300 bg-indigo-950/60 border border-indigo-500/20 px-2 py-0.5 rounded-full">
+            <span className="text-[10px] font-semibold text-indigo-300 bg-indigo-950/60 border border-indigo-500/20 px-2 py-0.5 rounded-full">
               {treeData.length} Sites
             </span>
           </div>
@@ -387,35 +388,42 @@ function NOCFloorplanContent() {
           </div>
         </div>
 
-        {/* Right Column: Interactive 2D Blueprint Canvas */}
-        <div className="lg:col-span-3 bg-slate-900/90 border border-slate-800 rounded-xl p-5 space-y-4 shadow-2xl backdrop-blur-md flex flex-col justify-between">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-slate-800 pb-3 gap-3">
-            <div>
-              <h2 className="text-lg font-bold text-white flex items-center gap-2">
-                <Layers className="w-5 h-5 text-indigo-400" /> {floorplan?.name || "Select a Location"}
+        {/* Right Column: Interactive 2D Blueprint Canvas (col-span-8) */}
+        <div className="lg:col-span-8 bg-slate-900/90 border border-slate-800 rounded-xl p-5 space-y-4 shadow-2xl backdrop-blur-md flex flex-col justify-between">
+          <div className="flex items-center justify-between border-b border-slate-800 pb-3.5 gap-4 min-h-[56px]">
+            <div className="min-w-0 flex-1">
+              <h2 className="text-base font-bold text-white flex items-center gap-2 truncate" title={floorplan?.name || "Select a Location"}>
+                <Layers className="w-4 h-4 text-indigo-400 flex-shrink-0" />
+                <span className="truncate">{floorplan?.name || "Select a Location"}</span>
               </h2>
-              <p className="text-xs text-slate-400 mt-0.5">
+              <p className="text-[11px] text-slate-400 mt-0.5 truncate">
                 Normalized coordinate space • {displayedAPs.length} active AP markers rendered
               </p>
             </div>
 
-            {/* Layer Control Bar */}
-            <div className="flex items-center gap-1.5 bg-slate-950 p-1 rounded-xl border border-slate-800/80 text-xs font-mono">
+            {/* Layer Control Bar - Anchored flex-shrink-0 */}
+            <div className="flex-shrink-0 flex items-center gap-1 bg-slate-950 p-1 rounded-xl border border-slate-800 text-xs">
               <button
                 onClick={() => setHeatmapMode("placements")}
-                className={`px-3 py-1 rounded-lg transition-colors ${heatmapMode === "placements" ? "bg-indigo-600 text-white font-bold shadow" : "text-slate-400 hover:text-white"}`}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                  heatmapMode === "placements" ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/30" : "text-slate-400 hover:text-slate-200"
+                }`}
               >
                 AP Placement
               </button>
               <button
                 onClick={() => setHeatmapMode("coverage")}
-                className={`px-3 py-1 rounded-lg transition-colors ${heatmapMode === "coverage" ? "bg-emerald-600 text-white font-bold shadow" : "text-slate-400 hover:text-white"}`}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                  heatmapMode === "coverage" ? "bg-emerald-600 text-white shadow-md shadow-emerald-600/30" : "text-slate-400 hover:text-slate-200"
+                }`}
               >
                 RF Signal Coverage
               </button>
               <button
                 onClick={() => setHeatmapMode("interference")}
-                className={`px-3 py-1 rounded-lg transition-colors ${heatmapMode === "interference" ? "bg-amber-600 text-white font-bold shadow" : "text-slate-400 hover:text-white"}`}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                  heatmapMode === "interference" ? "bg-amber-600 text-white shadow-md shadow-amber-600/30" : "text-slate-400 hover:text-slate-200"
+                }`}
               >
                 Interference Overlay
               </button>
