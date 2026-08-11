@@ -473,25 +473,37 @@ function NOCFloorplanContent() {
                     />
                   )}
 
-                  {/* Pulse Ring for Degraded/Critical APs */}
-                  {ap.health_status === "critical" && (
-                    <div className="absolute inset-0 rounded-full bg-rose-500/40 animate-ping" />
-                  )}
-                  {ap.health_status === "degraded" && (
-                    <div className="absolute inset-0 rounded-full bg-amber-400/30 animate-pulse" />
-                  )}
+                  {/* Blinking Radar Beacon Rings on APs */}
+                  <div
+                    className={`absolute -inset-2 rounded-full pointer-events-none animate-ping ${
+                      ap.health_status === "healthy"
+                        ? "bg-emerald-500/35"
+                        : ap.health_status === "degraded"
+                        ? "bg-amber-500/45"
+                        : "bg-rose-500/60"
+                    }`}
+                  />
+                  <div
+                    className={`absolute -inset-1 rounded-full pointer-events-none animate-pulse ${
+                      ap.health_status === "healthy"
+                        ? "bg-emerald-400/20"
+                        : ap.health_status === "degraded"
+                        ? "bg-amber-400/30"
+                        : "bg-rose-400/40"
+                    }`}
+                  />
 
                   {/* Glowing Wi-Fi AP Circular Marker */}
                   <div
-                    className={`p-3 rounded-full border shadow-2xl flex items-center justify-center transition-all duration-200 group-hover:scale-125 ${
+                    className={`relative p-3 rounded-full border shadow-2xl flex items-center justify-center transition-all duration-200 group-hover:scale-125 ${
                       ap.health_status === "healthy"
-                        ? "bg-emerald-950/90 border-emerald-500/50 text-emerald-400 shadow-emerald-900/40"
+                        ? "bg-emerald-950/90 border-emerald-500/60 text-emerald-400 shadow-emerald-900/50"
                         : ap.health_status === "degraded"
-                        ? "bg-amber-950/90 border-amber-500/50 text-amber-400 shadow-amber-900/40 animate-pulse"
-                        : "bg-rose-950/90 border-rose-500/50 text-rose-400 shadow-rose-900/40 animate-bounce"
+                        ? "bg-amber-950/90 border-amber-500/60 text-amber-400 shadow-amber-900/50"
+                        : "bg-rose-950/90 border-rose-500/60 text-rose-400 shadow-rose-900/50"
                     } ${isSelected ? "ring-4 ring-indigo-500 ring-offset-2 ring-offset-slate-950 scale-125 z-20" : ""}`}
                   >
-                    <Wifi className="w-4 h-4" />
+                    <Wifi className="w-4 h-4 animate-pulse" />
                   </div>
 
                   {/* AP Name Badge Sub-Label */}
