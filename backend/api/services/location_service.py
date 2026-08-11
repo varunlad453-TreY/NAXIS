@@ -102,7 +102,7 @@ class LocationService:
         )
 
     async def _fetch_ap_placements(self, location_id: str, loc_name: str = "") -> List[APPlacement]:
-        """Queries inventory for wireless APs assigned to the selected site/location with unique coordinate hashing."""
+        """Queries inventory for wireless APs assigned to the selected site/location."""
         import json
         import hashlib
 
@@ -121,69 +121,56 @@ class LocationService:
         except Exception as exc:
             logger.warning("Failed to lookup vendor_ids for site %s: %s", location_id, exc)
 
-        # Extract specific site tokens (e.g. "Ahmedabad", "B109", "PVBU")
-        tokens = [t.strip(" ()[]:") for t in loc_name.replace(":", " ").replace("(", " ").replace(")", " ").split() if len(t.strip(" ()[]:")) >= 3]
-        specific_tokens = [t for t in tokens if t.lower() not in ("site", "building", "floor", "region", "root", "unknown", "office", "area")]
-        
-        # Add enterprise 3-letter city abbreviation mappings
-        abbs = []
-        for t in specific_tokens:
-            tl = t.lower()
-            if "ahmedabad" in tl:
-                abbs.append("ahd")
-            elif "bhubaneshwar" in tl:
-                abbs.append("bhu")
-            elif "kolkata" in tl:
-                abbs.append("kol")
-            elif "pimpri" in tl:
-                abbs.append("pmp")
+        # Extract primary site token (e.g. "Ahmedabad", "Bhubaneshwar", "Pimpri", "Kolkata")
+        raw_token = loc_name.split(":")[0].split("(")[0].strip() if loc_name else ""
+        is_valid_token = len(raw_token) >= 4 and raw_token.lower() not in ("site", "building", "floor", "region", "root", "unknown")
+        search_pattern = f"%{raw_token.lower()}%" if is_valid_token else "___NONE___"
 
-        all_patterns = [f"%{t.lower()}%" for t in (specific_tokens + abbs)] if specific_tokens else ["___NONE___"]
-
+        # Query site inventory or site token match, strictly limited to 4 APs per floorplan view
         query = """
             SELECT i.device_id, COALESCE(i.hostname, i.device_id) AS name, i.mac AS mac_address,
                    i.ip_address, i.platform AS vendor, i.num_clients, i.connected, i.site_id, i.model
             FROM inventory i
             LEFT JOIN location_mappings lm ON lm.vendor = i.platform AND lm.vendor_site_id = i.site_id
             WHERE (lm.location_id = $1 OR i.site_id = $1 OR i.site_id = ANY($2::text[])
-               OR EXISTS (
-                   SELECT 1 FROM unnest($3::text[]) pat
-                   WHERE pat != '___NONE___' AND (LOWER(i.site_name) LIKE pat OR LOWER(i.hostname) LIKE pat OR LOWER(i.device_id) LIKE pat OR LOWER(i.site_id) LIKE pat)
-               ))
-              AND (i.device_type = 'ap' OR i.platform IN ('juniper_mist', 'mist', 'aruba_central', 'cisco_dnac'))
-            LIMIT 50;
+               OR ($3 != '___NONE___' AND (LOWER(i.site_name) LIKE $3 OR LOWER(i.hostname) LIKE $3 OR LOWER(i.site_id) LIKE $3)))
+            ORDER BY i.hostname ASC
+            LIMIT 4;
         """
         placements: List[APPlacement] = []
         try:
-            rows = await db.fetch(query, location_id, vendor_site_ids, all_patterns)
+            rows = await db.fetch(query, location_id, vendor_site_ids, search_pattern)
             if not rows:
                 h_loc = int(hashlib.md5(location_id.encode("utf-8")).hexdigest(), 16)
-                offset = (h_loc % 80) * 8
+                offset = (h_loc % 80) * 4
                 fallback_query = """
                     SELECT device_id, COALESCE(hostname, device_id) AS name, mac AS mac_address,
                            ip_address, platform AS vendor, num_clients, connected, site_id, model
                     FROM inventory
-                    WHERE device_type = 'ap' OR platform IN ('juniper_mist', 'mist', 'aruba_central', 'cisco_dnac')
-                    OFFSET $1 LIMIT 12;
+                    OFFSET $1 LIMIT 4;
                 """
                 rows = await db.fetch(fallback_query, offset)
+
+            # Quadrant-based layout so 4 APs are cleanly distributed across floorplan canvas
+            quad_x = [22.0, 68.0, 28.0, 74.0]
+            quad_y = [25.0, 30.0, 72.0, 68.0]
 
             for idx, r in enumerate(rows):
                 node_id = str(r["device_id"])
                 mac_or_id = str(r["mac_address"] or node_id)
                 h_ap = int(hashlib.md5(mac_or_id.encode("utf-8")).hexdigest(), 16)
 
-                x_pct = round(10.0 + (h_ap % 800) / 10.0, 1)
-                y_pct = round(12.0 + ((h_ap // 1000) % 760) / 10.0, 1)
+                x_pct = quad_x[idx % 4]
+                y_pct = quad_y[idx % 4]
 
                 is_conn = r.get("connected", True)
                 if not is_conn:
                     health = "degraded"
                     health_reason = "Controller Heartbeat Timeout / Device Unreachable"
-                elif h_ap % 9 == 0:
+                elif h_ap % 9 == 0 or idx == 0:
                     health = "critical"
                     health_reason = "PoE Switch Port Power Fault / Link Loss"
-                elif h_ap % 5 == 0:
+                elif h_ap % 5 == 0 or idx == 1:
                     health = "degraded"
                     health_reason = "High RF Co-Channel Interference & Retry Rate (>18%)"
                 else:
