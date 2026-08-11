@@ -308,11 +308,11 @@ export default function LocationsRegistryPage() {
       {selectedLocation && (
         <div
           onClick={() => setSelectedLocation(null)}
-          className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex justify-end transition-opacity duration-300"
+          className="fixed inset-0 top-0 left-0 w-screen h-screen z-[9999] bg-slate-950/85 backdrop-blur-md flex justify-end transition-opacity duration-300"
         >
           <div
             onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-2xl bg-slate-950 h-full shadow-2xl border-l border-slate-800/80 flex flex-col justify-between transform transition-all duration-300 ease-out will-change-transform"
+            className="w-full max-w-2xl bg-slate-950 h-screen shadow-2xl border-l border-slate-800 flex flex-col justify-between transform transition-all duration-300 ease-out will-change-transform"
           >
             {/* Drawer Top Header */}
             <div className="p-6 border-b border-slate-800/80 space-y-4 bg-slate-950/90 backdrop-blur-md">
