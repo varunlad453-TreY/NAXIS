@@ -304,12 +304,18 @@ export default function LocationsRegistryPage() {
         </table>
       </div>
 
-      {/* Sleek Right Slide-Over Inspector Drawer (Fortune-50 Enterprise Grade) */}
+      {/* Sleek Ultra-Performant Right Slide-Over Inspector Drawer (Fortune-50 Enterprise Grade) */}
       {selectedLocation && (
-        <div className="fixed inset-0 z-50 overflow-hidden bg-black/60 backdrop-blur-sm flex justify-end">
-          <div className="w-full max-w-2xl bg-slate-950 h-full shadow-2xl border-l border-slate-800 flex flex-col justify-between animate-in slide-in-from-right duration-200">
+        <div
+          onClick={() => setSelectedLocation(null)}
+          className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex justify-end transition-opacity duration-300"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-2xl bg-slate-950 h-full shadow-2xl border-l border-slate-800/80 flex flex-col justify-between transform transition-all duration-300 ease-out will-change-transform"
+          >
             {/* Drawer Top Header */}
-            <div className="p-6 border-b border-slate-800/80 space-y-4">
+            <div className="p-6 border-b border-slate-800/80 space-y-4 bg-slate-950/90 backdrop-blur-md">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <span className="px-2.5 py-1 rounded-full bg-indigo-500/10 text-indigo-400 text-[10px] font-mono font-bold uppercase tracking-wider border border-indigo-500/30">
@@ -347,10 +353,10 @@ export default function LocationsRegistryPage() {
               </div>
             </div>
 
-            {/* Drawer Body Details */}
-            <div className="p-6 space-y-6 overflow-y-auto flex-1 divide-y divide-slate-800/80">
+            {/* High Performance 120FPS Fast Scroll Drawer Body */}
+            <div className="p-6 space-y-6 overflow-y-auto flex-1 divide-y divide-slate-800/80 fast-scroll-container">
               {/* Site Details List */}
-              <div className="space-y-3 pb-4">
+              <div className="space-y-3 pb-4 fast-scroll-item">
                 <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-2">
                   <Radio className="w-4 h-4 text-indigo-400" /> Site Metadata & Controller Bindings
                 </h3>
@@ -371,7 +377,7 @@ export default function LocationsRegistryPage() {
               </div>
 
               {/* Real Assigned Hardware Asset List with Deep Diagnostic RCA */}
-              <div className="pt-5 space-y-5">
+              <div className="pt-5 space-y-5 fast-scroll-item">
                 <div className="flex items-center justify-between">
                   <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-2">
                     <Server className="w-4 h-4 text-indigo-400" /> Hardware Asset Telemetry ({assignedDevices.length})
@@ -386,7 +392,7 @@ export default function LocationsRegistryPage() {
                   {assignedDevices.map((dev) => (
                     <div
                       key={dev.device_id}
-                      className="p-4 rounded-xl bg-slate-900/60 border border-slate-800/80 hover:border-indigo-500/40 transition-all space-y-3"
+                      className="p-4 rounded-xl bg-slate-900/60 border border-slate-800/80 hover:border-indigo-500/40 transition-all space-y-3 fast-scroll-item"
                     >
                       {/* Asset Header */}
                       <div className="flex items-start justify-between gap-3 border-b border-slate-800/60 pb-3">
