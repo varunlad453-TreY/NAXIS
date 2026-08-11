@@ -27,11 +27,11 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html lang="en" className="bg-slate-950" suppressHydrationWarning>
       <head>
         <script dangerouslySetInnerHTML={{ __html: themeScript }} />
       </head>
-      <body suppressHydrationWarning className={`${manrope.variable} font-sans antialiased bg-background text-foreground`}>
+      <body suppressHydrationWarning className={`${manrope.variable} font-sans antialiased bg-slate-950 text-foreground`}>
         <QueryProvider>
           <div className="relative min-h-screen">
             <div aria-hidden className="pointer-events-none fixed inset-0 -z-10 overflow-hidden">
