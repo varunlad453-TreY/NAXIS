@@ -121,14 +121,17 @@ class LocationService:
         except Exception as exc:
             logger.warning("Failed to lookup vendor_ids for site %s: %s", location_id, exc)
 
-        search_term = f"%{loc_name.split(':')[0].split('(')[0].strip()}%" if loc_name else "%"
+        # Extract specific site token (e.g. "Ahmedabad", "Bhubaneshwar", "Pimpri")
+        raw_token = loc_name.split(":")[0].split("(")[0].strip() if loc_name else ""
+        is_specific_token = len(raw_token) >= 4 and raw_token.lower() not in ("site", "building", "floor", "region", "root", "unknown")
+        search_term = f"%{raw_token}%" if is_specific_token else "___NONE___"
 
         query = """
             SELECT i.device_id, COALESCE(i.hostname, i.device_id) AS name, i.mac AS mac_address,
                    i.ip_address, i.platform AS vendor, i.num_clients, i.connected, i.site_id, i.model
             FROM inventory i
             LEFT JOIN location_mappings lm ON lm.vendor = i.platform AND lm.vendor_site_id = i.site_id
-            WHERE (lm.location_id = $1 OR i.site_id = $1 OR i.site_id = ANY($2::text[]) OR i.site_name ILIKE $3 OR i.hostname ILIKE $3)
+            WHERE (lm.location_id = $1 OR i.site_id = $1 OR i.site_id = ANY($2::text[]) OR ($3 != '___NONE___' AND (i.site_name ILIKE $3 OR i.hostname ILIKE $3)))
               AND (i.device_type = 'ap' OR i.platform IN ('juniper_mist', 'mist', 'aruba_central', 'cisco_dnac'))
             LIMIT 50;
         """
