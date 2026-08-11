@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import Link from "next/link";
 import {
   Building,
@@ -59,6 +60,23 @@ export default function LocationsRegistryPage() {
   const [typeFilter, setTypeFilter] = useState<string>("all");
   const [selectedLocation, setSelectedLocation] = useState<LocationItem | null>(null);
   const [assignedDevices, setAssignedDevices] = useState<AssignedDevice[]>([]);
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  // Lock underlying page scroll when drawer is open
+  useEffect(() => {
+    if (selectedLocation) {
+      document.body.style.overflow = "hidden";
+    } else {
+      document.body.style.overflow = "";
+    }
+    return () => {
+      document.body.style.overflow = "";
+    };
+  }, [selectedLocation]);
 
   const fetchLocations = async () => {
     setLoading(true);
@@ -304,11 +322,11 @@ export default function LocationsRegistryPage() {
         </table>
       </div>
 
-      {/* Sleek Ultra-Performant Right Slide-Over Inspector Drawer (Fortune-50 Enterprise Grade) */}
-      {selectedLocation && (
+      {/* React Portal to Root Document Body (Guarantees Zero Top Header Gap & Body Scroll Lock) */}
+      {mounted && selectedLocation && createPortal(
         <div
           onClick={() => setSelectedLocation(null)}
-          className="fixed inset-0 top-0 left-0 w-screen h-screen z-[9999] bg-slate-950/85 backdrop-blur-md flex justify-end transition-opacity duration-300"
+          className="fixed inset-0 top-0 left-0 w-screen h-screen z-[99999] bg-slate-950/85 backdrop-blur-md flex justify-end transition-opacity duration-300 overflow-hidden"
         >
           <div
             onClick={(e) => e.stopPropagation()}
@@ -498,7 +516,8 @@ export default function LocationsRegistryPage() {
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );
