@@ -211,7 +211,7 @@ function NOCFloorplanContent() {
               activeNode = matched;
             }
             setSelectedFloorId(activeNode.location_id);
-            fetchFloorplan(activeNode.location_id);
+            fetchFloorplan(activeNode.location_id, activeNode.name);
           }
         }
       }
@@ -222,10 +222,13 @@ function NOCFloorplanContent() {
     }
   };
 
-  const fetchFloorplan = async (locId: string) => {
+  const fetchFloorplan = async (locId: string, name?: string) => {
     setLoading(true);
     try {
-      const res = await fetch(`http://localhost:8000/locations/${locId}/floorplan`);
+      const url = name || targetName
+        ? `http://localhost:8000/locations/${locId}/floorplan?name=${encodeURIComponent(name || targetName || "")}`
+        : `http://localhost:8000/locations/${locId}/floorplan`;
+      const res = await fetch(url);
       if (res.ok) {
         const data = await res.json();
         setFloorplan(data);
@@ -243,7 +246,7 @@ function NOCFloorplanContent() {
 
   const handleSelectNode = useCallback((node: LocationTreeNode) => {
     setSelectedFloorId(node.location_id);
-    fetchFloorplan(node.location_id);
+    fetchFloorplan(node.location_id, node.name);
   }, []);
 
   const handleToggleExpand = useCallback((id: string) => {

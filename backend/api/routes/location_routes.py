@@ -6,9 +6,9 @@ and vendor site mappings.
 """
 
 import logging
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 try:
     from backend.api.models.location_models import (
@@ -78,9 +78,9 @@ async def get_location_by_id(location_id: str) -> Dict[str, Any]:
     summary="Get interactive floorplan canvas and AP placements",
     description="Returns floorplan background image and AP markers normalized as percentage coordinates (x_pct, y_pct).",
 )
-async def get_location_floorplan(location_id: str) -> FloorplanResponse:
+async def get_location_floorplan(location_id: str, name: Optional[str] = Query(None)) -> FloorplanResponse:
     try:
-        return await location_service.get_floorplan_details(location_id)
+        return await location_service.get_floorplan_details(location_id, name=name)
     except Exception as exc:
         logger.error(f"Error fetching floorplan for {location_id}: {exc}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to fetch floorplan details")

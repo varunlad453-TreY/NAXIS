@@ -69,10 +69,10 @@ class LocationService:
 
         return roots
 
-    async def get_floorplan_details(self, location_id: str) -> FloorplanResponse:
+    async def get_floorplan_details(self, location_id: str, name: Optional[str] = None) -> FloorplanResponse:
         """Queries floorplan metadata and positions APs with normalized x_pct / y_pct coordinates."""
         loc = await get_location(location_id)
-        loc_name = loc["name"] if (loc and loc.get("name")) else f"Site {location_id[:8]}"
+        loc_name = name or (loc["name"] if (loc and loc.get("name")) else f"Site {location_id[:8]}")
         parent_building = "Enterprise Facility Site"
         if loc and loc.get("parent_id"):
             p = await get_location(loc["parent_id"])
