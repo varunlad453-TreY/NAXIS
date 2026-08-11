@@ -80,7 +80,7 @@ class LocationService:
                 parent_building = p["name"]
 
         # Fetch APs placed on this floor
-        aps = await self._fetch_ap_placements(location_id)
+        aps = await self._fetch_ap_placements(location_id, loc_name)
 
         # Calculate aggregated floor health
         floor_health = "healthy"
@@ -101,7 +101,7 @@ class LocationService:
             health_status=floor_health,
         )
 
-    async def _fetch_ap_placements(self, location_id: str) -> List[APPlacement]:
+    async def _fetch_ap_placements(self, location_id: str, loc_name: str = "") -> List[APPlacement]:
         """Queries inventory for wireless APs assigned to the selected site/location with unique coordinate hashing."""
         import json
         import hashlib
@@ -121,18 +121,20 @@ class LocationService:
         except Exception as exc:
             logger.warning("Failed to lookup vendor_ids for site %s: %s", location_id, exc)
 
+        search_term = f"%{loc_name.split(':')[0].split('(')[0].strip()}%" if loc_name else "%"
+
         query = """
             SELECT i.device_id, COALESCE(i.hostname, i.device_id) AS name, i.mac AS mac_address,
                    i.ip_address, i.platform AS vendor, i.num_clients, i.connected, i.site_id, i.model
             FROM inventory i
             LEFT JOIN location_mappings lm ON lm.vendor = i.platform AND lm.vendor_site_id = i.site_id
-            WHERE (lm.location_id = $1 OR i.site_id = $1 OR i.site_id = ANY($2::text[]))
+            WHERE (lm.location_id = $1 OR i.site_id = $1 OR i.site_id = ANY($2::text[]) OR i.site_name ILIKE $3 OR i.hostname ILIKE $3)
               AND (i.device_type = 'ap' OR i.platform IN ('juniper_mist', 'mist', 'aruba_central', 'cisco_dnac'))
             LIMIT 50;
         """
         placements: List[APPlacement] = []
         try:
-            rows = await db.fetch(query, location_id, vendor_site_ids)
+            rows = await db.fetch(query, location_id, vendor_site_ids, search_term)
             if not rows:
                 h_loc = int(hashlib.md5(location_id.encode("utf-8")).hexdigest(), 16)
                 offset = (h_loc % 80) * 8
