@@ -124,7 +124,21 @@ class LocationService:
         # Extract specific site tokens (e.g. "Ahmedabad", "B109", "PVBU")
         tokens = [t.strip(" ()[]:") for t in loc_name.replace(":", " ").replace("(", " ").replace(")", " ").split() if len(t.strip(" ()[]:")) >= 3]
         specific_tokens = [t for t in tokens if t.lower() not in ("site", "building", "floor", "region", "root", "unknown", "office", "area")]
-        patterns = [f"%{t}%" for t in specific_tokens] if specific_tokens else ["___NONE___"]
+        
+        # Add enterprise 3-letter city abbreviation mappings
+        abbs = []
+        for t in specific_tokens:
+            tl = t.lower()
+            if "ahmedabad" in tl:
+                abbs.append("ahd")
+            elif "bhubaneshwar" in tl:
+                abbs.append("bhu")
+            elif "kolkata" in tl:
+                abbs.append("kol")
+            elif "pimpri" in tl:
+                abbs.append("pmp")
+
+        all_patterns = [f"%{t.lower()}%" for t in (specific_tokens + abbs)] if specific_tokens else ["___NONE___"]
 
         query = """
             SELECT i.device_id, COALESCE(i.hostname, i.device_id) AS name, i.mac AS mac_address,
@@ -134,14 +148,14 @@ class LocationService:
             WHERE (lm.location_id = $1 OR i.site_id = $1 OR i.site_id = ANY($2::text[])
                OR EXISTS (
                    SELECT 1 FROM unnest($3::text[]) pat
-                   WHERE pat != '___NONE___' AND (i.site_name ILIKE pat OR i.hostname ILIKE pat OR i.device_id ILIKE pat)
+                   WHERE pat != '___NONE___' AND (LOWER(i.site_name) LIKE pat OR LOWER(i.hostname) LIKE pat OR LOWER(i.device_id) LIKE pat OR LOWER(i.site_id) LIKE pat)
                ))
               AND (i.device_type = 'ap' OR i.platform IN ('juniper_mist', 'mist', 'aruba_central', 'cisco_dnac'))
             LIMIT 50;
         """
         placements: List[APPlacement] = []
         try:
-            rows = await db.fetch(query, location_id, vendor_site_ids, patterns)
+            rows = await db.fetch(query, location_id, vendor_site_ids, all_patterns)
             if not rows:
                 h_loc = int(hashlib.md5(location_id.encode("utf-8")).hexdigest(), 16)
                 offset = (h_loc % 80) * 8
