@@ -19,12 +19,12 @@ function TopologyPageFallback() {
       <div className="mx-auto max-w-7xl space-y-6">
         <div className="flex flex-col gap-4 border-b border-border/60 pb-8 sm:flex-row sm:items-end sm:justify-between">
           <div>
-            <div className="h-3 w-24 animate-pulse rounded bg-surface-elevated" />
-            <div className="mt-4 h-8 w-48 animate-pulse rounded bg-surface-elevated" />
-            <div className="mt-2 h-4 w-96 animate-pulse rounded bg-surface-elevated" />
+            <div className="h-3 w-24 animate-pulse bg-surface-elevated" />
+            <div className="mt-4 h-8 w-48 animate-pulse bg-surface-elevated" />
+            <div className="mt-2 h-4 w-96 animate-pulse bg-surface-elevated" />
           </div>
         </div>
-        <div className="flex h-[600px] items-center justify-center rounded-xl border border-border/40 bg-surface/30">
+        <div className="flex h-[600px] items-center justify-center border border-border/40 bg-surface/30">
           <div className="h-12 w-12 animate-pulse rounded-full bg-surface-elevated" />
         </div>
       </div>
@@ -72,13 +72,13 @@ function SiteBrowser({
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search sites..."
-            className="w-full rounded-lg border border-border/60 bg-surface py-2 pl-9 pr-3 text-sm text-foreground outline-none placeholder:text-foreground-subtle focus:border-primary/50"
+            className="w-full border border-border/60 bg-surface py-2 pl-9 pr-3 text-sm text-foreground outline-none placeholder:text-foreground-subtle focus:border-primary/50"
           />
         </div>
         <select
           value={vendorFilter ?? ""}
           onChange={(e) => setVendorFilter(e.target.value || null)}
-          className="rounded-lg border border-border/60 bg-surface px-3 py-2 text-sm text-foreground outline-none focus:border-primary/50"
+          className="border border-border/60 bg-surface px-3 py-2 text-sm text-foreground outline-none focus:border-primary/50"
         >
           <option value="">All vendors</option>
           {vendors.map((v) => <option key={v} value={v}>{v}</option>)}
@@ -88,14 +88,14 @@ function SiteBrowser({
         </span>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+      <div className="border-t border-border/40">
         {filtered.map((site) => (
-          <SiteCard key={site.node_id} site={site} onClick={() => onSiteSelect(site.site_id)} />
+          <SiteRow key={site.node_id} site={site} onClick={() => onSiteSelect(site.site_id)} />
         ))}
       </div>
 
       {filtered.length === 0 && (
-        <div className="flex h-48 items-center justify-center rounded-xl border-2 border-dashed border-border/40">
+        <div className="flex h-48 items-center justify-center border border-dashed border-border/40">
           <p className="text-sm text-foreground-muted">No sites match your search</p>
         </div>
       )}
@@ -103,7 +103,7 @@ function SiteBrowser({
   );
 }
 
-function SiteCard({ site, onClick }: { site: TopologyNode; onClick: () => void }) {
+function SiteRow({ site, onClick }: { site: TopologyNode; onClick: () => void }) {
   const aggHealth = deriveAggregatedHealth(site);
   const isMist = site.vendor === "mist";
   const dc = site.device_count ?? 0;
@@ -113,46 +113,40 @@ function SiteCard({ site, onClick }: { site: TopologyNode; onClick: () => void }
   return (
     <button
       onClick={onClick}
-      className="group flex flex-col gap-2 rounded-xl border border-border/40 bg-surface/50 p-4 text-left transition-all hover:border-primary/30 hover:shadow-surface-lg hover:bg-surface"
+      className="group flex w-full items-center gap-4 border-b border-border/40 px-3 py-3 text-left transition-colors hover:bg-surface"
     >
-      <div className="flex items-start justify-between gap-2">
-        <div className="flex items-center gap-2 min-w-0">
-          <div
-            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-xs font-bold"
-            style={{ backgroundColor: isMist ? "#10b981" : "#8b5cf6" }}
-          >
-            {isMist ? <Wifi className="h-4 w-4 text-white" /> : <Globe className="h-4 w-4 text-white" />}
-          </div>
-          <div className="min-w-0">
-            <div className="truncate text-sm font-semibold text-foreground group-hover:text-primary transition-colors">
-              {site.name}
-            </div>
-            <div className="text-[10px] text-foreground-subtle uppercase tracking-wider">
-              {site.vendor}
-            </div>
-          </div>
-        </div>
-        <div className="flex items-center gap-1.5 shrink-0">
-          {cc > 0 && (
-            <span className="flex items-center gap-0.5 rounded-full bg-critical/10 px-1.5 py-0.5 text-[10px] font-semibold text-critical">
-              {cc}
-            </span>
-          )}
-          {wc > 0 && cc === 0 && (
-            <span className="flex items-center gap-0.5 rounded-full bg-warning/10 px-1.5 py-0.5 text-[10px] font-semibold text-warning">
-              {wc}
-            </span>
-          )}
-          <span
-            className="inline-block h-2.5 w-2.5 shrink-0 rounded-full"
-            style={{ backgroundColor: aggHealth.color }}
-            title={aggHealth.label}
-          />
-        </div>
-      </div>
-      <div className="flex items-center gap-3 text-xs text-foreground-muted">
-        <span className="font-medium text-foreground">{dc}</span>
-        <span>device{dc !== 1 ? "s" : ""}</span>
+      <div
+        className="flex h-2 w-2 shrink-0"
+        style={{ backgroundColor: aggHealth.color }}
+        title={aggHealth.label}
+      />
+
+      <span className="min-w-0 shrink text-sm font-semibold text-foreground group-hover:text-primary transition-colors truncate">
+        {site.name}
+      </span>
+
+      <span className="text-[10px] text-foreground-subtle uppercase tracking-wider">
+        {site.vendor}
+      </span>
+
+      <span className="text-xs text-foreground-muted whitespace-nowrap">
+        {dc} device{dc !== 1 ? "s" : ""}
+      </span>
+
+      <div className="ml-auto flex items-center gap-3 shrink-0">
+        {cc > 0 && (
+          <span className="flex items-center gap-1 text-[10px] font-semibold text-critical">
+            <AlertTriangle className="h-3 w-3" />
+            {cc}
+          </span>
+        )}
+        {wc > 0 && cc === 0 && (
+          <span className="flex items-center gap-1 text-[10px] font-semibold text-warning">
+            <AlertTriangle className="h-3 w-3" />
+            {wc}
+          </span>
+        )}
+        {isMist ? <Wifi className="h-3.5 w-3.5 text-foreground-subtle" /> : <Globe className="h-3.5 w-3.5 text-foreground-subtle" />}
       </div>
     </button>
   );
@@ -190,7 +184,7 @@ function SiteHealthSummary({
     { count: health.unknown_count, label: "Unknown", color: "#6b7280", Icon: HelpCircle },
   ];
   return (
-    <div className="flex flex-wrap items-center gap-3 rounded-lg border border-border/40 bg-surface/30 px-4 py-2.5 text-xs">
+    <div className="flex flex-wrap items-center gap-3 text-xs">
       <span className="font-medium text-foreground">{total} devices</span>
       <span className="h-3 w-px bg-border/40" />
       {items.map(({ count, label, color, Icon }) =>
@@ -319,7 +313,7 @@ function TopologyPageContent() {
               {activeSiteId && (
                 <button
                   onClick={handleBackToAll}
-                  className="inline-flex items-center gap-1 rounded-md border border-border/60 px-2.5 py-1.5 text-xs font-medium text-foreground-muted transition-colors hover:bg-surface hover:text-foreground"
+                  className="inline-flex items-center gap-1 border border-border/60 px-2.5 py-1.5 text-xs font-medium text-foreground-muted transition-colors hover:bg-surface hover:text-foreground"
                 >
                   <ArrowLeft className="h-3.5 w-3.5" />
                   All sites
@@ -358,17 +352,17 @@ function TopologyPageContent() {
 
         {isBackboneMode ? (
           backboneQuery.isLoading ? (
-            <div className="flex h-48 items-center justify-center rounded-xl border border-border/40 bg-surface/30">
+            <div className="flex h-48 items-center justify-center border border-border/40 bg-surface/30">
               <div className="h-8 w-8 animate-pulse rounded-full bg-surface-elevated" />
             </div>
           ) : backboneQuery.error ? (
-            <div className="flex h-48 items-center justify-center rounded-xl border border-critical/20 bg-critical/5">
+            <div className="flex h-48 items-center justify-center border border-critical/20 bg-critical/5">
               <p className="text-sm text-critical">Failed to load sites: {(backboneQuery.error as Error).message}</p>
             </div>
           ) : backboneQuery.data?.nodes.length ? (
             <SiteBrowser sites={backboneQuery.data.nodes} onSiteSelect={handleSiteSelect} />
           ) : (
-            <div className="flex h-48 items-center justify-center rounded-xl border-2 border-dashed border-border/40">
+            <div className="flex h-48 items-center justify-center border border-dashed border-border/40">
               <p className="text-sm text-foreground-muted">No sites found</p>
             </div>
           )
@@ -394,17 +388,17 @@ function TopologyPageContent() {
                   const meta = NODE_TYPE_META[type];
                   const color = meta?.color ?? "#6b7280";
                   return (
-                    <div
-                      key={type}
-                      className="inline-flex items-center gap-2 rounded-md border border-border/40 bg-surface/50 px-3 py-1.5 text-xs"
-                    >
-                      <span
-                        className="h-2.5 w-2.5 rounded-full"
-                        style={{ backgroundColor: color }}
-                      />
-                      <span className="font-medium text-foreground">{count}</span>
-                      <span className="text-foreground-muted">{meta?.label ?? type}</span>
-                    </div>
+              <div
+                key={type}
+                className="inline-flex items-center gap-2 text-xs"
+              >
+                <span
+                  className="h-2.5 w-2.5"
+                  style={{ backgroundColor: color }}
+                />
+                <span className="font-medium text-foreground">{count}</span>
+                <span className="text-foreground-muted">{meta?.label ?? type}</span>
+              </div>
                   );
                 })}
               </div>
@@ -416,7 +410,7 @@ function TopologyPageContent() {
                 {siteSummaryQuery.data.by_vendor.map(({ type, count }) => (
                   <div
                     key={type}
-                    className="inline-flex items-center gap-1.5 rounded-md border border-border/40 bg-surface/50 px-3 py-1 text-xs text-foreground-muted"
+                    className="inline-flex items-center gap-1.5 text-xs text-foreground-muted"
                   >
                     <Layers className="h-3 w-3" />
                     <span className="font-medium text-foreground">{count}</span>

@@ -4,7 +4,6 @@ import React, { useState } from "react";
 import {
   Activity,
   AlertTriangle,
-  ArrowRight,
   CheckCircle2,
   Clock,
   Globe,
@@ -124,24 +123,24 @@ export default function PathTracePage() {
     }
   };
 
-  const getHealthBadge = (status: string) => {
+  const getHealthText = (status: string) => {
     switch (status) {
       case "healthy":
         return (
-          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-            <CheckCircle2 className="w-3.5 h-3.5" /> Healthy
+          <span className="inline-flex items-center gap-1.5 text-xs font-medium text-emerald-400">
+            <span className="w-2 h-2 rounded-full bg-emerald-400" /> Healthy
           </span>
         );
       case "degraded":
         return (
-          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-500/10 text-amber-400 border border-amber-500/20">
-            <AlertTriangle className="w-3.5 h-3.5" /> Degraded
+          <span className="inline-flex items-center gap-1.5 text-xs font-medium text-amber-400">
+            <span className="w-2 h-2 rounded-full bg-amber-400" /> Degraded
           </span>
         );
       case "critical":
         return (
-          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-500/10 text-red-400 border border-red-500/20">
-            <AlertTriangle className="w-3.5 h-3.5" /> Critical
+          <span className="inline-flex items-center gap-1.5 text-xs font-medium text-red-400">
+            <span className="w-2 h-2 rounded-full bg-red-400" /> Critical
           </span>
         );
       default:
@@ -172,13 +171,13 @@ export default function PathTracePage() {
               value={searchMac}
               onChange={(e) => setSearchMac(e.target.value)}
               placeholder="Enter Client MAC / IP / Username..."
-              className="bg-slate-900 border border-slate-800 rounded-lg pl-9 pr-4 py-2 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-indigo-500 w-72"
+              className="bg-transparent border-b border-slate-800/60 pl-9 pr-4 py-2 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-indigo-500 w-72"
             />
           </div>
           <button
             onClick={() => handleTrace(searchMac)}
             disabled={loading}
-            className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg font-medium text-sm transition-colors disabled:opacity-50"
+            className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-sm font-medium text-sm transition-colors disabled:opacity-50"
           >
             {loading ? <RefreshCw className="w-4 h-4 animate-spin" /> : "Trace Path"}
           </button>
@@ -186,130 +185,115 @@ export default function PathTracePage() {
       </div>
 
       {errorMessage && (
-        <div className="p-4 bg-red-500/10 border border-red-500/20 rounded-lg text-red-400 text-sm flex items-center gap-2">
+        <div className="py-3 text-red-400 text-sm flex items-center gap-2 border-b border-red-500/20">
           <AlertTriangle className="w-5 h-5 flex-shrink-0" />
           {errorMessage}
         </div>
       )}
 
-      {/* Summary Card */}
+      {/* Summary Bar */}
       {traceData && (
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <div className="bg-slate-900 border border-slate-800 rounded-xl p-4">
-            <div className="text-slate-400 text-xs font-medium">Target Client</div>
-            <div className="text-lg font-bold text-white mt-1">{traceData.username}</div>
-            <div className="text-xs text-slate-500 mt-0.5">{traceData.client_mac} • {traceData.client_ip}</div>
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs border-b border-slate-800/60 pb-4">
+          <div className="flex items-center gap-2">
+            <span className="text-slate-500 uppercase font-bold tracking-wider">Client</span>
+            <span className="text-white font-semibold">{traceData.username}</span>
+            <span className="text-slate-400 font-mono">{traceData.client_mac}</span>
+            <span className="text-slate-400">{traceData.client_ip}</span>
           </div>
-
-          <div className="bg-slate-900 border border-slate-800 rounded-xl p-4">
-            <div className="text-slate-400 text-xs font-medium">Associated Site</div>
-            <div className="text-lg font-bold text-white mt-1 truncate">{traceData.site_name}</div>
-            <div className="text-xs text-slate-500 mt-0.5">Total Hops: {traceData.hops.length}</div>
+          <span className="text-slate-700">|</span>
+          <div className="flex items-center gap-2">
+            <span className="text-slate-500 uppercase font-bold tracking-wider">Site</span>
+            <span className="text-white font-semibold">{traceData.site_name}</span>
+            <span className="text-slate-400">{traceData.hops.length} hops</span>
           </div>
-
-          <div className="bg-slate-900 border border-slate-800 rounded-xl p-4">
-            <div className="text-slate-400 text-xs font-medium">Overall Path Status</div>
-            <div className="mt-1.5">
-              {traceData.first_unhealthy_hop ? (
-                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-amber-500/10 text-amber-400 border border-amber-500/20">
-                  <AlertTriangle className="w-4 h-4" /> Degraded Segment Flagged
-                </span>
-              ) : (
-                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                  <CheckCircle2 className="w-4 h-4" /> All Hops Operational
-                </span>
-              )}
-            </div>
+          <span className="text-slate-700">|</span>
+          <div className="flex items-center gap-2">
+            <span className="text-slate-500 uppercase font-bold tracking-wider">Status</span>
+            {traceData.first_unhealthy_hop ? (
+              <span className="inline-flex items-center gap-1.5 text-amber-400 font-semibold">
+                <span className="w-2 h-2 rounded-full bg-amber-400" /> Degraded
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1.5 text-emerald-400 font-semibold">
+                <span className="w-2 h-2 rounded-full bg-emerald-400" /> Healthy
+              </span>
+            )}
           </div>
-
-          <div className="bg-slate-900 border border-slate-800 rounded-xl p-4">
-            <div className="text-slate-400 text-xs font-medium">First Unhealthy Hop</div>
-            <div className="text-sm font-bold text-slate-200 mt-1">
-              {traceData.first_unhealthy_hop ? traceData.first_unhealthy_hop.node_name : "None (Optimal Path)"}
-            </div>
-            <div className="text-xs text-slate-500 mt-0.5 flex items-center gap-1">
-              <Clock className="w-3 h-3" /> Traced at {new Date(traceData.traced_at).toLocaleTimeString()}
-            </div>
+          <span className="text-slate-700">|</span>
+          <div className="flex items-center gap-2">
+            <span className="text-slate-500 uppercase font-bold tracking-wider">First Issue</span>
+            <span className="text-white font-semibold">
+              {traceData.first_unhealthy_hop ? traceData.first_unhealthy_hop.node_name : "None"}
+            </span>
+            <span className="text-slate-500 flex items-center gap-1">
+              <Clock className="w-3 h-3" /> {new Date(traceData.traced_at).toLocaleTimeString()}
+            </span>
           </div>
         </div>
       )}
 
       {/* Hop Chain Flow Diagram */}
       {traceData && (
-        <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-6">
-          <div className="flex items-center justify-between">
+        <div className="space-y-0">
+          <div className="flex items-center justify-between pb-3 border-b border-slate-800/60">
             <h2 className="text-lg font-semibold text-white">End-to-End Network Topology Path</h2>
             <span className="text-xs text-slate-400">Click any hop to launch live edge diagnostics</span>
           </div>
 
-          <div className="space-y-4">
-            {traceData.hops.map((hop, idx) => (
-              <div key={hop.node_id} className="relative">
-                <div
-                  className={`flex flex-col md:flex-row items-start md:items-center justify-between p-4 rounded-xl border transition-all ${
-                    hop.health_status === "critical"
-                      ? "bg-red-500/10 border-red-500/30"
-                      : hop.health_status === "degraded"
-                      ? "bg-amber-500/10 border-amber-500/30"
-                      : "bg-slate-950/60 border-slate-800 hover:border-slate-700"
-                  }`}
-                >
-                  {/* Left Hop Info */}
-                  <div className="flex items-center gap-4">
-                    <div className="w-8 h-8 rounded-full bg-slate-900 border border-slate-800 flex items-center justify-center text-xs font-bold text-slate-400">
-                      {hop.hop_index}
-                    </div>
-                    <div className="p-2 rounded-lg bg-slate-900 border border-slate-800">
-                      {getHopIcon(hop.node_type)}
-                    </div>
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <span className="font-semibold text-white">{hop.node_name}</span>
-                        {hop.vendor && (
-                          <span className="px-2 py-0.5 rounded text-[10px] uppercase tracking-wider font-semibold bg-slate-800 text-slate-400">
-                            {hop.vendor}
-                          </span>
-                        )}
-                      </div>
-                      <div className="text-xs text-slate-400 mt-0.5 flex flex-wrap items-center gap-3">
-                        {hop.ip_address && <span>IP: {hop.ip_address}</span>}
-                        {hop.interface_name && <span>Interface: {hop.interface_name}</span>}
-                      </div>
-                    </div>
+          <div className="divide-y divide-slate-800/80">
+            {traceData.hops.map((hop) => (
+              <div
+                key={hop.node_id}
+                className="flex flex-col md:flex-row items-start md:items-center justify-between py-4 gap-4"
+              >
+                {/* Left Hop Info */}
+                <div className="flex items-center gap-4">
+                  <div className="w-8 h-8 flex items-center justify-center text-xs font-bold text-slate-400 border border-slate-800">
+                    {hop.hop_index}
                   </div>
-
-                  {/* Right Metrics & Test Trigger */}
-                  <div className="mt-4 md:mt-0 flex items-center gap-6">
-                    <div className="text-right">
-                      <div className="text-xs text-slate-400">Latency / Loss</div>
-                      <div className="text-sm font-semibold text-slate-200 mt-0.5">
-                        {hop.latency_ms ? `${hop.latency_ms} ms` : "—"}{" "}
-                        {hop.packet_loss_pct !== undefined ? `(${hop.packet_loss_pct}% loss)` : ""}
-                      </div>
+                  <div className="p-1">
+                    {getHopIcon(hop.node_type)}
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="font-semibold text-white">{hop.node_name}</span>
+                      {hop.vendor && (
+                        <span className="text-[10px] uppercase tracking-wider font-semibold text-slate-400">
+                          {hop.vendor}
+                        </span>
+                      )}
                     </div>
-
-                    <div>{getHealthBadge(hop.health_status)}</div>
-
-                    {hop.node_type !== "client" && hop.node_type !== "internet" && (
-                      <button
-                        onClick={() => {
-                          setActiveModalHop(hop);
-                          setDiagOutput(null);
-                        }}
-                        className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/30 rounded-lg text-xs font-medium transition-colors"
-                      >
-                        <Play className="w-3.5 h-3.5" /> Run Test
-                      </button>
-                    )}
+                    <div className="text-xs text-slate-400 mt-0.5 flex flex-wrap items-center gap-3">
+                      {hop.ip_address && <span>IP: {hop.ip_address}</span>}
+                      {hop.interface_name && <span>Interface: {hop.interface_name}</span>}
+                    </div>
                   </div>
                 </div>
 
-                {/* Connector Arrow */}
-                {idx < traceData.hops.length - 1 && (
-                  <div className="flex justify-center my-1">
-                    <ArrowRight className="w-4 h-4 text-slate-600 rotate-90" />
+                {/* Right Metrics & Test Trigger */}
+                <div className="flex items-center gap-6">
+                  <div className="text-right">
+                    <div className="text-xs text-slate-400">Latency / Loss</div>
+                    <div className="text-sm font-semibold text-slate-200 mt-0.5">
+                      {hop.latency_ms ? `${hop.latency_ms} ms` : "—"}{" "}
+                      {hop.packet_loss_pct !== undefined ? `(${hop.packet_loss_pct}% loss)` : ""}
+                    </div>
                   </div>
-                )}
+
+                  <div>{getHealthText(hop.health_status)}</div>
+
+                  {hop.node_type !== "client" && hop.node_type !== "internet" && (
+                    <button
+                      onClick={() => {
+                        setActiveModalHop(hop);
+                        setDiagOutput(null);
+                      }}
+                      className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/30 rounded-sm text-xs font-medium transition-colors"
+                    >
+                      <Play className="w-3.5 h-3.5" /> Run Test
+                    </button>
+                  )}
+                </div>
               </div>
             ))}
           </div>
@@ -318,8 +302,8 @@ export default function PathTracePage() {
 
       {/* Live Diagnostic Test Modal */}
       {activeModalHop && (
-        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-          <div className="bg-slate-900 border border-slate-800 rounded-xl max-w-2xl w-full p-6 space-y-5">
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center p-4 z-50">
+          <div className="bg-slate-950 border border-slate-800 max-w-2xl w-full p-6 space-y-5">
             <div className="flex items-center justify-between border-b border-slate-800 pb-4">
               <div>
                 <h3 className="text-lg font-bold text-white flex items-center gap-2">
@@ -337,15 +321,15 @@ export default function PathTracePage() {
             </div>
 
             {/* Test Type Tabs */}
-            <div className="flex gap-2">
+            <div className="flex gap-4 border-b border-slate-800/60">
               {(["ping", "traceroute", "port_stats"] as const).map((type) => (
                 <button
                   key={type}
                   onClick={() => setDiagnosticType(type)}
-                  className={`flex-1 py-2 px-3 rounded-lg text-xs font-semibold uppercase tracking-wider transition-colors ${
+                  className={`py-2 px-1 text-xs font-semibold uppercase tracking-wider transition-colors border-b-2 ${
                     diagnosticType === type
-                      ? "bg-indigo-600 text-white"
-                      : "bg-slate-800 text-slate-400 hover:bg-slate-700"
+                      ? "text-indigo-400 border-indigo-500"
+                      : "text-slate-400 hover:text-slate-200 border-transparent"
                   }`}
                 >
                   {type.replace("_", " ")}
@@ -358,7 +342,7 @@ export default function PathTracePage() {
               <button
                 onClick={runDiagnosticTest}
                 disabled={diagRunning}
-                className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-medium rounded-lg text-sm transition-colors disabled:opacity-50"
+                className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-medium rounded-sm text-sm transition-colors disabled:opacity-50"
               >
                 {diagRunning ? <RefreshCw className="w-4 h-4 animate-spin" /> : "Run Diagnostic"}
               </button>
@@ -366,7 +350,7 @@ export default function PathTracePage() {
 
             {/* Execution Console Output */}
             {diagOutput && (
-              <div className="bg-slate-950 border border-slate-800 rounded-lg p-4 font-mono text-xs text-slate-300 overflow-x-auto max-h-60 space-y-2">
+              <div className="bg-slate-950 border border-slate-800 p-4 font-mono text-xs text-slate-300 overflow-x-auto max-h-60 space-y-2">
                 {diagOutput.error ? (
                   <div className="text-red-400 flex items-center gap-2">
                     <AlertTriangle className="w-4 h-4" /> {diagOutput.error}

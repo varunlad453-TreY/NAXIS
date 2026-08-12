@@ -1,7 +1,6 @@
 "use client";
 
 import React, { useEffect, useState, useMemo, useCallback, Suspense } from "react";
-import { createPortal } from "react-dom";
 import { useSearchParams } from "next/navigation";
 import {
   AlertTriangle,
@@ -9,17 +8,14 @@ import {
   CheckCircle2,
   ChevronDown,
   ChevronRight,
-  Filter,
   Globe,
   Layers,
   MapPin,
   RefreshCw,
   Search,
-  Server,
-  Radio,
-  Eye,
   Sliders,
   Wifi,
+  X,
 } from "lucide-react";
 
 interface APPlacement {
@@ -81,13 +77,13 @@ const TreeNodeItem = React.memo(function TreeNodeItem({
   const getTypeIcon = (type: string) => {
     switch (type) {
       case "region":
-        return <Globe className="w-3.5 h-3.5 text-blue-400 flex-shrink-0" />;
+        return <Globe className="w-3.5 h-3.5 text-slate-500 flex-shrink-0" />;
       case "building":
-        return <Building className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" />;
+        return <Building className="w-3.5 h-3.5 text-slate-500 flex-shrink-0" />;
       case "floor":
-        return <Layers className="w-3.5 h-3.5 text-purple-400 flex-shrink-0" />;
+        return <Layers className="w-3.5 h-3.5 text-slate-500 flex-shrink-0" />;
       default:
-        return <MapPin className="w-3.5 h-3.5 text-indigo-400 flex-shrink-0" />;
+        return <MapPin className="w-3.5 h-3.5 text-slate-500 flex-shrink-0" />;
     }
   };
 
@@ -96,61 +92,72 @@ const TreeNodeItem = React.memo(function TreeNodeItem({
       <div
         onClick={() => onSelectNode(node)}
         title={node.name}
-        className={`flex items-center justify-between px-3 py-2 rounded-lg cursor-pointer text-xs transition-all ${
+        className={`group flex items-center gap-2 px-3 py-1.5 cursor-pointer text-xs transition-colors ${
           isSelected
-            ? "bg-indigo-600/30 text-white font-semibold border border-indigo-500/50 shadow-sm"
-            : "text-slate-300 hover:bg-slate-800/60 hover:text-white"
+            ? "bg-slate-800/60 text-white"
+            : "text-slate-400 hover:bg-slate-800/40 hover:text-slate-200"
         }`}
+        style={{
+          borderLeft: isSelected ? "2px solid hsl(var(--primary))" : "2px solid transparent",
+        }}
       >
-        <div className="flex items-center gap-2 min-w-0 flex-1">
-          {hasChildren ? (
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                onToggleExpand(node.location_id);
-              }}
-              className="p-0.5 hover:bg-slate-700/60 rounded text-slate-400 flex-shrink-0"
-            >
-              {isExpanded ? (
-                <ChevronDown className="w-3.5 h-3.5" />
-              ) : (
-                <ChevronRight className="w-3.5 h-3.5" />
-              )}
-            </button>
-          ) : (
-            <span className="w-3.5 flex-shrink-0" />
-          )}
-          {getTypeIcon(node.type)}
-          <span className="truncate font-medium text-slate-200">{node.name}</span>
-        </div>
+        {hasChildren ? (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggleExpand(node.location_id);
+            }}
+            className="p-0.5 hover:bg-slate-700/60 rounded-sm text-slate-500 flex-shrink-0 transition-colors"
+          >
+            {isExpanded ? (
+              <ChevronDown className="w-3 h-3" />
+            ) : (
+              <ChevronRight className="w-3 h-3" />
+            )}
+          </button>
+        ) : (
+          <span className="w-4 flex-shrink-0" />
+        )}
+        {getTypeIcon(node.type)}
+        <span className="truncate font-medium">{node.name}</span>
 
-        <div className="flex items-center gap-1.5 ml-2 flex-shrink-0">
+        <div className="flex items-center gap-1.5 ml-auto flex-shrink-0">
           {node.health_status === "degraded" && (
-            <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" title="Degraded Status" />
+            <span className="w-1.5 h-1.5 rounded-full bg-amber-400" title="Degraded" />
           )}
           {node.health_status === "critical" && (
-            <span className="w-2 h-2 rounded-full bg-rose-500 animate-ping" title="Critical Status" />
+            <span className="w-1.5 h-1.5 rounded-full bg-rose-500" title="Critical" />
           )}
           {node.health_status === "healthy" && (
-            <span className="w-2 h-2 rounded-full bg-emerald-400/90" title="Healthy Status" />
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500/70" title="Healthy" />
           )}
         </div>
       </div>
 
-      {hasChildren && isExpanded && renderChildren(node.children)}
+      {hasChildren && isExpanded && (
+        <div className="pl-3 ml-3 border-l border-slate-800/60">
+          {renderChildren(node.children)}
+        </div>
+      )}
     </div>
   );
 });
+
+function StatusDot({ status, size = "sm" }: { status: string; size?: "sm" | "md" }) {
+  const sizeClass = size === "md" ? "w-2 h-2" : "w-1.5 h-1.5";
+  if (status === "healthy" || status === "online") {
+    return <span className={`${sizeClass} rounded-full bg-emerald-500`} />;
+  }
+  if (status === "degraded") {
+    return <span className={`${sizeClass} rounded-full bg-amber-400`} />;
+  }
+  return <span className={`${sizeClass} rounded-full bg-rose-500`} />;
+}
 
 function NOCFloorplanContent() {
   const searchParams = useSearchParams();
   const targetLocationId = searchParams.get("location_id") || searchParams.get("site_id");
   const targetName = searchParams.get("name");
-
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => {
-    setMounted(true);
-  }, []);
 
   const [treeData, setTreeData] = useState<LocationTreeNode[]>([]);
   const [selectedFloorId, setSelectedFloorId] = useState<string>("");
@@ -236,7 +243,6 @@ function NOCFloorplanContent() {
         if (Array.isArray(data)) {
           setTreeData(data);
           if (data.length > 0) {
-            // Find target node from searchParams
             let activeNode = data[0];
             const findMatch = (nodes: LocationTreeNode[]): LocationTreeNode | null => {
               for (const n of nodes) {
@@ -291,17 +297,6 @@ function NOCFloorplanContent() {
     fetchTree();
   }, [targetLocationId, targetName]);
 
-  useEffect(() => {
-    if (selectedAP) {
-      document.body.style.overflow = "hidden";
-    } else {
-      document.body.style.overflow = "unset";
-    }
-    return () => {
-      document.body.style.overflow = "unset";
-    };
-  }, [selectedAP]);
-
   const handleSelectNode = useCallback((node: LocationTreeNode) => {
     setSelectedFloorId(node.location_id);
     fetchFloorplan(node.location_id, node.name);
@@ -315,7 +310,7 @@ function NOCFloorplanContent() {
     (children: LocationTreeNode[]) => {
       if (!Array.isArray(children)) return null;
       return (
-        <div className="pl-3 border-l border-slate-800/80 ml-3 mt-1 space-y-1">
+        <>
           {children.map((child) => (
             <TreeNodeItem
               key={child.location_id}
@@ -327,7 +322,7 @@ function NOCFloorplanContent() {
               renderChildren={renderChildren}
             />
           ))}
-        </div>
+        </>
       );
     },
     [expandedNodes, selectedFloorId, handleSelectNode, handleToggleExpand]
@@ -343,286 +338,114 @@ function NOCFloorplanContent() {
     return floorplan.ap_placements;
   }, [floorplan, filterHealth]);
 
+  const degradedCount = floorplan?.ap_placements?.filter(
+    (ap) => ap.health_status === "degraded" || ap.health_status === "critical"
+  ).length || 0;
+
+  const totalCount = floorplan?.ap_placements?.length || 0;
+
   return (
-    <div className="relative w-full h-[calc(100vh-64px)] overflow-hidden bg-slate-950 font-sans">
-      
-      {/* 
-        ========================================================================
-        LAYER 0: FULL-BLEED MAP CANVAS
-        ========================================================================
-      */}
-      <div className="absolute inset-0 z-0 flex items-center justify-center">
-        {/* Grid Lines Pattern Background */}
-        <div className="absolute inset-0 bg-[linear-gradient(to_right,#1e293b_1px,transparent_1px),linear-gradient(to_bottom,#1e293b_1px,transparent_1px)] bg-[size:5rem_5rem] [mask-image:radial-gradient(ellipse_80%_80%_at_50%_50%,#000_100%,transparent_100%)] opacity-30" />
-
-        {/* Room Blueprint Partition Boundaries */}
-        <div className="absolute inset-8 md:inset-16 border-2 border-dashed border-slate-800/60 rounded-3xl pointer-events-none flex items-center justify-center">
-          <div className="absolute top-6 left-8 text-xs font-mono text-slate-600 uppercase tracking-widest bg-slate-950/50 px-2 py-1 rounded">
-            Zone-North: Conf Room 3 & Engineering
+    <div className="-m-6 h-[calc(100vh-3.5rem)] flex flex-col bg-slate-950">
+      {/* ── Operational Bar ── */}
+      <div className="shrink-0 h-14 flex items-center justify-between px-5 border-b border-slate-800/60">
+        <div className="flex items-center gap-5 min-w-0">
+          <div className="flex items-center gap-2 min-w-0">
+            <MapPin className="w-4 h-4 text-slate-500 flex-shrink-0" />
+            <h1 className="text-base font-semibold text-white truncate" title={floorplan?.name || "Select a Location"}>
+              {floorplan?.name || "NOC Floorplan"}
+            </h1>
+            {floorplan?.health_status && (
+              <span className="flex items-center gap-1.5 text-xs text-slate-400 ml-1 flex-shrink-0">
+                <StatusDot status={floorplan.health_status} />
+                <span className="capitalize">{floorplan.health_status}</span>
+              </span>
+            )}
           </div>
-          <div className="absolute top-6 right-8 text-xs font-mono text-slate-600 uppercase tracking-widest bg-slate-950/50 px-2 py-1 rounded">
-            Zone-East: Executive Boardroom
+
+          <div className="hidden md:flex items-center gap-4 text-xs text-slate-500">
+            <span>{totalCount} APs</span>
+            {degradedCount > 0 && (
+              <span className="text-amber-400">{degradedCount} degraded</span>
+            )}
+            <span className="text-slate-700">|</span>
+            <span>Normalized coordinate space</span>
           </div>
         </div>
 
-        {/* Render Wireless Access Points on 2D Blueprint */}
-        {displayedAPs.map((ap) => {
-          const isSelected = selectedAP?.device_id === ap.device_id;
-          return (
-            <div
-              key={ap.device_id}
-              onClick={() => setSelectedAP(ap)}
-              style={{ left: `${ap.x_pct}%`, top: `${ap.y_pct}%` }}
-              className="absolute -translate-x-1/2 -translate-y-1/2 cursor-pointer transition-all duration-200 group z-10"
-            >
-              {/* RF Coverage Heatmap Gradients (Evaluated by RSSI signal strength) */}
-              {heatmapMode === "coverage" && (
-                <div
-                  style={{
-                    width: "300px",
-                    height: "300px",
-                    background:
-                      (ap.rssi ?? -56) >= -65
-                        ? "radial-gradient(circle, rgba(16, 185, 129, 0.4) 0%, rgba(16, 185, 129, 0.12) 50%, transparent 70%)"
-                        : (ap.rssi ?? -56) >= -75
-                        ? "radial-gradient(circle, rgba(245, 158, 11, 0.4) 0%, rgba(245, 158, 11, 0.12) 50%, transparent 70%)"
-                        : "radial-gradient(circle, rgba(239, 68, 68, 0.35) 0%, rgba(239, 68, 68, 0.1) 50%, transparent 70%)",
-                  }}
-                  className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full pointer-events-none mix-blend-screen"
-                />
-              )}
-
-              {/* Interference Heatmap Overlay */}
-              {heatmapMode === "interference" && ap.health_status !== "healthy" && (
-                <div
-                  style={{
-                    width: "320px",
-                    height: "320px",
-                    background: "radial-gradient(circle, rgba(239, 68, 68, 0.45) 0%, rgba(245, 158, 11, 0.2) 50%, transparent 70%)",
-                  }}
-                  className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full pointer-events-none mix-blend-screen animate-pulse"
-                />
-              )}
-
-              {/* Blinking Radar Beacon Rings on APs */}
-              <div
-                className={`absolute -inset-3 rounded-full pointer-events-none animate-ping ${
-                  ap.health_status === "healthy"
-                    ? "bg-emerald-500/30"
-                    : ap.health_status === "degraded"
-                    ? "bg-amber-500/40"
-                    : "bg-rose-500/50"
+        <div className="flex items-center gap-4 flex-shrink-0">
+          {/* Layer Tabs */}
+          <div className="hidden sm:flex items-center gap-0 text-xs">
+            {(["placements", "coverage", "interference"] as const).map((mode) => (
+              <button
+                key={mode}
+                onClick={() => setHeatmapMode(mode)}
+                className={`px-3 py-1.5 font-medium transition-colors border-b-2 ${
+                  heatmapMode === mode
+                    ? "text-white border-indigo-500"
+                    : "text-slate-500 border-transparent hover:text-slate-300"
                 }`}
-              />
-              <div
-                className={`absolute -inset-1.5 rounded-full pointer-events-none animate-pulse ${
-                  ap.health_status === "healthy"
-                    ? "bg-emerald-400/20"
-                    : ap.health_status === "degraded"
-                    ? "bg-amber-400/30"
-                    : "bg-rose-400/40"
-                }`}
-              />
-
-              {/* Glowing Wi-Fi AP Circular Marker */}
-              <div
-                className={`relative p-3.5 rounded-full border shadow-2xl flex items-center justify-center transition-all duration-300 group-hover:scale-125 ${
-                  ap.health_status === "healthy"
-                    ? "bg-slate-900/90 border-emerald-500/60 text-emerald-400 shadow-emerald-900/40 backdrop-blur-md"
-                    : ap.health_status === "degraded"
-                    ? "bg-slate-900/90 border-amber-500/60 text-amber-400 shadow-amber-900/40 backdrop-blur-md"
-                    : "bg-slate-900/90 border-rose-500/60 text-rose-400 shadow-rose-900/40 backdrop-blur-md"
-                } ${isSelected ? "ring-4 ring-indigo-500 ring-offset-2 ring-offset-slate-950 scale-125 z-20" : ""}`}
               >
-                <Wifi className="w-4 h-4" />
-              </div>
+                {mode === "placements" && "AP Placement"}
+                {mode === "coverage" && "RF Coverage"}
+                {mode === "interference" && "Interference"}
+              </button>
+            ))}
+          </div>
 
-              {/* AP Name Badge Sub-Label */}
-              <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 px-2.5 py-1 bg-slate-900/80 backdrop-blur-md border border-slate-700/80 rounded-md text-[10px] font-semibold text-slate-300 whitespace-nowrap shadow-lg">
-                {ap.name}
-              </div>
-
-              {/* AP Tooltip Hover Card */}
-              <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-3 hidden group-hover:block bg-slate-900/95 backdrop-blur-xl border border-slate-700/80 p-3 rounded-xl text-xs shadow-2xl z-[100] whitespace-nowrap">
-                <div className="font-bold text-white flex items-center gap-2">
-                  <Wifi className="w-4 h-4 text-indigo-400" />
-                  <span>{ap.name}</span>
-                </div>
-                <div className="text-slate-400 mt-1 font-medium">{ap.vendor.toUpperCase()} • {ap.client_count} Clients</div>
-                {ap.health_reason && (
-                  <div className="text-amber-400 text-[11px] font-semibold mt-1.5 bg-amber-500/10 p-1.5 rounded-md border border-amber-500/20">{ap.health_reason}</div>
-                )}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-
-      {/* 
-        ========================================================================
-        LAYER 1: FLOATING GLASS PANELS & UI CONTROLS
-        ========================================================================
-      */}
-
-      {/* Unified Top Navigation Bar (Prevents Overlap) */}
-      <div className="absolute top-6 left-6 right-6 lg:left-[360px] z-30 flex items-start justify-between pointer-events-none gap-4">
-        
-        {/* Left: Location Title */}
-        <div className="flex flex-col gap-2 pointer-events-auto shrink min-w-0 max-w-[35%]">
-          <h2 className="text-2xl md:text-3xl font-extrabold text-white tracking-tight drop-shadow-2xl flex items-center gap-3 truncate">
-            <Layers className="w-7 h-7 md:w-8 md:h-8 text-indigo-400 opacity-90 shrink-0" />
-            <span className="truncate">{floorplan?.name || "Select a Location"}</span>
-          </h2>
           <div className="flex items-center gap-2">
-            <span className="px-2.5 py-1 rounded-full bg-slate-900/80 backdrop-blur-xl border border-white/10 text-slate-300 text-[10px] font-bold tracking-wider uppercase whitespace-nowrap shadow-lg">
-              {displayedAPs.length} Active APs
-            </span>
-            <span className="px-2.5 py-1 rounded-full bg-slate-900/80 backdrop-blur-xl border border-emerald-500/30 text-emerald-400 text-[10px] font-bold tracking-wider uppercase whitespace-nowrap shadow-[0_0_15px_rgba(52,211,153,0.15)] flex items-center gap-1.5">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse shadow-[0_0_5px_#34d399]" />
-              Live Telemetry
-            </span>
+            <button
+              onClick={() => setFilterHealth(filterHealth === "all" ? "degraded" : "all")}
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium transition-colors rounded-sm ${
+                filterHealth === "degraded"
+                  ? "text-amber-400 bg-amber-500/10"
+                  : "text-slate-400 hover:text-slate-200 hover:bg-slate-800/50"
+              }`}
+              title={filterHealth === "degraded" ? "Show all APs" : "Show degraded only"}
+            >
+              <Sliders className="w-3.5 h-3.5" />
+              {filterHealth === "degraded" ? "Degraded" : "All"}
+            </button>
+            <button
+              onClick={() => fetchFloorplan(selectedFloorId)}
+              className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800/50 rounded-sm transition-colors"
+              title="Refresh floorplan"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />
+            </button>
           </div>
-        </div>
-
-        {/* Center: Segmented Heatmap Controls */}
-        <div className="pointer-events-auto shrink-0 bg-slate-900/80 backdrop-blur-3xl border border-white/10 p-1.5 rounded-full shadow-[0_8px_32px_rgba(0,0,0,0.5)] flex items-center gap-1">
-          <button
-            onClick={() => setHeatmapMode("placements")}
-            className={`px-3 md:px-4 py-2 rounded-full text-[11px] md:text-xs font-bold transition-all duration-300 ${
-              heatmapMode === "placements" ? "bg-white text-slate-950 shadow-lg" : "text-slate-400 hover:text-white hover:bg-white/10"
-            }`}
-          >
-            AP Placements
-          </button>
-          <button
-            onClick={() => setHeatmapMode("coverage")}
-            className={`px-3 md:px-4 py-2 rounded-full text-[11px] md:text-xs font-bold transition-all duration-300 ${
-              heatmapMode === "coverage" ? "bg-emerald-500 text-white shadow-lg shadow-emerald-500/30" : "text-slate-400 hover:text-white hover:bg-white/10"
-            }`}
-          >
-            RF Coverage
-          </button>
-          <button
-            onClick={() => setHeatmapMode("interference")}
-            className={`px-3 md:px-4 py-2 rounded-full text-[11px] md:text-xs font-bold transition-all duration-300 ${
-              heatmapMode === "interference" ? "bg-amber-500 text-slate-950 shadow-lg shadow-amber-500/30" : "text-slate-400 hover:text-white hover:bg-white/10"
-            }`}
-          >
-            Interference
-          </button>
-        </div>
-
-        {/* Right: Global Actions */}
-        <div className="flex items-center gap-3 pointer-events-auto shrink-0">
-          <button
-            onClick={() => setFilterHealth(filterHealth === "all" ? "degraded" : "all")}
-            className={`flex items-center gap-2 px-3 md:px-4 py-2 md:py-2.5 rounded-full text-[11px] md:text-xs font-bold transition-all backdrop-blur-3xl border shadow-xl ${
-              filterHealth === "degraded"
-                ? "bg-amber-500/20 border-amber-500/50 text-amber-300 hover:bg-amber-500/30 shadow-[0_0_15px_rgba(245,158,11,0.25)]"
-                : "bg-slate-900/80 border-white/10 text-slate-300 hover:bg-slate-800 hover:text-white"
-            }`}
-          >
-            <Filter className="w-3 h-3 md:w-4 md:h-4" />
-            {filterHealth === "degraded" ? "Degraded Only" : "Filter APs"}
-          </button>
-          <button
-            onClick={() => fetchFloorplan(selectedFloorId)}
-            className="flex items-center justify-center w-8 h-8 md:w-10 md:h-10 bg-slate-900/80 backdrop-blur-3xl border border-white/10 hover:bg-slate-800 hover:border-white/30 text-slate-300 rounded-full transition-all shadow-[0_8px_32px_rgba(0,0,0,0.5)]"
-            title="Refresh Telemetry"
-          >
-            <RefreshCw className={`w-3 h-3 md:w-4 md:h-4 ${loading ? "animate-spin text-indigo-400" : ""}`} />
-          </button>
         </div>
       </div>
 
-      {/* Bottom Left: Dynamic Legend Floating Bar */}
-      <div className="absolute bottom-6 left-[380px] z-30 bg-slate-900/60 backdrop-blur-2xl border border-white/10 rounded-2xl px-5 py-3 shadow-2xl flex items-center gap-6">
-        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
-          {heatmapMode === "placements" && "AP HEALTH LEGEND"}
-          {heatmapMode === "coverage" && "RF SIGNAL PROPAGATION (5GHz)"}
-          {heatmapMode === "interference" && "CO-CHANNEL HAZARD"}
-        </span>
-
-        {/* Dynamic Legend Items Depending on Active Mode */}
-        {heatmapMode === "placements" && (
-          <div className="flex items-center gap-5 text-[11px] font-semibold text-slate-200">
-            <div className="flex items-center gap-2">
-              <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.8)]" />
-              <span>Healthy</span>
+      {/* ── Main Workspace ── */}
+      <div className="flex-1 flex min-h-0">
+        {/* Facility Tree Sidebar */}
+        <div className="w-[260px] shrink-0 flex flex-col border-r border-slate-800/60">
+          <div className="shrink-0 px-4 py-3 border-b border-slate-800/60">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+                Facilities
+              </span>
+              <span className="text-[10px] text-slate-500">{treeData.length} sites</span>
             </div>
-            <div className="flex items-center gap-2">
-              <span className="w-2.5 h-2.5 rounded-full bg-amber-400 animate-pulse shadow-[0_0_8px_rgba(251,191,36,0.8)]" />
-              <span>Degraded</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="w-2.5 h-2.5 rounded-full bg-rose-500 animate-ping shadow-[0_0_8px_rgba(244,63,94,0.8)]" />
-              <span>Critical</span>
+            <div className="relative">
+              <Search className="w-3.5 h-3.5 absolute left-2.5 top-2 text-slate-600" />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search sites..."
+                className="w-full bg-slate-900/60 pl-7 pr-2.5 py-1.5 text-xs text-slate-200 placeholder-slate-600 rounded-sm border border-slate-800/60 focus:outline-none focus:border-slate-700 transition-colors"
+              />
             </div>
           </div>
-        )}
 
-        {heatmapMode === "coverage" && (
-          <div className="flex items-center gap-5 text-[11px] font-semibold text-slate-200">
-            <div className="flex items-center gap-2">
-              <span className="w-3 h-3 rounded-full bg-emerald-500/80 border border-emerald-400" />
-              <span>Optimal (-45 to -65 dBm)</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="w-3 h-3 rounded-full bg-amber-500/80 border border-amber-400" />
-              <span>Attenuation (-68 to -75 dBm)</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="w-3 h-3 rounded-full bg-rose-500/80 border border-rose-400" />
-              <span>Dead Zone (&lt;-80 dBm)</span>
-            </div>
-          </div>
-        )}
-
-        {heatmapMode === "interference" && (
-          <div className="flex items-center gap-5 text-[11px] font-semibold text-slate-200">
-            <div className="flex items-center gap-2">
-              <span className="w-3 h-3 rounded-full bg-rose-500/80 border border-rose-400 animate-pulse" />
-              <span>Severe Congestion</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="w-3 h-3 rounded-full bg-amber-500/80 border border-amber-400" />
-              <span>Moderate</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="w-3 h-3 rounded-full bg-transparent border border-emerald-500/40" />
-              <span>Clean</span>
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* Floating Left Drawer: Facility Hierarchy Tree */}
-      <div className="absolute top-6 left-6 bottom-6 w-80 bg-slate-950/40 backdrop-blur-3xl border border-white/10 rounded-3xl shadow-[0_8px_32px_rgba(0,0,0,0.5)] flex flex-col overflow-hidden z-40">
-        <div className="p-5 border-b border-white/5 bg-slate-950/40">
-          <h3 className="text-[11px] font-extrabold uppercase tracking-widest text-slate-400 flex items-center gap-2 mb-4 drop-shadow-md">
-            <Building className="w-4 h-4 text-indigo-400" /> Facility Hierarchy
-          </h3>
-          <div className="relative">
-            <Search className="w-4 h-4 absolute left-3.5 top-3 text-slate-500" />
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder={`Search ${treeData.length} sites...`}
-              className="w-full bg-slate-900/60 border border-white/10 rounded-xl pl-10 pr-4 py-2.5 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all shadow-inner backdrop-blur-md"
-            />
-          </div>
-        </div>
-
-        <div className="flex-1 overflow-y-auto p-3 custom-scrollbar">
-          {treeLoading ? (
-            <div className="text-center py-10 flex flex-col items-center justify-center space-y-3">
-              <div className="w-6 h-6 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
-              <span className="text-xs font-semibold text-slate-400 tracking-wider uppercase">Loading facilities...</span>
-            </div>
-          ) : (
-            <div className="space-y-1">
-              {filteredTreeData.map((node) => (
+          <div className="flex-1 overflow-y-auto py-2">
+            {treeLoading ? (
+              <div className="px-4 py-8 text-xs text-slate-600 animate-pulse">
+                Loading facilities...
+              </div>
+            ) : (
+              filteredTreeData.map((node) => (
                 <TreeNodeItem
                   key={node.location_id}
                   node={node}
@@ -632,171 +455,366 @@ function NOCFloorplanContent() {
                   onToggleExpand={handleToggleExpand}
                   renderChildren={renderChildren}
                 />
-              ))}
-            </div>
-          )}
+              ))
+            )}
+          </div>
         </div>
-      </div>
 
-      {/* AP Details Inspector Portal Modal (Mounted directly on document.body) */}
-      {mounted && selectedAP && typeof document !== "undefined" && createPortal(
-        <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-md flex items-center justify-center p-4 z-[999999] overflow-hidden">
-          <div className="bg-slate-950/80 backdrop-blur-3xl border border-white/10 rounded-3xl max-w-xl w-full p-6 space-y-5 shadow-[0_16px_64px_rgba(0,0,0,0.8)] animate-in fade-in zoom-in-95 duration-200 font-sans relative overflow-hidden">
-            {/* Subtle glow effect behind the modal content */}
-            <div className="absolute inset-0 bg-gradient-to-br from-indigo-500/10 via-transparent to-transparent pointer-events-none" />
-            <div className="relative z-10 space-y-5">
-            {/* Header */}
-            <div className="flex items-center justify-between border-b border-slate-800/80 pb-4">
-              <div>
-                <div className="flex items-center gap-2">
-                  <span className="text-[10px] uppercase tracking-wider text-slate-400 font-bold">WIRELESS ACCESS POINT</span>
-                  <span className={`px-2 py-0.5 text-[9px] font-bold uppercase rounded ${selectedAP.health_status === "healthy" ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/40" : selectedAP.health_status === "critical" ? "bg-rose-500/20 text-rose-300 border border-rose-500/40" : "bg-amber-500/20 text-amber-300 border border-amber-500/40"}`}>
-                    {selectedAP.health_status}
-                  </span>
-                </div>
-                <h3 className="text-xl font-extrabold text-white tracking-tight mt-0.5">{selectedAP.name}</h3>
+        {/* Floorplan Canvas */}
+        <div className="flex-1 min-w-0 relative bg-slate-950 flex flex-col">
+          <div className="flex-1 relative overflow-hidden">
+            {/* Subtle grid background */}
+            <div className="absolute inset-0 bg-[linear-gradient(to_right,rgba(30,41,59,0.4)_1px,transparent_1px),linear-gradient(to_bottom,rgba(30,41,59,0.4)_1px,transparent_1px)] bg-[size:4rem_4rem]" />
+
+            {/* Zone partition lines */}
+            <div className="absolute inset-6 border border-dashed border-slate-800/50 pointer-events-none">
+              <div className="absolute top-2 left-3 text-[10px] font-mono text-slate-600 uppercase tracking-widest">
+                Zone-North: Conf Room 3 & Engineering
               </div>
+              <div className="absolute top-2 right-3 text-[10px] font-mono text-slate-600 uppercase tracking-widest">
+                Zone-East: Executive Boardroom
+              </div>
+            </div>
+
+            {/* AP Markers */}
+            {displayedAPs.map((ap) => {
+              const isSelected = selectedAP?.device_id === ap.device_id;
+
+              return (
+                <div
+                  key={ap.device_id}
+                  onClick={() => setSelectedAP(ap)}
+                  style={{ left: `${ap.x_pct}%`, top: `${ap.y_pct}%` }}
+                  className="absolute -translate-x-1/2 -translate-y-1/2 cursor-pointer transition-all duration-200 group z-10"
+                >
+                  {/* RF Coverage Heatmap Gradients */}
+                  {heatmapMode === "coverage" && (
+                    <div
+                      style={{
+                        width: "240px",
+                        height: "240px",
+                        background:
+                          (ap.rssi ?? -56) >= -65
+                            ? "radial-gradient(circle, rgba(16, 185, 129, 0.4) 0%, rgba(16, 185, 129, 0.12) 50%, transparent 75%)"
+                            : (ap.rssi ?? -56) >= -75
+                            ? "radial-gradient(circle, rgba(245, 158, 11, 0.4) 0%, rgba(245, 158, 11, 0.12) 50%, transparent 75%)"
+                            : "radial-gradient(circle, rgba(239, 68, 68, 0.35) 0%, rgba(239, 68, 68, 0.1) 50%, transparent 75%)",
+                      }}
+                      className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full pointer-events-none animate-pulse"
+                    />
+                  )}
+
+                  {/* Interference Heatmap Overlay */}
+                  {heatmapMode === "interference" && ap.health_status !== "healthy" && (
+                    <div
+                      style={{
+                        width: "260px",
+                        height: "260px",
+                        background: "radial-gradient(circle, rgba(239, 68, 68, 0.45) 0%, rgba(245, 158, 11, 0.2) 50%, transparent 75%)",
+                      }}
+                      className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full pointer-events-none animate-pulse"
+                    />
+                  )}
+
+                  {/* Blinking Radar Beacon Rings */}
+                  <div
+                    className={`absolute -inset-2 rounded-full pointer-events-none animate-ping ${
+                      ap.health_status === "healthy"
+                        ? "bg-emerald-500/35"
+                        : ap.health_status === "degraded"
+                        ? "bg-amber-500/45"
+                        : "bg-rose-500/60"
+                    }`}
+                  />
+                  <div
+                    className={`absolute -inset-1 rounded-full pointer-events-none animate-pulse ${
+                      ap.health_status === "healthy"
+                        ? "bg-emerald-400/20"
+                        : ap.health_status === "degraded"
+                        ? "bg-amber-400/30"
+                        : "bg-rose-400/40"
+                    }`}
+                  />
+
+                  {/* Glowing Wi-Fi AP Circular Marker */}
+                  <div
+                    className={`relative p-3 rounded-full border shadow-2xl flex items-center justify-center transition-all duration-200 group-hover:scale-125 ${
+                      ap.health_status === "healthy"
+                        ? "bg-emerald-950/90 border-emerald-500/60 text-emerald-400 shadow-emerald-900/50"
+                        : ap.health_status === "degraded"
+                        ? "bg-amber-950/90 border-amber-500/60 text-amber-400 shadow-amber-900/50"
+                        : "bg-rose-950/90 border-rose-500/60 text-rose-400 shadow-rose-900/50"
+                    } ${isSelected ? "ring-4 ring-indigo-500 ring-offset-2 ring-offset-slate-950 scale-125 z-20" : ""}`}
+                  >
+                    <Wifi className="w-4 h-4 animate-pulse" />
+                  </div>
+
+                  {/* AP Name Badge Sub-Label */}
+                  <div className="absolute top-full left-1/2 -translate-x-1/2 mt-1 px-2 py-0.5 bg-slate-900/90 border border-slate-800 rounded text-[10px] font-semibold text-slate-300 whitespace-nowrap shadow">
+                    {ap.name}
+                  </div>
+
+                  {/* AP Tooltip Hover Card */}
+                  <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2.5 hidden group-hover:block bg-slate-900 border border-slate-800 p-2.5 rounded-xl text-[11px] shadow-2xl z-[100] whitespace-nowrap">
+                    <div className="font-bold text-white flex items-center gap-1.5">
+                      <Wifi className="w-3.5 h-3.5 text-indigo-400" />
+                      <span>{ap.name}</span>
+                    </div>
+                    <div className="text-slate-400 mt-0.5">{ap.vendor.toUpperCase()} · {ap.client_count} Clients</div>
+                    {ap.health_reason && (
+                      <div className="text-amber-400 text-[10px] font-medium mt-1">{ap.health_reason}</div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+
+            {/* Empty state */}
+            {!loading && displayedAPs.length === 0 && (
+              <div className="absolute inset-0 flex items-center justify-center">
+                <div className="text-center">
+                  <Wifi className="w-8 h-8 text-slate-700 mx-auto mb-2" />
+                  <p className="text-sm text-slate-500">No access points on this floorplan</p>
+                </div>
+              </div>
+            )}
+
+            {/* Loading state */}
+            {loading && (
+              <div className="absolute inset-0 flex items-center justify-center">
+                <div className="text-xs text-slate-500 animate-pulse">Loading floorplan data...</div>
+              </div>
+            )}
+          </div>
+
+          {/* Inline Legend */}
+          <div className="shrink-0 h-9 flex items-center px-5 border-t border-slate-800/60 bg-slate-950 text-xs gap-6">
+            <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+              {heatmapMode === "placements" && "AP Health"}
+              {heatmapMode === "coverage" && "RF Signal (5GHz)"}
+              {heatmapMode === "interference" && "Interference"}
+            </span>
+
+            {heatmapMode === "placements" && (
+              <>
+                <span className="flex items-center gap-1.5 text-slate-400">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500" /> Healthy
+                </span>
+                <span className="flex items-center gap-1.5 text-slate-400">
+                  <span className="w-2 h-2 rounded-full bg-amber-400" /> Degraded
+                </span>
+                <span className="flex items-center gap-1.5 text-slate-400">
+                  <span className="w-2 h-2 rounded-full bg-rose-500" /> Critical
+                </span>
+              </>
+            )}
+
+            {heatmapMode === "coverage" && (
+              <>
+                <span className="flex items-center gap-1.5 text-slate-400">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500/80" /> Optimal (-45 to -65 dBm)
+                </span>
+                <span className="flex items-center gap-1.5 text-slate-400">
+                  <span className="w-2 h-2 rounded-full bg-amber-500/80" /> Attenuation (-68 to -75 dBm)
+                </span>
+                <span className="flex items-center gap-1.5 text-slate-400">
+                  <span className="w-2 h-2 rounded-full bg-slate-700" /> Dead Zone (&lt;-80 dBm)
+                </span>
+              </>
+            )}
+
+            {heatmapMode === "interference" && (
+              <>
+                <span className="flex items-center gap-1.5 text-slate-400">
+                  <span className="w-2 h-2 rounded-full bg-rose-500/80" /> Severe
+                </span>
+                <span className="flex items-center gap-1.5 text-slate-400">
+                  <span className="w-2 h-2 rounded-full bg-amber-500/80" /> Moderate
+                </span>
+                <span className="flex items-center gap-1.5 text-slate-400">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500/30" /> Clean
+                </span>
+              </>
+            )}
+          </div>
+        </div>
+
+        {/* ── AP Detail Inspector Panel ── */}
+        {selectedAP && (
+          <div className="w-[380px] shrink-0 flex flex-col bg-slate-900 border-l border-slate-800/60 overflow-y-auto">
+            {/* Panel Header */}
+            <div className="shrink-0 px-5 py-4 border-b border-slate-800/60">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+                      Access Point
+                    </span>
+                    <span
+                      className={`text-[10px] font-semibold uppercase ${
+                        selectedAP.health_status === "healthy"
+                          ? "text-emerald-400"
+                          : selectedAP.health_status === "critical"
+                          ? "text-rose-400"
+                          : "text-amber-400"
+                      }`}
+                    >
+                      {selectedAP.health_status}
+                    </span>
+                  </div>
+                  <h2 className="text-lg font-semibold text-white truncate">{selectedAP.name}</h2>
+                </div>
+                <button
+                  onClick={() => setSelectedAP(null)}
+                  className="p-1 text-slate-500 hover:text-white hover:bg-slate-800 rounded-sm transition-colors flex-shrink-0"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+
+            <div className="flex-1 px-5 py-4 space-y-6">
+              {/* Hardware Identifiers */}
+              <div className="space-y-2.5">
+                <h3 className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+                  Hardware Identifiers
+                </h3>
+                <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
+                  <div>
+                    <span className="text-slate-500 block text-[10px] uppercase tracking-wider">Device ID</span>
+                    <span className="text-slate-200 font-medium truncate block select-all">{selectedAP.device_id}</span>
+                  </div>
+                  <div>
+                    <span className="text-slate-500 block text-[10px] uppercase tracking-wider">MAC</span>
+                    <span className="text-slate-200 font-medium block">{selectedAP.mac_address || "5c:5b:35:aa:bb:cc"}</span>
+                  </div>
+                  <div>
+                    <span className="text-slate-500 block text-[10px] uppercase tracking-wider">IP Address</span>
+                    <span className="text-slate-200 font-medium block">{selectedAP.ip_address || "10.42.12.50"}</span>
+                  </div>
+                  <div>
+                    <span className="text-slate-500 block text-[10px] uppercase tracking-wider">Vendor</span>
+                    <span className="text-slate-200 font-medium block">{selectedAP.vendor.toUpperCase()}</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Radio Telemetry */}
+              <div className="space-y-2.5">
+                <h3 className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+                  Radio Telemetry
+                </h3>
+                <div className="grid grid-cols-3 gap-3">
+                  <div>
+                    <span className="text-[10px] text-slate-500 uppercase tracking-wider block">Clients</span>
+                    <span className="text-sm font-semibold text-white mt-0.5 block">{selectedAP.client_count}</span>
+                  </div>
+                  <div>
+                    <span className="text-[10px] text-slate-500 uppercase tracking-wider block">Channel</span>
+                    <span className="text-sm font-semibold text-white mt-0.5 block">{selectedAP.channel || 36}</span>
+                  </div>
+                  <div>
+                    <span className="text-[10px] text-slate-500 uppercase tracking-wider block">RSSI</span>
+                    <span className="text-sm font-semibold text-white mt-0.5 block">{selectedAP.rssi || -56} dBm</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* RRM Audit */}
+              {rrmAuditProofsByDevice[selectedAP.device_id] && (
+                <div className="space-y-3 pt-2 border-t border-slate-800/60">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-semibold text-emerald-400 uppercase tracking-wider flex items-center gap-1.5">
+                      <CheckCircle2 className="w-3.5 h-3.5" />
+                      Remediation Proof
+                    </span>
+                    <span className="text-[10px] font-mono text-emerald-300/80 bg-emerald-950/40 px-2 py-0.5 border border-emerald-500/20">
+                      {rrmAuditProofsByDevice[selectedAP.device_id].audit_id}
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3 text-xs">
+                    <div className="space-y-1">
+                      <span className="text-[10px] font-semibold text-rose-400 uppercase tracking-wider block">Before</span>
+                      <div className="text-slate-300 space-y-0.5">
+                        <div>Channel: <span className="text-white font-medium">Ch 36 (20MHz)</span></div>
+                        <div>Interference: <span className="text-rose-400 font-medium">24.8%</span></div>
+                        <div>Retries: <span className="text-rose-400 font-medium">18.2%</span></div>
+                        <div>Signal: <span className="text-amber-400 font-medium">-65 dBm</span></div>
+                      </div>
+                    </div>
+                    <div className="space-y-1">
+                      <span className="text-[10px] font-semibold text-emerald-400 uppercase tracking-wider block">After</span>
+                      <div className="text-slate-300 space-y-0.5">
+                        <div>Channel: <span className="text-emerald-300 font-semibold">Ch 149 (80MHz)</span></div>
+                        <div>Interference: <span className="text-emerald-300 font-semibold">0.4%</span></div>
+                        <div>Retries: <span className="text-emerald-300 font-semibold">0.1%</span></div>
+                        <div>Signal: <span className="text-emerald-300 font-semibold">-48 dBm</span></div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <p className="text-[11px] text-emerald-300/80 bg-emerald-950/20 px-2.5 py-2 border border-emerald-500/15">
+                    Interference reduced by <span className="font-semibold text-white">98.4%</span>. {selectedAP.client_count} client sessions stabilized.
+                  </p>
+                </div>
+              )}
+
+              {/* Diagnostic */}
+              {selectedAP.health_status !== "healthy" && !rrmAuditProofsByDevice[selectedAP.device_id] && (
+                <div className="space-y-2 pt-2 border-t border-slate-800/60">
+                  <span className="text-[10px] font-semibold text-rose-400 uppercase tracking-wider flex items-center gap-1.5">
+                    <AlertTriangle className="w-3.5 h-3.5" />
+                    Diagnostic Root Cause
+                  </span>
+                  <p className="text-xs text-slate-300 leading-relaxed">
+                    {selectedAP.health_reason || "High RF Co-Channel Interference & Retry Rate (>18%) on 5GHz radio."}
+                  </p>
+                  <p className="text-[11px] text-slate-500">
+                    Impact: {selectedAP.client_count || 4} active client sessions experiencing packet retransmissions.
+                  </p>
+                </div>
+              )}
+            </div>
+
+            {/* Panel Footer Actions */}
+            <div className="shrink-0 px-5 py-3 border-t border-slate-800/60 flex items-center justify-between">
+              <button
+                onClick={() => selectedAP && handleOptimizeRRM(selectedAP)}
+                disabled={rrmOptimizing || !!rrmAuditProofsByDevice[selectedAP.device_id] || selectedAP.health_status === "healthy"}
+                className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 disabled:bg-slate-800 disabled:text-slate-500 text-white text-xs font-medium rounded-sm transition-colors flex items-center gap-2"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${rrmOptimizing ? "animate-spin" : ""}`} />
+                {rrmOptimizing
+                  ? "Optimizing..."
+                  : rrmAuditProofsByDevice[selectedAP.device_id]
+                  ? "Optimized"
+                  : selectedAP.health_status === "healthy"
+                  ? "Spectrum Optimal"
+                  : "Optimize RRM"}
+              </button>
+
               <button
                 onClick={() => setSelectedAP(null)}
-                className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold rounded-lg transition-colors border border-slate-700"
+                className="px-3 py-1.5 text-slate-400 hover:text-white text-xs font-medium rounded-sm transition-colors hover:bg-slate-800/50"
               >
                 Close
               </button>
             </div>
-
-            {/* Hardware Identifiers Grid */}
-            <div className="grid grid-cols-2 gap-3 p-4 bg-slate-950/80 rounded-xl border border-slate-800/70 text-xs">
-              <div>
-                <span className="text-slate-400 text-[10px] uppercase block tracking-wider font-bold mb-0.5">DEVICE UUID</span>
-                <span className="text-slate-100 font-semibold truncate block select-all">{selectedAP.device_id}</span>
-              </div>
-              <div>
-                <span className="text-slate-400 text-[10px] uppercase block tracking-wider font-bold mb-0.5">MAC ADDRESS</span>
-                <span className="text-slate-100 font-semibold block">{selectedAP.mac_address || "5c:5b:35:aa:bb:cc"}</span>
-              </div>
-              <div>
-                <span className="text-slate-400 text-[10px] uppercase block tracking-wider font-bold mb-0.5">MANAGEMENT IP</span>
-                <span className="text-slate-100 font-semibold block">{selectedAP.ip_address || "10.42.12.50"}</span>
-              </div>
-              <div>
-                <span className="text-slate-400 text-[10px] uppercase block tracking-wider font-bold mb-0.5">PLATFORM / VENDOR</span>
-                <span className="text-slate-100 font-semibold block">{selectedAP.vendor.toUpperCase()}</span>
-              </div>
-            </div>
-
-            {/* Radio & Telemetry Grid */}
-            <div className="space-y-2">
-              <span className="text-[11px] font-bold text-slate-300 uppercase tracking-wider block">RADIO TELEMETRY & CLIENT METRICS</span>
-              <div className="grid grid-cols-3 gap-3">
-                <div className="p-3.5 bg-slate-950/60 rounded-xl border border-slate-800/70">
-                  <span className="text-[10px] font-semibold text-slate-400 uppercase block">CONNECTED CLIENTS</span>
-                  <span className="text-base font-extrabold text-white mt-1 block">{selectedAP.client_count} Clients</span>
-                </div>
-                <div className="p-3.5 bg-slate-950/60 rounded-xl border border-slate-800/70">
-                  <span className="text-[10px] font-semibold text-slate-400 uppercase block">OPERATING CHANNEL</span>
-                  <span className="text-base font-extrabold text-white mt-1 block">Ch {selectedAP.channel || 36} (5GHz)</span>
-                </div>
-                <div className="p-3.5 bg-slate-950/60 rounded-xl border border-slate-800/70">
-                  <span className="text-[10px] font-semibold text-slate-400 uppercase block">SIGNAL STRENGTH</span>
-                  <span className="text-base font-extrabold text-white mt-1 block">{selectedAP.rssi || -56} dBm</span>
-                </div>
-              </div>
-            </div>
-
-            {/* Remediation Audit Proof & Telemetry Delta Card (Visible ONLY when RRM was actually executed for this specific AP) */}
-            {rrmAuditProofsByDevice[selectedAP.device_id] && (
-              <div className="p-4 bg-emerald-950/40 border border-emerald-500/40 rounded-xl space-y-3 text-xs animate-in fade-in duration-200">
-                <div className="flex items-center justify-between border-b border-emerald-500/20 pb-2">
-                  <span className="text-[11px] font-bold text-emerald-400 uppercase tracking-wider flex items-center gap-1.5">
-                    <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                    <span>REMEDIATION AUDIT PROOF</span>
-                  </span>
-                  <span className="text-[10px] font-mono text-emerald-300/90 bg-emerald-950 px-2 py-0.5 rounded border border-emerald-500/30 font-semibold">
-                    AUDIT ID: {rrmAuditProofsByDevice[selectedAP.device_id].audit_id}
-                  </span>
-                </div>
-
-                <div className="grid grid-cols-2 gap-3 text-slate-200">
-                  {/* Before Optimization */}
-                  <div className="p-3 bg-slate-950/80 rounded-lg border border-slate-800 space-y-1">
-                    <span className="text-[10px] font-bold text-rose-400 uppercase block tracking-wider">BEFORE OPTIMIZATION (BASELINE)</span>
-                    <div className="text-[11px] space-y-0.5 font-sans">
-                      <div>Channel: <span className="text-white font-semibold">Ch 36 (20MHz)</span></div>
-                      <div>Interference: <span className="text-rose-400 font-semibold">24.8%</span></div>
-                      <div>Packet Retries: <span className="text-rose-400 font-semibold">18.2%</span></div>
-                      <div>Signal Quality: <span className="text-amber-400 font-semibold">-65 dBm</span></div>
-                    </div>
-                  </div>
-
-                  {/* After Optimization */}
-                  <div className="p-3 bg-emerald-950/60 rounded-lg border border-emerald-500/30 space-y-1">
-                    <span className="text-[10px] font-bold text-emerald-400 uppercase block tracking-wider">AFTER OPTIMIZATION (VERIFIED)</span>
-                    <div className="text-[11px] space-y-0.5 font-sans">
-                      <div>Channel: <span className="text-emerald-300 font-bold">Ch 149 (80MHz)</span></div>
-                      <div>Interference: <span className="text-emerald-300 font-bold">0.4%</span></div>
-                      <div>Packet Retries: <span className="text-emerald-300 font-bold">0.1%</span></div>
-                      <div>Signal Quality: <span className="text-emerald-300 font-bold">-48 dBm (+17 dBm)</span></div>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="text-[11px] text-emerald-200 bg-emerald-900/30 p-2.5 rounded-lg border border-emerald-500/25 font-medium leading-relaxed">
-                  VERIFIED IMPACT: Co-channel interference reduced by <span className="font-bold text-white">98.4%</span>. All {selectedAP.client_count} client sessions fully stabilized on 80MHz spectrum.
-                </div>
-              </div>
-            )}
-
-            {/* Diagnostic Root Cause Analysis (when unhealthy and not yet optimized) */}
-            {selectedAP.health_status !== "healthy" && !rrmAuditProofsByDevice[selectedAP.device_id] && (
-              <div className="p-4 bg-rose-500/10 border border-rose-500/25 rounded-xl space-y-1 text-xs">
-                <span className="text-[11px] font-bold text-rose-400 uppercase tracking-wider block">DIAGNOSTIC ROOT CAUSE</span>
-                <p className="text-slate-200 text-xs font-semibold leading-relaxed">
-                  {selectedAP.health_reason || "High RF Co-Channel Interference & Retry Rate (>18%) on 5GHz radio."}
-                </p>
-                <div className="text-[11px] text-slate-400 pt-1 font-medium">
-                  IMPACT BLAST RADIUS: {selectedAP.client_count || 4} active client sessions experiencing packet retransmissions.
-                </div>
-              </div>
-            )}
-
-            {/* Footer Actions */}
-            <div className="flex items-center justify-between border-t border-slate-800/80 pt-4">
-              <button
-                onClick={() => selectedAP && handleOptimizeRRM(selectedAP)}
-                disabled={rrmOptimizing || !!rrmAuditProofsByDevice[selectedAP.device_id] || selectedAP.health_status === "healthy"}
-                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:bg-slate-800 disabled:text-slate-400 text-white text-xs font-semibold rounded-lg transition-colors border border-indigo-500/50 flex items-center gap-2 shadow-lg shadow-indigo-600/20"
-              >
-                <RefreshCw className={`w-3.5 h-3.5 ${rrmOptimizing ? "animate-spin text-indigo-300" : ""}`} />
-                <span>
-                  {rrmOptimizing
-                    ? "OPTIMIZING RRM CHANNEL..."
-                    : rrmAuditProofsByDevice[selectedAP.device_id]
-                    ? "RRM CHANNEL OPTIMIZED"
-                    : selectedAP.health_status === "healthy"
-                    ? "RADIO SPECTRUM OPTIMAL"
-                    : "OPTIMIZE RRM CHANNEL"}
-                </span>
-              </button>
-
-              <button
-                onClick={() => setSelectedAP(null)}
-                className="px-5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-lg transition-colors border border-slate-700"
-              >
-                Close Inspector
-              </button>
-            </div>
-            </div>
           </div>
-        </div>,
-        document.body
-      )}
+        )}
+      </div>
     </div>
   );
 }
 
 export default function NOCFloorplanPage() {
   return (
-    <Suspense fallback={<div className="p-6 text-slate-400 text-xs animate-pulse">Loading NOC Floorplan Visualizer...</div>}>
+    <Suspense fallback={
+      <div className="-m-6 h-[calc(100vh-3.5rem)] flex items-center justify-center bg-slate-950">
+        <div className="text-xs text-slate-500 animate-pulse">Loading NOC Floorplan...</div>
+      </div>
+    }>
       <NOCFloorplanContent />
     </Suspense>
   );

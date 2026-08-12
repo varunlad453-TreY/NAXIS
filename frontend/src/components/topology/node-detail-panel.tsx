@@ -43,7 +43,7 @@ function ParentSection({
 }) {
   if (parents.length === 0) return null;
   return (
-    <div className="rounded-lg border border-border/40 bg-surface/50 p-4">
+    <div className="border-t border-border/40 pt-3">
       <div className="mb-2 flex items-center gap-2 text-xs font-semibold text-foreground">
         {icon}
         {label}
@@ -54,7 +54,7 @@ function ParentSection({
           return (
             <div key={parent.node_id} className="flex items-center gap-2">
               <span
-                className="h-2 w-2 shrink-0 rounded-full"
+                className="h-2 w-2 shrink-0"
                 style={{ backgroundColor: pMeta.color }}
               />
               <span className="truncate font-mono text-xs text-foreground-muted">
@@ -78,7 +78,7 @@ function ChildrenSection({
 }) {
   if (children.length === 0) return null;
   return (
-    <div className="rounded-lg border border-border/40 bg-surface/50 p-4">
+    <div className="border-t border-border/40 pt-3">
       <div className="mb-2 flex items-center gap-2 text-xs font-semibold text-foreground">
         <ArrowDown className="h-3.5 w-3.5 text-primary" />
         Children ({children.length})
@@ -89,7 +89,7 @@ function ChildrenSection({
           return (
             <div key={child.node_id} className="flex items-center gap-2">
               <span
-                className="h-2 w-2 shrink-0 rounded-full"
+                className="h-2 w-2 shrink-0"
                 style={{ backgroundColor: cMeta.color }}
               />
               <span className="truncate font-mono text-xs text-foreground-muted">
@@ -182,18 +182,16 @@ export function NodeDetailPanel({
 
       {/* Health Status */}
       <div
-        className="flex items-center gap-3 rounded-lg border p-4"
+        className="flex items-center gap-3 border-l-2 p-3"
         style={{
-          borderColor: `${hMeta.color}40`,
+          borderLeftColor: hMeta.color,
           backgroundColor: hMeta.bgColor,
         }}
       >
-        <span className="relative inline-flex h-3 w-3 shrink-0">
-          <span
-            className="relative inline-flex h-3 w-3 rounded-full"
-            style={{ backgroundColor: hMeta.color }}
-          />
-        </span>
+        <span
+          className="inline-flex h-2.5 w-2.5 shrink-0"
+          style={{ backgroundColor: hMeta.color }}
+        />
         <div>
           <div className="text-sm font-semibold" style={{ color: hMeta.color }}>
             {hMeta.label}
@@ -203,7 +201,7 @@ export function NodeDetailPanel({
       </div>
 
       {/* Health History Timeline */}
-      <div className="rounded-lg border border-border/40 bg-surface/50 p-4">
+      <div className="border-t border-border/40 pt-3">
         <HealthHistoryChart nodeId={node.node_id} />
       </div>
 
@@ -237,7 +235,7 @@ export function NodeDetailPanel({
 
       {/* Empty neighbor state */}
       {nodeDetail.parents.length === 0 && nodeDetail.children.length === 0 && (
-        <div className="flex items-center gap-2 rounded-lg border border-dashed border-border/40 p-4 text-sm text-foreground-muted">
+        <div className="flex items-center gap-2 border-t border-dashed border-border/40 py-3 text-sm text-foreground-muted">
           <Server className="h-4 w-4 shrink-0" />
           No topology neighbors — this node is isolated or a leaf device
         </div>
@@ -256,7 +254,7 @@ function DetailField({
   mono?: boolean;
 }) {
   return (
-    <div className="rounded-lg border border-border/40 bg-surface/50 p-3">
+    <div className="border-b border-border/40 py-2">
       <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-foreground-subtle">
         {label}
       </div>

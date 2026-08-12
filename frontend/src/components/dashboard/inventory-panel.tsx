@@ -5,7 +5,6 @@ import { useQuery } from "@tanstack/react-query";
 import { ChevronDown, ChevronRight, Clock, MapPin, Search, Server, Users, Wifi, X, Zap } from "lucide-react";
 import { api } from "@/lib/api";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Badge } from "@/components/ui/badge";
 import type { DeviceReachability, DeviceSummary } from "@/types/device";
 
 function fmt(n: number) {
@@ -36,9 +35,9 @@ function ReachDot({ status }: { status: DeviceReachability }) {
 
 function DeviceRow({ device }: { device: DeviceSummary }) {
   return (
-    <div className="group grid grid-cols-12 items-center gap-3 border-b border-border/20 px-3 py-2.5 text-sm transition-colors hover:bg-primary/4 last:border-0">
+    <div className="grid grid-cols-12 items-center gap-3 px-3 py-2 text-sm transition-colors hover:bg-primary/[0.02]">
       <div className="col-span-12 flex items-center gap-3 lg:col-span-4">
-        <div className="relative flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-surface/60 text-foreground-subtle">
+        <div className="relative flex shrink-0 items-center justify-center text-foreground-subtle">
           <Wifi className="h-3 w-3" />
           <span className="absolute -right-0.5 -top-0.5">
             <ReachDot status={device.reachability} />
@@ -51,7 +50,7 @@ function DeviceRow({ device }: { device: DeviceSummary }) {
           <div className="mt-0.5 flex items-center gap-1.5">
             <span className="font-mono text-[9px] text-foreground-subtle">{device.mac}</span>
             {device.model && (
-              <span className="rounded border border-violet-400/20 bg-violet-400/10 px-1 text-[8px] font-bold uppercase text-violet-400">
+              <span className="text-[9px] font-bold uppercase text-violet-400">
                 {device.model}
               </span>
             )}
@@ -87,7 +86,7 @@ function DeviceRow({ device }: { device: DeviceSummary }) {
       <div className="col-span-6 text-right text-xs lg:col-span-1">
         <div className="flex items-center justify-end gap-1">
           <ReachDot status={device.reachability} />
-          <span className=" capitalize text-foreground-muted">{device.reachability}</span>
+          <span className="capitalize text-foreground-muted">{device.reachability}</span>
         </div>
         {device.firmware_version && (
           <div className="mt-0.5 flex items-center justify-end gap-0.5 text-[9px] text-foreground-subtle">
@@ -106,10 +105,10 @@ function SiteGroup({ siteName, devices }: { siteName: string; devices: DeviceSum
   const down = devices.filter((d) => d.reachability === "unreachable").length;
 
   return (
-    <div className="overflow-hidden rounded-lg border border-border/30">
+    <div>
       <button
         onClick={() => setOpen((o) => !o)}
-        className="flex w-full items-center justify-between bg-surface/40 px-3 py-2 transition-colors hover:bg-surface/70"
+        className="flex w-full items-center justify-between px-3 py-2 transition-colors hover:bg-foreground/[0.02]"
       >
         <div className="flex items-center gap-2">
           {open ? (
@@ -119,16 +118,20 @@ function SiteGroup({ siteName, devices }: { siteName: string; devices: DeviceSum
           )}
           <MapPin className="h-3 w-3 text-violet-400" />
           <span className="text-xs font-medium text-foreground">{siteName}</span>
-          <Badge variant="outline" className="h-4 py-0 text-[9px]">
+          <span className="font-mono text-[10px] text-foreground-subtle">
             {devices.length}
-          </Badge>
+          </span>
         </div>
         <div className="flex items-center gap-3 text-xs">
           <span className="text-success">{up} up</span>
           {down > 0 && <span className="text-critical">{down} down</span>}
         </div>
       </button>
-      {open && devices.map((d) => <DeviceRow key={d.device_id} device={d} />)}
+      {open && (
+        <div className="pl-6">
+          {devices.map((d) => <DeviceRow key={d.device_id} device={d} />)}
+        </div>
+      )}
     </div>
   );
 }
@@ -228,7 +231,7 @@ export function InventoryPanel() {
       {isLoading ? (
         <div className="space-y-2">
           {Array.from({ length: 5 }).map((_, i) => (
-            <Skeleton key={i} className="h-9 w-full rounded-lg" />
+            <Skeleton key={i} className="h-9 w-full rounded-sm" />
           ))}
         </div>
       ) : groups.length === 0 ? (
@@ -241,7 +244,7 @@ export function InventoryPanel() {
           </p>
         </div>
       ) : (
-        <div className="max-h-[440px] space-y-2 overflow-y-auto pr-1">
+        <div className="max-h-[440px] space-y-1 overflow-y-auto pr-1">
           {groups.map(([site, devs]) => (
             <SiteGroup key={site} siteName={site} devices={devs} />
           ))}

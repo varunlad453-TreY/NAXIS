@@ -137,8 +137,8 @@ export default function AlertsPage() {
         {/* Empty state — no incidents yet */}
         {!isLoading && incidents.length === 0 && (
           <div className="space-y-6">
-            <div className="flex items-start gap-4 rounded-xl border border-primary/20 bg-primary/5 p-6">
-              <Brain className="h-6 w-6 text-primary shrink-0 mt-0.5" />
+            <div className="flex items-start gap-4 border-l-2 border-l-primary pl-4 py-2">
+              <Brain className="h-5 w-5 text-primary shrink-0 mt-0.5" />
               <div>
                 <p className="font-semibold text-foreground">No alerts yet</p>
                 <p className="mt-1 text-sm text-foreground-muted">
@@ -154,7 +154,7 @@ export default function AlertsPage() {
                 { icon: <Shield className="h-5 w-5 text-emerald-400" />, title: "Confidence scoring", desc: "Each incident scored by event count, severity distribution, and device diversity" },
                 { icon: <Clock className="h-5 w-5 text-amber-400" />, title: "Root-cause dedup", desc: "Incidents are grouped by root cause — one alert per root device, not one per symptom" },
               ].map(({ icon, title, desc }) => (
-                <div key={title} className="flex items-start gap-3 rounded-lg border border-border/40 p-4">
+                <div key={title} className="flex items-start gap-3 border-t border-border/40 pt-3">
                   {icon}
                   <div>
                     <p className="font-medium text-foreground">{title}</p>
@@ -185,19 +185,19 @@ export default function AlertsPage() {
                 {(["all", "critical", "major", "minor"] as const).map((s) => {
                   const filterLabels: Record<string, string> = { critical: "Outage", major: "Degraded", minor: "Attention", all: "All" };
                   return (
-                    <button
-                      key={s}
-                      onClick={() => setSeverityFilter(s)}
-                      className={`px-2.5 py-1 rounded text-sm font-medium transition-colors ${
-                        severityFilter === s
-                          ? s === "all"
-                            ? "bg-surface text-foreground"
-                            : "bg-critical/10 text-critical border border-critical/30"
-                          : "text-foreground-muted hover:text-foreground"
-                      }`}
-                    >
-                      {filterLabels[s]}
-                    </button>
+                <button
+                  key={s}
+                  onClick={() => setSeverityFilter(s)}
+                  className={`px-1 py-1 text-sm font-medium transition-colors ${
+                    severityFilter === s
+                      ? s === "all"
+                        ? "text-foreground border-b border-foreground"
+                        : "text-critical border-b border-critical"
+                      : "text-foreground-muted hover:text-foreground"
+                  }`}
+                >
+                  {filterLabels[s]}
+                </button>
                   );
                 })}
                 {(search || severityFilter !== "all") && (
@@ -250,13 +250,13 @@ export default function AlertsPage() {
                         {group.siteName}
                       </span>
                       {group.incidents.length > 1 && (
-                        <span className="rounded-full bg-foreground/5 px-2 py-0.5 text-[11px] text-foreground-subtle">
+                        <span className="text-[11px] text-foreground-subtle">
                           {group.incidents.length} issues
                         </span>
                       )}
                     </div>
 
-                    <div className="divide-y divide-border/60 rounded-lg border border-border/40">
+                    <div className="divide-y divide-border/60 border-t border-border/60">
                       {group.incidents.map((incident) => (
                         <AlertRow key={incident.incident_id} incident={incident} />
                       ))}

@@ -23,15 +23,9 @@ export function DataTicker({ eventCount }: { eventCount: number }) {
   }, []);
 
   return (
-    <div
-      className="flex items-center gap-4 overflow-hidden rounded-lg border border-primary/15 bg-primary/4 px-4 py-2 text-[11px] font-mono"
-      style={{ animation: "naxis-hud-pulse 3s ease-in-out infinite" }}
-    >
+    <div className="flex items-center gap-4 overflow-hidden px-1 py-2 text-[11px] font-mono">
       <span className="flex shrink-0 items-center gap-1.5 text-primary">
-        <span
-          className="h-1.5 w-1.5 rounded-full bg-primary"
-          style={{ animation: "naxis-blink 1s step-end infinite" }}
-        />
+        <span className="h-1.5 w-1.5 bg-primary" />
         LIVE
       </span>
       <span className="truncate text-foreground-subtle">{TICKER[idx]}</span>

@@ -38,7 +38,7 @@ export function ConfidenceBreakdown({ breakdown, total, isLoading }: ConfidenceB
 
   if (!breakdown) {
     return (
-      <div className="rounded-lg border border-border/40 p-4 text-sm text-foreground-muted">
+      <div className="border-t border-border/40 py-3 text-sm text-foreground-muted">
         Confidence breakdown not available for this incident.
       </div>
     );
@@ -69,9 +69,9 @@ export function ConfidenceBreakdown({ breakdown, total, isLoading }: ConfidenceB
               <span className="text-foreground-muted">{label}</span>
               <span className="font-medium text-foreground">{formatPct(value)}</span>
             </div>
-            <div className="h-2 w-full overflow-hidden rounded-full bg-border/60">
+            <div className="h-1 w-full bg-border/60">
               <div
-                className="h-full rounded-full transition-all duration-500"
+                className="h-full transition-all duration-500"
                 style={{ width: `${Math.round(value * 100)}%`, backgroundColor: color }}
               />
             </div>

@@ -48,12 +48,12 @@ export function CorrelationReasoning({ incident }: CorrelationReasoningProps) {
     ) ?? [];
 
   return (
-    <section className="rounded-lg border border-border/40 p-5">
+    <section className="border-t border-border/40 pt-5">
       <h2 className="flex items-center gap-2 text-sm font-semibold text-foreground">
         <Network className="h-4 w-4 text-primary" />
         Correlation Reasoning
         {isCascade && (
-          <span className="ml-1 inline-flex items-center gap-1 rounded-full bg-amber/10 px-2 py-0.5 text-[9px] font-semibold uppercase tracking-[0.12em] text-amber">
+          <span className="ml-1 inline-flex items-center gap-1 text-[9px] font-semibold uppercase tracking-[0.12em] text-amber">
             <Layers className="h-2.5 w-2.5" />
             Cascade
           </span>
@@ -74,7 +74,7 @@ export function CorrelationReasoning({ incident }: CorrelationReasoningProps) {
                 return (
                   <div
                     key={devId}
-                    className="flex items-center gap-3 rounded-lg border border-critical/20 bg-critical/5 p-3"
+                    className="flex items-center gap-3 border-l-2 border-l-critical pl-3 py-2"
                   >
                     <Server className="h-5 w-5 shrink-0 text-critical" />
                     <div className="min-w-0 flex-1">
@@ -105,7 +105,7 @@ export function CorrelationReasoning({ incident }: CorrelationReasoningProps) {
             <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.14em] text-foreground-subtle">
               <Wifi className="h-3.5 w-3.5 text-major" />
               Symptom Devices
-              <span className="ml-auto rounded-full bg-major/10 px-2 py-0.5 text-[9px] text-major">
+              <span className="ml-auto text-[9px] text-major">
                 {incident.symptom_device_ids.length}
               </span>
             </div>
@@ -115,7 +115,7 @@ export function CorrelationReasoning({ incident }: CorrelationReasoningProps) {
                 return (
                   <div
                     key={devId}
-                    className="flex items-center gap-2 rounded-lg border border-major/10 bg-major/[0.03] p-2.5"
+                    className="flex items-center gap-2 border-l-2 border-l-major pl-2 py-1.5"
                   >
                     <Wifi className="h-4 w-4 shrink-0 text-major" />
                     <div className="min-w-0">
@@ -155,7 +155,7 @@ export function CorrelationReasoning({ incident }: CorrelationReasoningProps) {
                 return (
                   <div
                     key={`${edge.src_id}-${edge.dst_id}`}
-                    className="flex items-center gap-1.5 rounded px-2 py-1 text-xs text-foreground-muted transition-colors hover:bg-surface"
+                    className="flex items-center gap-1.5 px-2 py-1 text-xs text-foreground-muted transition-colors hover:bg-surface"
                   >
                     <span className="max-w-[120px] truncate font-medium text-foreground">
                       {src?.name || edge.src_id}

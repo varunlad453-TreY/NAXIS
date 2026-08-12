@@ -194,11 +194,11 @@ const nodeTypes: NodeTypes = {
 
 function TopologySkeleton() {
   return (
-    <div className="flex h-[600px] items-center justify-center rounded-xl border border-border/40 bg-surface/30">
+    <div className="flex h-[600px] items-center justify-center border border-border/40 bg-surface/30">
       <div className="space-y-4 text-center">
         <div className="mx-auto h-12 w-12 animate-pulse rounded-full bg-surface-elevated" />
-        <div className="mx-auto h-4 w-48 animate-pulse rounded bg-surface-elevated" />
-        <div className="mx-auto h-3 w-32 animate-pulse rounded bg-surface-elevated" />
+        <div className="mx-auto h-4 w-48 animate-pulse bg-surface-elevated" />
+        <div className="mx-auto h-3 w-32 animate-pulse bg-surface-elevated" />
       </div>
     </div>
   );
@@ -206,18 +206,8 @@ function TopologySkeleton() {
 
 function TopologyEmptyState() {
   return (
-    <div className="flex h-[600px] items-center justify-center rounded-xl border-2 border-dashed border-border/40">
+    <div className="flex h-[600px] items-center justify-center border border-dashed border-border/40">
       <div className="max-w-md space-y-4 text-center">
-        <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-primary/10 text-primary">
-          <svg className="h-8 w-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={1.5}
-              d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4"
-            />
-          </svg>
-        </div>
         <h3 className="text-lg font-semibold text-foreground">No topology data</h3>
         <p className="text-sm text-foreground-muted">
           Topology nodes and edges will appear here once the worker starts
@@ -514,18 +504,8 @@ const onExportPng = useCallback(async () => {
   if (isLoading || (isComputing && initialNodes.length === 0)) return <TopologySkeleton />;
   if (error) {
     return (
-      <div className="flex h-[600px] items-center justify-center rounded-xl border border-critical/20 bg-critical/5">
+      <div className="flex h-[600px] items-center justify-center border border-critical/20 bg-critical/5">
         <div className="max-w-md space-y-3 text-center">
-          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-critical/10 text-critical">
-            <svg className="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z"
-              />
-            </svg>
-          </div>
           <h3 className="font-semibold text-foreground">Failed to load topology</h3>
           <p className="text-sm text-foreground-muted">{error.message}</p>
         </div>
@@ -806,7 +786,7 @@ const onExportPng = useCallback(async () => {
             minZoom={0.1}
             maxZoom={4}
             deleteKeyCode={null}
-            className="rounded-xl border border-border/40 bg-surface/20"
+            className="border border-border/40 bg-surface/20"
           >
             <Background color="hsl(var(--border) / 0.3)" gap={20} size={1} />
             <Controls
