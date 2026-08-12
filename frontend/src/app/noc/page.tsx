@@ -464,72 +464,75 @@ function NOCFloorplanContent() {
         ========================================================================
       */}
 
-      {/* Top Center: Segmented Control Deck for Heatmaps */}
-      <div className="absolute top-6 left-1/2 -translate-x-1/2 z-30">
-        <div className="bg-slate-900/60 backdrop-blur-2xl border border-white/10 p-1.5 rounded-full shadow-2xl flex items-center gap-1">
+      {/* Unified Top Navigation Bar (Prevents Overlap) */}
+      <div className="absolute top-6 left-6 right-6 lg:left-[360px] z-30 flex items-start justify-between pointer-events-none gap-4">
+        
+        {/* Left: Location Title */}
+        <div className="flex flex-col gap-2 pointer-events-auto shrink min-w-0 max-w-[35%]">
+          <h2 className="text-2xl md:text-3xl font-extrabold text-white tracking-tight drop-shadow-2xl flex items-center gap-3 truncate">
+            <Layers className="w-7 h-7 md:w-8 md:h-8 text-indigo-400 opacity-90 shrink-0" />
+            <span className="truncate">{floorplan?.name || "Select a Location"}</span>
+          </h2>
+          <div className="flex items-center gap-2">
+            <span className="px-2.5 py-1 rounded-full bg-slate-900/80 backdrop-blur-xl border border-white/10 text-slate-300 text-[10px] font-bold tracking-wider uppercase whitespace-nowrap shadow-lg">
+              {displayedAPs.length} Active APs
+            </span>
+            <span className="px-2.5 py-1 rounded-full bg-slate-900/80 backdrop-blur-xl border border-emerald-500/30 text-emerald-400 text-[10px] font-bold tracking-wider uppercase whitespace-nowrap shadow-[0_0_15px_rgba(52,211,153,0.15)] flex items-center gap-1.5">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse shadow-[0_0_5px_#34d399]" />
+              Live Telemetry
+            </span>
+          </div>
+        </div>
+
+        {/* Center: Segmented Heatmap Controls */}
+        <div className="pointer-events-auto shrink-0 bg-slate-900/80 backdrop-blur-3xl border border-white/10 p-1.5 rounded-full shadow-[0_8px_32px_rgba(0,0,0,0.5)] flex items-center gap-1">
           <button
             onClick={() => setHeatmapMode("placements")}
-            className={`px-4 py-2 rounded-full text-xs font-bold transition-all duration-300 ${
-              heatmapMode === "placements" ? "bg-white text-slate-950 shadow-lg" : "text-slate-400 hover:text-white hover:bg-white/5"
+            className={`px-3 md:px-4 py-2 rounded-full text-[11px] md:text-xs font-bold transition-all duration-300 ${
+              heatmapMode === "placements" ? "bg-white text-slate-950 shadow-lg" : "text-slate-400 hover:text-white hover:bg-white/10"
             }`}
           >
             AP Placements
           </button>
           <button
             onClick={() => setHeatmapMode("coverage")}
-            className={`px-4 py-2 rounded-full text-xs font-bold transition-all duration-300 ${
-              heatmapMode === "coverage" ? "bg-emerald-500 text-white shadow-lg shadow-emerald-500/30" : "text-slate-400 hover:text-white hover:bg-white/5"
+            className={`px-3 md:px-4 py-2 rounded-full text-[11px] md:text-xs font-bold transition-all duration-300 ${
+              heatmapMode === "coverage" ? "bg-emerald-500 text-white shadow-lg shadow-emerald-500/30" : "text-slate-400 hover:text-white hover:bg-white/10"
             }`}
           >
             RF Coverage
           </button>
           <button
             onClick={() => setHeatmapMode("interference")}
-            className={`px-4 py-2 rounded-full text-xs font-bold transition-all duration-300 ${
-              heatmapMode === "interference" ? "bg-amber-500 text-slate-950 shadow-lg shadow-amber-500/30" : "text-slate-400 hover:text-white hover:bg-white/5"
+            className={`px-3 md:px-4 py-2 rounded-full text-[11px] md:text-xs font-bold transition-all duration-300 ${
+              heatmapMode === "interference" ? "bg-amber-500 text-slate-950 shadow-lg shadow-amber-500/30" : "text-slate-400 hover:text-white hover:bg-white/10"
             }`}
           >
             Interference
           </button>
         </div>
-      </div>
 
-      {/* Top Left: Selected Location Floating Title */}
-      <div className="absolute top-8 left-[380px] z-30 pointer-events-none">
-        <h2 className="text-3xl font-extrabold text-white tracking-tight drop-shadow-2xl flex items-center gap-3">
-          <Layers className="w-8 h-8 text-indigo-400 opacity-90" />
-          {floorplan?.name || "Select a Location"}
-        </h2>
-        <div className="mt-2 flex items-center gap-3">
-           <span className="px-2.5 py-1 rounded-full bg-slate-900/60 backdrop-blur-md border border-white/10 text-slate-300 text-[11px] font-semibold tracking-wider uppercase">
-             {displayedAPs.length} Active APs
-           </span>
-           <span className="px-2.5 py-1 rounded-full bg-slate-900/60 backdrop-blur-md border border-white/10 text-slate-300 text-[11px] font-semibold tracking-wider uppercase">
-             Live Telemetry
-           </span>
+        {/* Right: Global Actions */}
+        <div className="flex items-center gap-3 pointer-events-auto shrink-0">
+          <button
+            onClick={() => setFilterHealth(filterHealth === "all" ? "degraded" : "all")}
+            className={`flex items-center gap-2 px-3 md:px-4 py-2 md:py-2.5 rounded-full text-[11px] md:text-xs font-bold transition-all backdrop-blur-3xl border shadow-xl ${
+              filterHealth === "degraded"
+                ? "bg-amber-500/20 border-amber-500/50 text-amber-300 hover:bg-amber-500/30 shadow-[0_0_15px_rgba(245,158,11,0.25)]"
+                : "bg-slate-900/80 border-white/10 text-slate-300 hover:bg-slate-800 hover:text-white"
+            }`}
+          >
+            <Filter className="w-3 h-3 md:w-4 md:h-4" />
+            {filterHealth === "degraded" ? "Degraded Only" : "Filter APs"}
+          </button>
+          <button
+            onClick={() => fetchFloorplan(selectedFloorId)}
+            className="flex items-center justify-center w-8 h-8 md:w-10 md:h-10 bg-slate-900/80 backdrop-blur-3xl border border-white/10 hover:bg-slate-800 hover:border-white/30 text-slate-300 rounded-full transition-all shadow-[0_8px_32px_rgba(0,0,0,0.5)]"
+            title="Refresh Telemetry"
+          >
+            <RefreshCw className={`w-3 h-3 md:w-4 md:h-4 ${loading ? "animate-spin text-indigo-400" : ""}`} />
+          </button>
         </div>
-      </div>
-
-      {/* Top Right: Global Actions */}
-      <div className="absolute top-6 right-6 z-30 flex items-center gap-3">
-        <button
-          onClick={() => setFilterHealth(filterHealth === "all" ? "degraded" : "all")}
-          className={`flex items-center gap-2 px-4 py-2.5 rounded-full text-xs font-bold transition-all backdrop-blur-2xl border shadow-xl ${
-            filterHealth === "degraded"
-              ? "bg-amber-500/20 border-amber-500/40 text-amber-300 hover:bg-amber-500/30"
-              : "bg-slate-900/60 border-white/10 text-slate-300 hover:bg-slate-800/80 hover:text-white"
-          }`}
-        >
-          <Filter className="w-4 h-4" />
-          {filterHealth === "degraded" ? "Degraded Only" : "Filter APs"}
-        </button>
-        <button
-          onClick={() => fetchFloorplan(selectedFloorId)}
-          className="flex items-center justify-center w-10 h-10 bg-slate-900/60 backdrop-blur-2xl border border-white/10 hover:bg-slate-800/80 hover:border-white/20 text-slate-300 rounded-full transition-all shadow-xl"
-          title="Refresh Telemetry"
-        >
-          <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin text-indigo-400" : ""}`} />
-        </button>
       </div>
 
       {/* Bottom Left: Dynamic Legend Floating Bar */}
@@ -594,9 +597,9 @@ function NOCFloorplanContent() {
       </div>
 
       {/* Floating Left Drawer: Facility Hierarchy Tree */}
-      <div className="absolute top-6 left-6 bottom-6 w-80 bg-slate-900/60 backdrop-blur-3xl border border-white/10 rounded-3xl shadow-2xl flex flex-col overflow-hidden z-40">
-        <div className="p-5 border-b border-white/5 bg-slate-950/20">
-          <h3 className="text-[11px] font-extrabold uppercase tracking-widest text-slate-400 flex items-center gap-2 mb-4">
+      <div className="absolute top-6 left-6 bottom-6 w-80 bg-slate-950/40 backdrop-blur-3xl border border-white/10 rounded-3xl shadow-[0_8px_32px_rgba(0,0,0,0.5)] flex flex-col overflow-hidden z-40">
+        <div className="p-5 border-b border-white/5 bg-slate-950/40">
+          <h3 className="text-[11px] font-extrabold uppercase tracking-widest text-slate-400 flex items-center gap-2 mb-4 drop-shadow-md">
             <Building className="w-4 h-4 text-indigo-400" /> Facility Hierarchy
           </h3>
           <div className="relative">
@@ -606,7 +609,7 @@ function NOCFloorplanContent() {
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder={`Search ${treeData.length} sites...`}
-              className="w-full bg-slate-950/50 border border-white/10 rounded-xl pl-10 pr-4 py-2.5 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all shadow-inner"
+              className="w-full bg-slate-900/60 border border-white/10 rounded-xl pl-10 pr-4 py-2.5 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all shadow-inner backdrop-blur-md"
             />
           </div>
         </div>
@@ -635,10 +638,13 @@ function NOCFloorplanContent() {
         </div>
       </div>
 
-      {/* AP Details Inspector Portal Modal (Mounted directly on document.body with ZERO top gap) */}
+      {/* AP Details Inspector Portal Modal (Mounted directly on document.body) */}
       {mounted && selectedAP && typeof document !== "undefined" && createPortal(
-        <div className="fixed top-0 left-0 right-0 bottom-0 w-full h-full bg-slate-950/90 backdrop-blur-md flex items-center justify-center p-4 z-[999999] overflow-hidden">
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-xl w-full p-6 space-y-5 shadow-2xl animate-in fade-in zoom-in-95 duration-200 font-sans">
+        <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-md flex items-center justify-center p-4 z-[999999] overflow-hidden">
+          <div className="bg-slate-950/80 backdrop-blur-3xl border border-white/10 rounded-3xl max-w-xl w-full p-6 space-y-5 shadow-[0_16px_64px_rgba(0,0,0,0.8)] animate-in fade-in zoom-in-95 duration-200 font-sans relative overflow-hidden">
+            {/* Subtle glow effect behind the modal content */}
+            <div className="absolute inset-0 bg-gradient-to-br from-indigo-500/10 via-transparent to-transparent pointer-events-none" />
+            <div className="relative z-10 space-y-5">
             {/* Header */}
             <div className="flex items-center justify-between border-b border-slate-800/80 pb-4">
               <div>
@@ -778,6 +784,7 @@ function NOCFloorplanContent() {
               >
                 Close Inspector
               </button>
+            </div>
             </div>
           </div>
         </div>,
