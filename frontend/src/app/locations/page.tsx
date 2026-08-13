@@ -208,13 +208,9 @@ export default function LocationsRegistryPage() {
       setAssignedDevices(mappedDevices);
 
       // Dynamically sync site health with hardware asset telemetry
-      const hasCritical = mappedDevices.some((d) => d.status === "critical");
       const hasDegraded = mappedDevices.some((d) => d.status === "degraded" || d.status === "offline");
-      const calculatedHealth: "healthy" | "degraded" | "critical" = hasCritical
-        ? "critical"
-        : hasDegraded
-        ? "degraded"
-        : "healthy";
+      const calculatedHealth: "healthy" | "degraded" | "critical" = hasDegraded ? "degraded" : "healthy";
+
 
       setSelectedLocation((prev) => (prev ? { ...prev, health_status: calculatedHealth } : null));
       setLocations((prev) =>
