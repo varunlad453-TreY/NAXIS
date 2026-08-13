@@ -10,35 +10,28 @@ import {
   Terminal,
   ExternalLink,
 } from "lucide-react";
+import { API_BASE } from "@/lib/api";
 
 export default function HelpPage() {
   return (
     <div className="p-6 space-y-6 max-w-6xl mx-auto">
-      {/* Header Bar */}
-      <div className="border-b border-slate-800/80 pb-5">
-        <h1 className="text-2xl font-bold text-white tracking-tight flex items-center gap-2">
-          <HelpCircle className="w-6 h-6 text-indigo-400" /> Platform Help & Architectural Reference
+      <div>
+        <h1 className="text-xl font-bold text-white tracking-tight flex items-center gap-2">
+          <HelpCircle className="w-5 h-5 text-purple-400" /> Help & Documentation
         </h1>
-        <p className="text-slate-400 text-xs mt-1">
-          Operational guides, REST API endpoints documentation, SLA matrices, and 24/7 enterprise NOC support escalation.
+        <p className="text-xs text-slate-400 mt-1">
+          Operational guide, API reference, and support resources for NAXIS Platform
         </p>
       </div>
 
-      {/* Guide List */}
-      <div className="divide-y divide-slate-800/80">
+      <div className="divide-y divide-slate-800 border-t border-b border-slate-800">
         <div className="flex flex-col md:flex-row md:items-start gap-4 py-5">
-          <BookOpen className="w-6 h-6 text-indigo-400 shrink-0 mt-0.5" />
+          <BookOpen className="w-6 h-6 text-purple-400 shrink-0 mt-0.5" />
           <div className="flex-1 space-y-1">
-            <h3 className="text-base font-bold text-white">System Architecture Guide</h3>
+            <h3 className="text-base font-bold text-white">Platform User Guide</h3>
             <p className="text-xs text-slate-400 leading-relaxed">
-              Understand how NAXIS ingests raw telemetry from Juniper Mist, Cisco DNA Center, and VeloCloud to normalize canonical location IDs.
+              Comprehensive walkthroughs covering NOC Floorplans, Topology Maps, Path Tracing, and Automated Incident Correlation.
             </p>
-            <a
-              href="#"
-              className="inline-flex items-center gap-1.5 text-xs font-bold text-indigo-400 hover:text-indigo-300 transition-colors pt-1"
-            >
-              Read Technical Whitepaper <ExternalLink className="w-3.5 h-3.5" />
-            </a>
           </div>
         </div>
 
@@ -50,7 +43,7 @@ export default function HelpPage() {
               Integrate NAXIS telemetry and LLM Root Cause Analysis directly into your custom DevOps pipelines and OpenAPI endpoints.
             </p>
             <a
-              href="http://localhost:8000/docs"
+              href={`${API_BASE}/docs`}
               target="_blank"
               rel="noreferrer"
               className="inline-flex items-center gap-1.5 text-xs font-bold text-purple-400 hover:text-purple-300 transition-colors pt-1"

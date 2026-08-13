@@ -16,6 +16,8 @@ import {
   Wifi,
   Zap,
 } from "lucide-react";
+import { API_BASE } from "@/lib/api";
+
 
 interface PathHop {
   hop_index: number;
@@ -58,7 +60,7 @@ export default function PathTracePage() {
     setLoading(true);
     setErrorMessage(null);
     try {
-      const res = await fetch(`http://localhost:8000/path-trace/${encodeURIComponent(macToTrace)}`);
+      const res = await fetch(`${API_BASE}/path-trace/${encodeURIComponent(macToTrace)}`);
       if (!res.ok) throw new Error(`Path trace query failed (${res.status})`);
       const data = await res.json();
       setTraceData(data);
@@ -78,8 +80,9 @@ export default function PathTracePage() {
     setDiagRunning(true);
     setDiagOutput(null);
     try {
-      const endpoint = `http://localhost:8000/diagnostics/${diagnosticType}`;
+      const endpoint = `${API_BASE}/diagnostics/${diagnosticType}`;
       const res = await fetch(endpoint, {
+
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

@@ -12,6 +12,8 @@ import {
   Sparkles,
   Zap,
 } from "lucide-react";
+import { API_BASE } from "@/lib/api";
+
 
 interface EvidenceItem {
   evidence_id: string;
@@ -44,7 +46,7 @@ export function AIRcaCard({ incidentId }: { incidentId: string }) {
   const fetchRca = async () => {
     setLoading(true);
     try {
-      const res = await fetch(`http://localhost:8000/incidents/${incidentId}/rca`);
+      const res = await fetch(`${API_BASE}/incidents/${incidentId}/rca`);
       if (res.ok) {
         const data = await res.json();
         setRca(data);
@@ -59,9 +61,10 @@ export function AIRcaCard({ incidentId }: { incidentId: string }) {
   const generateRca = async () => {
     setLoading(true);
     try {
-      const res = await fetch(`http://localhost:8000/incidents/${incidentId}/rca`, {
+      const res = await fetch(`${API_BASE}/incidents/${incidentId}/rca`, {
         method: "POST",
       });
+
       if (res.ok) {
         const data = await res.json();
         setRca(data);

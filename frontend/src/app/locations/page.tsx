@@ -23,7 +23,9 @@ import {
   Activity,
   ShieldAlert,
   Terminal,
+  ChevronRight,
 } from "lucide-react";
+import { API_BASE } from "@/lib/api";
 
 interface LocationItem {
   location_id: string;
@@ -81,7 +83,7 @@ export default function LocationsRegistryPage() {
   const fetchLocations = async () => {
     setLoading(true);
     try {
-      const res = await fetch("http://localhost:8000/locations/tree");
+      const res = await fetch(`${API_BASE}/locations/tree`);
       if (res.ok) {
         const data = await res.json();
         const flattened: LocationItem[] = [];
@@ -122,7 +124,7 @@ export default function LocationsRegistryPage() {
     setSelectedLocation(loc);
     try {
       // 1. Fetch real floorplan AP placements for this site
-      const fpRes = await fetch(`http://localhost:8000/locations/${loc.location_id}/floorplan?name=${encodeURIComponent(loc.name)}`);
+      const fpRes = await fetch(`${API_BASE}/locations/${loc.location_id}/floorplan?name=${encodeURIComponent(loc.name)}`);
       let floorplanAPs: any[] = [];
       if (fpRes.ok) {
         const fpData = await fpRes.json();
@@ -132,7 +134,8 @@ export default function LocationsRegistryPage() {
       }
 
       // 2. Fetch inventory hardware devices assigned to this site
-      const res = await fetch(`http://localhost:8000/devices?site_id=${encodeURIComponent(loc.location_id)}`);
+      const res = await fetch(`${API_BASE}/devices?site_id=${encodeURIComponent(loc.location_id)}`);
+
       let invDevices: any[] = [];
       if (res.ok) {
         const data = await res.json();

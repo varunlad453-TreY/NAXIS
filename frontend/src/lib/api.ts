@@ -31,8 +31,22 @@ import type {
 
 import { getAuthToken } from "@/lib/auth";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+export const getApiBase = (): string => {
+  if (typeof window !== "undefined") {
+    const envUrl = process.env.NEXT_PUBLIC_API_URL;
+    if (envUrl && envUrl !== "http://localhost:8000") {
+      return envUrl;
+    }
+    const hostname = window.location.hostname || "localhost";
+    return `http://${hostname}:8000`;
+  }
+  return process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+};
+
+export const API_BASE = getApiBase();
 const API_KEY = process.env.NEXT_PUBLIC_API_KEY || "";
+
+
 
 class APIError extends Error {
   constructor(

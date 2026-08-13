@@ -69,15 +69,6 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=_settings.api_cors_origins_list,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-
 @app.middleware("http")
 async def add_process_time_header(request, call_next):
     """Add X-Process-Time header to responses."""
@@ -86,6 +77,26 @@ async def add_process_time_header(request, call_next):
     process_time = (datetime.utcnow() - start_time).total_seconds()
     response.headers["X-Process-Time"] = f"{process_time:.4f}"
     return response
+
+
+cors_origins = _settings.api_cors_origins_list
+if "*" in cors_origins:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=False,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+else:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=cors_origins,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
 
 
 app.include_router(health_router)
