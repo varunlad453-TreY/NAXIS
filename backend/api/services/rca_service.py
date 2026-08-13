@@ -42,16 +42,21 @@ class RCAService:
         raw_inc = await get_incident(incident_id)
         incident = raw_inc.to_db_dict() if (raw_inc and hasattr(raw_inc, "to_db_dict")) else (raw_inc if isinstance(raw_inc, dict) else None)
         if not incident:
-            incident = {
-                "incident_id": incident_id,
-                "title": "Cascading Wireless AP & Switch Port Latency Spike",
-                "severity": "CRITICAL",
-                "scope": "site",
-                "source_vendor": "juniper_mist",
-                "affected_devices": ["ap-hq-01", "sw-access-bldg1-01"],
-            }
+            # Query SQL database directly for incident details
+            inc_row = await db.fetchrow("SELECT * FROM incidents WHERE incident_id = $1;", incident_id)
+            if inc_row:
+                incident = dict(inc_row)
+            else:
+                incident = {
+                    "incident_id": incident_id,
+                    "title": f"Incident Telemetry Report {incident_id[:8]}",
+                    "severity": "CRITICAL",
+                    "scope": "site",
+                    "source_vendor": "multi_vendor",
+                    "affected_devices": [],
+                }
 
-        # Fetch path trace evidence if MAC available
+        # Fetch path trace evidence if client MAC available
         path_hops = []
         try:
             path_res = await path_trace_service.trace_client_path("00:11:22:33:44:55")
@@ -59,33 +64,22 @@ class RCAService:
         except Exception:
             pass
 
-        # Raw events for evidence assembly
-        raw_events = incident.get("events") or [
-            {
-                "device_id": "ap-hq-01",
-                "message": "AP-HQ-01 high channel utilization 88% and packet drop rate 12.4%",
-                "source": "juniper_mist",
-                "category": "WIRELESS",
-                "severity": "CRITICAL",
-                "timestamp": "2026-08-09T14:30:00Z",
-            },
-            {
-                "device_id": "sw-access-bldg1-01",
-                "message": "Interface ge-0/0/12 ingress CRC error count incremented to 1420",
-                "source": "juniper_mist_ex",
-                "category": "SWITCHING",
-                "severity": "MAJOR",
-                "timestamp": "2026-08-09T14:30:05Z",
-            },
-            {
-                "device_id": "sdwan-edge-hq-01",
-                "message": "VeloCloud Edge WAN1 path jitter spike to 45ms",
-                "source": "velocloud",
-                "category": "SDWAN",
-                "severity": "WARNING",
-                "timestamp": "2026-08-09T14:30:10Z",
-            },
-        ]
+        # Raw events fetched dynamically from SQL events table
+        raw_events = incident.get("events")
+        if not raw_events:
+            event_rows = await db.fetch(
+                """
+                SELECT device_id, title as message, vendor as source, category, severity, timestamp
+                FROM events
+                WHERE incident_id = $1 OR site_id = $2
+                ORDER BY timestamp DESC
+                LIMIT 10;
+                """,
+                incident_id,
+                incident.get("site_id", ""),
+            )
+            raw_events = [dict(r) for r in event_rows] if event_rows else []
+
 
         # 1. Run Sanitizer to construct SanitizedEvidencePack
         sanitizer = EvidenceSanitizer()

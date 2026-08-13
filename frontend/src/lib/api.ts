@@ -63,7 +63,8 @@ class APIError extends Error {
   }
 }
 
-async function fetchAPI<T>(endpoint: string, options?: RequestInit): Promise<T> {
+export async function fetchAPI<T>(endpoint: string, options?: RequestInit): Promise<T> {
+
   const url = `${API_BASE}${endpoint}`;
   const authToken = getAuthToken();
 

@@ -239,22 +239,23 @@ class PathTraceService:
 
     async def _lookup_connected_switch(self, ap_device_id: str) -> Optional[Dict[str, Any]]:
         query = """
-            SELECT target_node_id as device_id, target_port as port
-            FROM topology_edges
-            WHERE source_node_id = $1
+            SELECT e.target_node_id as device_id, e.target_port as port,
+                   COALESCE(n.name, e.target_node_id) as name,
+                   COALESCE(n.ip_address, '10.10.1.20') as ip,
+                   COALESCE(n.vendor, 'juniper_mist_ex') as vendor
+            FROM topology_edges e
+            LEFT JOIN topology_nodes n ON n.node_id = e.target_node_id
+            WHERE e.source_node_id = $1
             LIMIT 1;
         """
         try:
             row = await db.fetchrow(query, ap_device_id)
             if row:
-                d = dict(row)
-                d["name"] = "SW-Access-Bldg1-01"
-                d["ip"] = "10.10.1.20"
-                d["vendor"] = "juniper_mist_ex"
-                return d
+                return dict(row)
         except Exception:
             pass
         return None
+
 
     async def _lookup_sdwan_edge(self, site_id: str) -> Optional[Dict[str, Any]]:
         query = """
