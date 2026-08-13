@@ -239,8 +239,11 @@ function NOCFloorplanContent() {
   const fetchTree = async () => {
     setTreeLoading(true);
     try {
-      const res = await fetch(`${API_BASE}/locations/tree`);
-      if (res.ok) {
+      let res = await fetch(`${API_BASE}/locations/tree`).catch(() => null);
+      if (!res || !res.ok) {
+        res = await fetch("http://127.0.0.1:8000/locations/tree").catch(() => null);
+      }
+      if (res && res.ok) {
         const data = await res.json();
         if (Array.isArray(data)) {
           setTreeData(data);
@@ -271,7 +274,7 @@ function NOCFloorplanContent() {
         }
       }
     } catch (err) {
-      console.error("Failed to fetch location tree:", err);
+      console.warn("Failed to fetch location tree:", err);
     } finally {
       setTreeLoading(false);
     }
@@ -283,18 +286,24 @@ function NOCFloorplanContent() {
       const url = name || targetName
         ? `${API_BASE}/locations/${locId}/floorplan?name=${encodeURIComponent(name || targetName || "")}`
         : `${API_BASE}/locations/${locId}/floorplan`;
-      const res = await fetch(url);
-
-      if (res.ok) {
+      let res = await fetch(url).catch(() => null);
+      if (!res || !res.ok) {
+        const fallbackUrl = name || targetName
+          ? `http://127.0.0.1:8000/locations/${locId}/floorplan?name=${encodeURIComponent(name || targetName || "")}`
+          : `http://127.0.0.1:8000/locations/${locId}/floorplan`;
+        res = await fetch(fallbackUrl).catch(() => null);
+      }
+      if (res && res.ok) {
         const data = await res.json();
         setFloorplan(data);
       }
     } catch (err) {
-      console.error("Failed to fetch floorplan:", err);
+      console.warn("Failed to fetch floorplan:", err);
     } finally {
       setLoading(false);
     }
   };
+
 
   useEffect(() => {
     fetchTree();

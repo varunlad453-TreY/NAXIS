@@ -34,17 +34,21 @@ import { getAuthToken } from "@/lib/auth";
 export const getApiBase = (): string => {
   if (typeof window !== "undefined") {
     const envUrl = process.env.NEXT_PUBLIC_API_URL;
-    if (envUrl && envUrl !== "http://localhost:8000") {
+    if (envUrl && envUrl !== "http://localhost:8000" && envUrl !== "http://127.0.0.1:8000") {
       return envUrl;
     }
-    const hostname = window.location.hostname || "localhost";
+    const hostname = window.location.hostname;
+    if (!hostname || hostname === "localhost") {
+      return "http://127.0.0.1:8000";
+    }
     return `http://${hostname}:8000`;
   }
-  return process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+  return process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 };
 
 export const API_BASE = getApiBase();
 const API_KEY = process.env.NEXT_PUBLIC_API_KEY || "";
+
 
 
 
