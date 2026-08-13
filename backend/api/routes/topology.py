@@ -546,7 +546,14 @@ async def get_site_summary(site_id: str) -> SiteSummaryResponse:
     """Return a summary of devices within a site: type breakdown, vendor breakdown, health breakdown."""
     try:
         if not db.pool:
-            return SiteSummaryResponse(site_id=site_id)
+            return SiteSummaryResponse(
+                site_id=site_id,
+                total_devices=0,
+                health=SiteHealthCounts(healthy_count=0, warning_count=0, critical_count=0, unknown_count=0),
+                by_type=[],
+                by_vendor=[],
+            )
+
 
         type_rows = await db.fetch(_SITE_DEVICE_TYPE_BREAKDOWN, site_id)
         vendor_rows = await db.fetch(_SITE_DEVICE_VENDOR_BREAKDOWN, site_id)

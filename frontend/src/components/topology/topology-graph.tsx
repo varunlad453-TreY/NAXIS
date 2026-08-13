@@ -503,15 +503,22 @@ const onExportPng = useCallback(async () => {
 
   if (isLoading || (isComputing && initialNodes.length === 0)) return <TopologySkeleton />;
   if (error) {
+    const errorMsg =
+      error instanceof Error
+        ? error.message
+        : typeof error === "string"
+        ? error
+        : "Failed to load topology data";
     return (
       <div className="flex h-[600px] items-center justify-center border border-critical/20 bg-critical/5">
         <div className="max-w-md space-y-3 text-center">
           <h3 className="font-semibold text-foreground">Failed to load topology</h3>
-          <p className="text-sm text-foreground-muted">{error.message}</p>
+          <p className="text-sm text-foreground-muted">{errorMsg}</p>
         </div>
       </div>
     );
   }
+
   if (!data.nodes.length) return <TopologyEmptyState />;
 
   if (resolvedMode === "context" && contextNode) {

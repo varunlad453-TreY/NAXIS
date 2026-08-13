@@ -369,15 +369,15 @@ function TopologyPageContent() {
         ) : (
           <>
             {/* Site health summary bar */}
-            {siteSummaryQuery.data && (
+            {siteSummaryQuery.data?.health && (
               <SiteHealthSummary
                 health={{
-                  critical_count: siteSummaryQuery.data.health.critical_count,
-                  warning_count: siteSummaryQuery.data.health.warning_count,
-                  healthy_count: siteSummaryQuery.data.health.healthy_count,
-                  unknown_count: siteSummaryQuery.data.health.unknown_count,
+                  critical_count: siteSummaryQuery.data.health.critical_count ?? 0,
+                  warning_count: siteSummaryQuery.data.health.warning_count ?? 0,
+                  healthy_count: siteSummaryQuery.data.health.healthy_count ?? 0,
+                  unknown_count: siteSummaryQuery.data.health.unknown_count ?? 0,
                 }}
-                total={siteSummaryQuery.data.total_devices}
+                total={siteSummaryQuery.data.total_devices ?? 0}
               />
             )}
 
@@ -405,7 +405,7 @@ function TopologyPageContent() {
             )}
 
             {/* Vendor breakdown chips */}
-            {siteSummaryQuery.data && siteSummaryQuery.data.by_vendor.length > 1 && (
+            {siteSummaryQuery.data?.by_vendor && siteSummaryQuery.data.by_vendor.length > 1 && (
               <div className="flex flex-wrap gap-2">
                 {siteSummaryQuery.data.by_vendor.map(({ type, count }) => (
                   <div
@@ -419,6 +419,7 @@ function TopologyPageContent() {
                 ))}
               </div>
             )}
+
 
             <TopologyGraph
               data={allData}
