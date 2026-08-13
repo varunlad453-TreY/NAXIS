@@ -1,4 +1,5 @@
 export { TopologyGraph } from "./topology-graph";
+export { TopologyGraphV2 } from "./topology-graph-v2";
 export { buildLayout, buildGroupedLayout, NODE_WIDTH, NODE_HEIGHT } from "./layout";
 export type { LayoutResult, GroupedLayoutResult } from "./layout";
 export { useTopologyLayout } from "./use-topology-layout";
@@ -12,3 +13,10 @@ export { AggregatedView } from "./aggregated-view";
 export { DeviceBrowser } from "./device-browser";
 export { ContextGraph } from "./context-graph";
 export { TypeClusterNode } from "./type-cluster-node";
+export { TopologyToolbar } from "./topology-toolbar";
+export { TopologyLegend } from "./topology-legend";
+export { topologyNodeTypes, TopologyNodeComponent, LeafNodeComponent, SiteGroupNode } from "./topology-node-types";
+export { topologyEdgeTypes, TopologyEdge } from "./topology-edge-types";
+export { normalizeTopology, tracePath, getDownstreamImpact, getNodeRank } from "./topology-graph-model";
+export type { GraphNode, GraphEdge, GraphNodeData, GraphEdgeData, NormalizedGraph } from "./topology-graph-model";
+export { buildHierarchicalLayout, buildFlatLayout, buildBackboneLayout, buildSiteGroupedLayout } from "./topology-layout-engine";
