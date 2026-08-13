@@ -206,10 +206,27 @@ export default function LocationsRegistryPage() {
       });
 
       setAssignedDevices(mappedDevices);
+
+      // Dynamically sync site health with hardware asset telemetry
+      const hasCritical = mappedDevices.some((d) => d.status === "critical");
+      const hasDegraded = mappedDevices.some((d) => d.status === "degraded" || d.status === "offline");
+      const calculatedHealth: "healthy" | "degraded" | "critical" = hasCritical
+        ? "critical"
+        : hasDegraded
+        ? "degraded"
+        : "healthy";
+
+      setSelectedLocation((prev) => (prev ? { ...prev, health_status: calculatedHealth } : null));
+      setLocations((prev) =>
+        prev.map((item) =>
+          item.location_id === loc.location_id ? { ...item, health_status: calculatedHealth } : item
+        )
+      );
     } catch (err) {
       console.error("Failed to query live devices for site:", err);
     }
   };
+
 
   const getTypeIcon = (type: string) => {
     switch (type) {

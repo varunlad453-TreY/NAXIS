@@ -289,15 +289,16 @@ class LocationService:
         }
 
     async def _get_location_health(self, location_id: str) -> str:
-        """Determines location health by checking active events."""
-        query = """
-            SELECT severity
-            FROM events
-            WHERE site_id = $1 OR raw_event->>'site_id' = $1
-            ORDER BY timestamp DESC
-            LIMIT 5;
-        """
+        """Determines location health by checking active events and AP placements."""
         try:
+            # 1. Check events
+            query = """
+                SELECT severity
+                FROM events
+                WHERE site_id = $1 OR raw_event->>'site_id' = $1
+                ORDER BY timestamp DESC
+                LIMIT 5;
+            """
             rows = await db.fetch(query, location_id)
             for r in rows:
                 sev = str(r["severity"]).lower()
@@ -305,9 +306,18 @@ class LocationService:
                     return "critical"
                 elif sev in ("major", "warning"):
                     return "degraded"
-        except Exception:
-            pass
+
+            # 2. Check AP placements for the site to ensure health matches hardware telemetry
+            aps = await self._fetch_ap_placements(location_id)
+            for ap in aps:
+                if ap.health_status == "critical":
+                    return "critical"
+                elif ap.health_status == "degraded":
+                    return "degraded"
+        except Exception as exc:
+            logger.warning("Error computing location health for %s: %s", location_id, exc)
         return "healthy"
+
 
     async def _get_location_device_count(self, location_id: str) -> int:
         query = """
