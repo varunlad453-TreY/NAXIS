@@ -57,17 +57,16 @@ export default function ConnectivityPage() {
         }));
         setTunnels(mapped);
       } else {
-        setTunnels([
-          { tunnel_id: "tun-sfo-nyc-01", source_edge: "SFO Main Gateway", destination_hub: "NYC Core Data Center", protocol: "IPsec", latency_ms: 42.1, jitter_ms: 1.8, packet_loss_pct: 0.0, status: "up" },
-          { tunnel_id: "tun-sfo-lon-02", source_edge: "SFO Main Gateway", destination_hub: "London Hub West", protocol: "BGP-Overlay", latency_ms: 118.4, jitter_ms: 4.2, packet_loss_pct: 0.05, status: "up" },
-        ]);
+        setTunnels([]);
       }
     } catch (err) {
       console.error("Failed to fetch topology edges:", err);
+      setTunnels([]);
     } finally {
       setLoading(false);
     }
   };
+
 
   useEffect(() => {
     fetchTunnels();

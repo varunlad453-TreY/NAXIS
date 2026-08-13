@@ -61,17 +61,16 @@ export default function PerformancePage() {
         }));
         setMetrics(mapped);
       } else {
-        setMetrics([
-          { device_id: "edge-sfo-01", device_name: "SFO Main SD-WAN Gateway", device_type: "sdwan", vendor: "VeloCloud", cpu_pct: 42, memory_pct: 58, latency_ms: 14.2, bandwidth_gbps: 8.4, status: "healthy" },
-          { device_id: "sw-core-nyc-01", device_name: "NYC Core Distribution Switch", device_type: "switch", vendor: "Cisco DNA", cpu_pct: 88, memory_pct: 79, latency_ms: 48.6, bandwidth_gbps: 22.1, status: "critical" },
-        ]);
+        setMetrics([]);
       }
     } catch (err) {
       console.error("Failed to fetch performance metrics:", err);
+      setMetrics([]);
     } finally {
       setLoading(false);
     }
   };
+
 
   useEffect(() => {
     fetchMetrics();

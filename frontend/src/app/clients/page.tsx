@@ -62,18 +62,16 @@ export default function ClientsPage() {
         }));
         setClients(mapped);
       } else {
-        // Default connected client fallback if database table is initially empty
-        setClients([
-          { mac_address: "a4:83:e7:91:02:11", host_name: "Varun-MacBook-Pro", ip_address: "10.42.12.88", ssid: "Corporate-Enterprise-5G", ap_name: "Conf Room 3 Access Point", rssi_dbm: -58, snr_db: 34, auth_type: "802.1X EAP-TLS", roaming_latency_ms: 14, device_type: "laptop", status: "excellent" },
-          { mac_address: "bc:d1:d3:44:89:a0", host_name: "Exec-iPad-Pro", ip_address: "10.42.12.104", ssid: "Corporate-Enterprise-5G", ap_name: "Exec Boardroom AP", rssi_dbm: -64, snr_db: 28, auth_type: "802.1X EAP-TLS", roaming_latency_ms: 19, device_type: "mobile", status: "excellent" },
-        ]);
+        setClients([]);
       }
     } catch (err) {
       console.error("Failed to fetch client telemetry:", err);
+      setClients([]);
     } finally {
       setLoading(false);
     }
   };
+
 
   useEffect(() => {
     fetchClients();
