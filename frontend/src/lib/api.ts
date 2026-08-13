@@ -68,14 +68,30 @@ async function fetchAPI<T>(endpoint: string, options?: RequestInit): Promise<T> 
   const authToken = getAuthToken();
 
   try {
-    const response = await fetch(url, {
+    let response = await fetch(url, {
       ...options,
       headers: {
         "Content-Type": "application/json",
         ...(authToken ? { Authorization: `Bearer ${authToken}` } : API_KEY ? { "X-API-Key": API_KEY } : {}),
         ...options?.headers,
       },
-    });
+    }).catch(() => null);
+
+    if (!response && API_BASE !== "http://127.0.0.1:8000") {
+      const fallbackUrl = `http://127.0.0.1:8000${endpoint}`;
+      response = await fetch(fallbackUrl, {
+        ...options,
+        headers: {
+          "Content-Type": "application/json",
+          ...(authToken ? { Authorization: `Bearer ${authToken}` } : API_KEY ? { "X-API-Key": API_KEY } : {}),
+          ...options?.headers,
+        },
+      }).catch(() => null);
+    }
+
+    if (!response) {
+      throw new APIError("Network connection offline", 0);
+    }
 
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}));
@@ -92,6 +108,7 @@ async function fetchAPI<T>(endpoint: string, options?: RequestInit): Promise<T> 
     throw new APIError("Network error", 0, error);
   }
 }
+
 
 function toCamelCase(str: string): string {
   return str.replace(/([-_][a-z])/g, (g) => g.toUpperCase().replace(/[-_]/g, ""));

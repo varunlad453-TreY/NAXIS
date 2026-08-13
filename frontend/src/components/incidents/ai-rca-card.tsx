@@ -46,13 +46,16 @@ export function AIRcaCard({ incidentId }: { incidentId: string }) {
   const fetchRca = async () => {
     setLoading(true);
     try {
-      const res = await fetch(`${API_BASE}/incidents/${incidentId}/rca`);
-      if (res.ok) {
+      let res = await fetch(`${API_BASE}/incidents/${incidentId}/rca`).catch(() => null);
+      if (!res || !res.ok) {
+        res = await fetch(`http://127.0.0.1:8000/incidents/${incidentId}/rca`).catch(() => null);
+      }
+      if (res && res.ok) {
         const data = await res.json();
         setRca(data);
       }
     } catch (err) {
-      console.error("Failed to fetch RCA:", err);
+      console.warn("Failed to fetch RCA:", err);
     } finally {
       setLoading(false);
     }
@@ -61,20 +64,26 @@ export function AIRcaCard({ incidentId }: { incidentId: string }) {
   const generateRca = async () => {
     setLoading(true);
     try {
-      const res = await fetch(`${API_BASE}/incidents/${incidentId}/rca`, {
+      let res = await fetch(`${API_BASE}/incidents/${incidentId}/rca`, {
         method: "POST",
-      });
+      }).catch(() => null);
+      if (!res || !res.ok) {
+        res = await fetch(`http://127.0.0.1:8000/incidents/${incidentId}/rca`, {
+          method: "POST",
+        }).catch(() => null);
+      }
 
-      if (res.ok) {
+      if (res && res.ok) {
         const data = await res.json();
         setRca(data);
       }
     } catch (err) {
-      console.error("Failed to generate RCA:", err);
+      console.warn("Failed to generate RCA:", err);
     } finally {
       setLoading(false);
     }
   };
+
 
   React.useEffect(() => {
     fetchRca();

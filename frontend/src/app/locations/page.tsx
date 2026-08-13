@@ -83,8 +83,11 @@ export default function LocationsRegistryPage() {
   const fetchLocations = async () => {
     setLoading(true);
     try {
-      const res = await fetch(`${API_BASE}/locations/tree`);
-      if (res.ok) {
+      let res = await fetch(`${API_BASE}/locations/tree`).catch(() => null);
+      if (!res || !res.ok) {
+        res = await fetch("http://127.0.0.1:8000/locations/tree").catch(() => null);
+      }
+      if (res && res.ok) {
         const data = await res.json();
         const flattened: LocationItem[] = [];
         const traverse = (node: any) => {
@@ -110,7 +113,7 @@ export default function LocationsRegistryPage() {
         setLocations(flattened);
       }
     } catch (err) {
-      console.error("Failed to fetch locations:", err);
+      console.warn("Failed to fetch locations:", err);
     } finally {
       setLoading(false);
     }
@@ -124,9 +127,12 @@ export default function LocationsRegistryPage() {
     setSelectedLocation(loc);
     try {
       // 1. Fetch real floorplan AP placements for this site
-      const fpRes = await fetch(`${API_BASE}/locations/${loc.location_id}/floorplan?name=${encodeURIComponent(loc.name)}`);
+      let fpRes = await fetch(`${API_BASE}/locations/${loc.location_id}/floorplan?name=${encodeURIComponent(loc.name)}`).catch(() => null);
+      if (!fpRes || !fpRes.ok) {
+        fpRes = await fetch(`http://127.0.0.1:8000/locations/${loc.location_id}/floorplan?name=${encodeURIComponent(loc.name)}`).catch(() => null);
+      }
       let floorplanAPs: any[] = [];
-      if (fpRes.ok) {
+      if (fpRes && fpRes.ok) {
         const fpData = await fpRes.json();
         if (fpData && Array.isArray(fpData.ap_placements)) {
           floorplanAPs = fpData.ap_placements;
@@ -134,15 +140,19 @@ export default function LocationsRegistryPage() {
       }
 
       // 2. Fetch inventory hardware devices assigned to this site
-      const res = await fetch(`${API_BASE}/devices?site_id=${encodeURIComponent(loc.location_id)}`);
+      let res = await fetch(`${API_BASE}/devices?site_id=${encodeURIComponent(loc.location_id)}`).catch(() => null);
+      if (!res || !res.ok) {
+        res = await fetch(`http://127.0.0.1:8000/devices?site_id=${encodeURIComponent(loc.location_id)}`).catch(() => null);
+      }
 
       let invDevices: any[] = [];
-      if (res.ok) {
+      if (res && res.ok) {
         const data = await res.json();
         if (data && Array.isArray(data.devices)) {
           invDevices = data.devices;
         }
       }
+
 
       const mappedDevices: AssignedDevice[] = [];
       const seenIds = new Set<string>();

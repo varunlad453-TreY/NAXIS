@@ -60,8 +60,11 @@ export default function PathTracePage() {
     setLoading(true);
     setErrorMessage(null);
     try {
-      const res = await fetch(`${API_BASE}/path-trace/${encodeURIComponent(macToTrace)}`);
-      if (!res.ok) throw new Error(`Path trace query failed (${res.status})`);
+      let res = await fetch(`${API_BASE}/path-trace/${encodeURIComponent(macToTrace)}`).catch(() => null);
+      if (!res || !res.ok) {
+        res = await fetch(`http://127.0.0.1:8000/path-trace/${encodeURIComponent(macToTrace)}`).catch(() => null);
+      }
+      if (!res || !res.ok) throw new Error(`Path trace query failed (${res?.status || "network error"})`);
       const data = await res.json();
       setTraceData(data);
     } catch (err: any) {
@@ -81,8 +84,7 @@ export default function PathTracePage() {
     setDiagOutput(null);
     try {
       const endpoint = `${API_BASE}/diagnostics/${diagnosticType}`;
-      const res = await fetch(endpoint, {
-
+      let res = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -91,7 +93,21 @@ export default function PathTracePage() {
           destination_ip: activeModalHop.ip_address || "1.1.1.1",
           interface: activeModalHop.interface_name,
         }),
-      });
+      }).catch(() => null);
+      if (!res || !res.ok) {
+        const fallbackEndpoint = `http://127.0.0.1:8000/diagnostics/${diagnosticType}`;
+        res = await fetch(fallbackEndpoint, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            target_device_id: activeModalHop.node_id,
+            test_type: diagnosticType,
+            destination_ip: activeModalHop.ip_address || "1.1.1.1",
+            interface: activeModalHop.interface_name,
+          }),
+        }).catch(() => null);
+      }
+
 
       if (!res.ok) {
         const errData = await res.json().catch(() => ({}));
