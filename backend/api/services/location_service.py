@@ -209,17 +209,28 @@ class LocationService:
                     channel = int(36 + (idx % 4) * 8)
                     rssi = -50 - (h_ap % 20)
                     is_conn = r.get("connected", True)
-                    # Site-specific fault targeting (Srinagar demo site or disconnected APs)
-                    is_srinagar_demo = "srinagar" in loc_name.lower() or "srinagar" in location_id.lower()
+                    # Site-specific fault targeting:
+                    # - Srinagar: 1 degraded asset (PoE Switch Port Power Fault)
+                    # - Kolkata/Pimpri & Bhopal: 2/4 degraded assets (PoE Power Fault + High RF Co-Channel Interference)
+                    is_srinagar = "srinagar" in loc_name.lower() or "srinagar" in location_id.lower()
+                    is_multi_degraded = any(k in loc_name.lower() or k in location_id.lower() for k in ("pimpri", "kolkata", "bhopal"))
+
                     if not is_conn:
                         health = "degraded"
                         health_reason = "Controller Heartbeat Timeout / Device Unreachable"
-                    elif is_srinagar_demo and idx == 0:
+                    elif is_srinagar and idx == 0:
                         health = "degraded"
                         health_reason = "PoE Switch Port Power Fault / Link Loss"
+                    elif is_multi_degraded and idx == 0:
+                        health = "degraded"
+                        health_reason = "PoE Switch Port Power Fault / Link Loss"
+                    elif is_multi_degraded and idx == 1:
+                        health = "degraded"
+                        health_reason = "High RF Co-Channel Interference & Retry Rate (>18%)"
                     else:
                         health = "healthy"
                         health_reason = None
+
 
 
                 placements.append(
