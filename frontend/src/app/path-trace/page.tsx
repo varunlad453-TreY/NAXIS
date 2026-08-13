@@ -109,12 +109,13 @@ export default function PathTracePage() {
       }
 
 
-      if (!res.ok) {
-        const errData = await res.json().catch(() => ({}));
-        throw new Error(errData.detail || `Diagnostic failed (${res.status})`);
+      if (!res || !res.ok) {
+        const errData = res ? await res.json().catch(() => ({})) : {};
+        throw new Error(errData.detail || `Diagnostic failed (${res?.status || "network error"})`);
       }
 
       const data = await res.json();
+
       setDiagOutput(data);
     } catch (err: any) {
       setDiagOutput({ error: err.message || "Execution failed" });
