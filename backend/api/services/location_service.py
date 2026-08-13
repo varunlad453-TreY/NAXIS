@@ -79,7 +79,8 @@ class LocationService:
         nodes_by_id: Dict[str, LocationNode] = {}
         for l in all_locs:
             loc_id = l["location_id"]
-            health = await self._get_location_health(loc_id)
+            raw_name = l.get("name") or ""
+            health = await self._get_location_health(loc_id, loc_name=raw_name)
             dev_count = await self._get_location_device_count(loc_id)
             nodes_by_id[loc_id] = LocationNode(
                 location_id=loc_id,
@@ -92,6 +93,7 @@ class LocationService:
                 device_count=dev_count,
                 children=[],
             )
+
 
         roots: List[LocationNode] = []
         for loc_id, node in nodes_by_id.items():
@@ -207,18 +209,18 @@ class LocationService:
                     channel = int(36 + (idx % 4) * 8)
                     rssi = -50 - (h_ap % 20)
                     is_conn = r.get("connected", True)
+                    # Site-specific fault targeting (Srinagar demo site or disconnected APs)
+                    is_srinagar_demo = "srinagar" in loc_name.lower() or "srinagar" in location_id.lower()
                     if not is_conn:
                         health = "degraded"
                         health_reason = "Controller Heartbeat Timeout / Device Unreachable"
-                    elif h_ap % 9 == 0 or idx == 0:
-                        health = "critical"
-                        health_reason = "PoE Switch Port Power Fault / Link Loss"
-                    elif h_ap % 5 == 0 or idx == 1:
+                    elif is_srinagar_demo and idx == 0:
                         health = "degraded"
-                        health_reason = "High RF Co-Channel Interference & Retry Rate (>18%)"
+                        health_reason = "PoE Switch Port Power Fault / Link Loss"
                     else:
                         health = "healthy"
                         health_reason = None
+
 
                 placements.append(
                     APPlacement(
@@ -288,7 +290,7 @@ class LocationService:
             "message": "Radio Resource Management (RRM) optimization executed. Frequency shifted from Ch 36 -> Ch 149 (5GHz 80MHz). Co-channel congestion resolved.",
         }
 
-    async def _get_location_health(self, location_id: str) -> str:
+    async def _get_location_health(self, location_id: str, loc_name: str = "") -> str:
         """Determines location health by checking active events and AP placements."""
         try:
             # 1. Check events
@@ -308,7 +310,7 @@ class LocationService:
                     return "degraded"
 
             # 2. Check AP placements for the site to ensure health matches hardware telemetry
-            aps = await self._fetch_ap_placements(location_id)
+            aps = await self._fetch_ap_placements(location_id, loc_name=loc_name)
             for ap in aps:
                 if ap.health_status == "critical":
                     return "critical"
@@ -317,6 +319,7 @@ class LocationService:
         except Exception as exc:
             logger.warning("Error computing location health for %s: %s", location_id, exc)
         return "healthy"
+
 
 
     async def _get_location_device_count(self, location_id: str) -> int:
