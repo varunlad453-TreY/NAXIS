@@ -6,7 +6,7 @@ floorplan coordinates for interactive NOC drill-downs.
 """
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 try:
     from backend.api.models.location_models import (
@@ -209,27 +209,19 @@ class LocationService:
                     channel = int(36 + (idx % 4) * 8)
                     rssi = -50 - (h_ap % 20)
                     is_conn = r.get("connected", True)
-                    # Site-specific fault targeting:
-                    # - Srinagar: 1 degraded asset (PoE Switch Port Power Fault)
-                    # - Kolkata/Pimpri & Bhopal: 2/4 degraded assets (PoE Power Fault + High RF Co-Channel Interference)
-                    is_srinagar = "srinagar" in loc_name.lower() or "srinagar" in location_id.lower()
-                    is_multi_degraded = any(k in loc_name.lower() or k in location_id.lower() for k in ("pimpri", "kolkata", "bhopal"))
+                    # Query real SQL events table for this specific hardware device
+                    ev_health, ev_reason = await self._get_device_event_health(node_id)
 
                     if not is_conn:
                         health = "degraded"
                         health_reason = "Controller Heartbeat Timeout / Device Unreachable"
-                    elif is_srinagar and idx == 0:
-                        health = "degraded"
-                        health_reason = "PoE Switch Port Power Fault / Link Loss"
-                    elif is_multi_degraded and idx == 0:
-                        health = "degraded"
-                        health_reason = "PoE Switch Port Power Fault / Link Loss"
-                    elif is_multi_degraded and idx == 1:
-                        health = "degraded"
-                        health_reason = "High RF Co-Channel Interference & Retry Rate (>18%)"
+                    elif ev_health != "healthy":
+                        health = ev_health
+                        health_reason = ev_reason
                     else:
                         health = "healthy"
                         health_reason = None
+
 
 
 
@@ -301,7 +293,30 @@ class LocationService:
             "message": "Radio Resource Management (RRM) optimization executed. Frequency shifted from Ch 36 -> Ch 149 (5GHz 80MHz). Co-channel congestion resolved.",
         }
 
+    async def _get_device_event_health(self, device_id: str) -> Tuple[str, Optional[str]]:
+        """Queries SQL events table for active telemetry anomalies or alerts for a device."""
+        query = """
+            SELECT severity, title, description
+            FROM events
+            WHERE device_id = $1 OR raw_event->>'device_id' = $1
+            ORDER BY timestamp DESC
+            LIMIT 1;
+        """
+        try:
+            row = await db.fetchrow(query, device_id)
+            if row:
+                sev = str(row["severity"]).lower()
+                reason = str(row["title"] or row["description"] or "Active Telemetry Anomaly")
+                if sev in ("critical", "fatal"):
+                    return "critical", reason
+                elif sev in ("major", "warning"):
+                    return "degraded", reason
+        except Exception:
+            pass
+        return "healthy", None
+
     async def _get_location_health(self, location_id: str, loc_name: str = "") -> str:
+
         """Determines location health by checking active events and AP placements."""
         try:
             # 1. Check events
