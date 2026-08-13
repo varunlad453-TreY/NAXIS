@@ -5,4 +5,5 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d postgres re
 
 Write-Host "Starting frontend (native)..." -ForegroundColor Cyan
 Set-Location -LiteralPath "frontend"
+Remove-Item -Recurse -Force .next 2>$null
 npm run dev
