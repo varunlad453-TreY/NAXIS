@@ -482,9 +482,10 @@ export function TopologyGraphV2({
             maskColor="rgba(0,0,0,0.05)"
             style={{ width: 160, height: 100 }}
           />
-          <Panel position="bottom-left">
-            <TopologyLegend visible={legendVisible} />
+          <Panel position="bottom-left" className="!mb-14 !ml-3 z-30 pointer-events-auto">
+            <TopologyLegend visible={legendVisible} onClose={() => setLegendVisible(false)} />
           </Panel>
+
         </ReactFlow>
 
         {/* Side panel */}
