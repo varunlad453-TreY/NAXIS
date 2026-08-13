@@ -23,6 +23,7 @@ import { topologyNodeTypes } from "./topology-node-types";
 import { topologyEdgeTypes } from "./topology-edge-types";
 import { TopologyToolbar } from "./topology-toolbar";
 import { TopologyLegend } from "./topology-legend";
+import { AllSitesGrid } from "./all-sites-grid";
 import {
   normalizeTopology,
   tracePath,
@@ -33,7 +34,9 @@ import {
   buildFlatLayout,
   buildBackboneLayout,
   buildSiteGroupedLayout,
+  buildRegionClustersLayout,
 } from "./topology-layout-engine";
+
 
 interface TopologyGraphV2Props {
   data: TopologyGraphResponse;
@@ -157,6 +160,8 @@ export function TopologyGraphV2({
       .map((n) => ({ node_id: n.node_id, name: n.name || n.node_id, node_type: n.node_type }));
   }, [searchQuery, filteredNodes]);
 
+  const [backboneViewMode, setBackboneViewMode] = useState<"regions" | "degraded" | "all">("regions");
+
   // Compute graph nodes and edges using the layout engine
   const { graphNodes, graphEdges } = useMemo(() => {
     if (filteredNodes.length === 0) return { graphNodes: [], graphEdges: [] };
@@ -164,16 +169,79 @@ export function TopologyGraphV2({
     const highlightSet = new Set(highlightedNodeIds ?? []);
 
     if (isBackbone) {
-      // Backbone: sites only with inter-site edges
       const siteNodes = filteredNodes.filter((n) => n.node_type === "site");
       const interSiteEdges = data.edges.filter((e) => {
         const src = data.nodes.find((n) => n.node_id === e.src_id);
         const dst = data.nodes.find((n) => n.node_id === e.dst_id);
         return src && dst && src.site_id && dst.site_id && src.site_id !== dst.site_id;
       });
+
+      if (backboneViewMode === "regions") {
+        const result = buildRegionClustersLayout(siteNodes, highlightSet);
+        return { graphNodes: result.nodes, graphEdges: result.edges };
+      }
+
+      if (backboneViewMode === "degraded") {
+        const degradedSites = siteNodes.filter(
+          (s) =>
+            s.health_status === "critical" ||
+            s.health_status === "warning" ||
+            s.health_status === "degraded" ||
+            (s as any).critical_count > 0 ||
+            (s as any).warning_count > 0
+        );
+
+        if (degradedSites.length === 0) {
+          const healthyBannerNode: any = {
+            id: "all-healthy-banner",
+            type: "statusBanner",
+            position: { x: 320, y: 160 },
+
+            data: {
+              topoNode: {
+                node_id: "all-healthy-banner",
+                node_type: "site",
+                name: "All 153 Enterprise Sites Operating Normally",
+                ip_address: "",
+                vendor: "system",
+                model: "Zero Active Incidents",
+                site_id: "none",
+                site_name: "All Healthy",
+                health_status: "healthy",
+                health_label: "0 Active Alerts",
+                device_count: 1880,
+              },
+              label: "All 153 Enterprise Sites Operating Normally",
+              nodeType: "site",
+              healthStatus: "healthy",
+              healthColor: "#10b981",
+              deviceColor: "#10b981",
+              deviceLabel: "Healthy",
+              rank: 0,
+              isHighlighted: false,
+              isDimmed: false,
+              isRootCause: false,
+              isSymptom: false,
+              isSelected: false,
+              isSiteGroup: true,
+              childCount: 153,
+              crossSiteEdgeCount: 0,
+            },
+            width: 380,
+            height: 100,
+          };
+          return { graphNodes: [healthyBannerNode], graphEdges: [] };
+        }
+
+        const result = buildBackboneLayout(degradedSites, interSiteEdges, highlightSet);
+        return { graphNodes: result.nodes, graphEdges: result.edges };
+      }
+
+
       const result = buildBackboneLayout(siteNodes, interSiteEdges, highlightSet);
       return { graphNodes: result.nodes, graphEdges: result.edges };
     }
+
 
     // Site internal view
     if (activeSiteId) {
@@ -198,14 +266,15 @@ export function TopologyGraphV2({
       const result = buildFlatLayout(filteredNodes, data.edges, highlightSet);
       return { graphNodes: result.nodes, graphEdges: result.edges };
     }
-  }, [filteredNodes, data.edges, highlightedNodeIds, isBackbone, layoutMode, activeFilters, activeSiteId]);
+  }, [filteredNodes, data.edges, highlightedNodeIds, isBackbone, layoutMode, activeFilters, activeSiteId, backboneViewMode]);
+
 
   // Apply blast radius root cause / symptom highlighting
   const blastRadiusNodes = useMemo(() => {
     if (!blastRadius) return graphNodes;
     const rootSet = new Set(blastRadius.root_cause_node_ids);
     const symptomSet = new Set(blastRadius.symptom_node_ids);
-    return graphNodes.map((n) => ({
+    return graphNodes.map((n: any) => ({
       ...n,
       data: {
         ...n.data,
@@ -234,7 +303,7 @@ export function TopologyGraphV2({
       const nodeIds = impact.nodeIds;
       const edgeIds = impact.edgeIds;
 
-      const nodes = blastRadiusNodes.map((n) => ({
+      const nodes = blastRadiusNodes.map((n: any) => ({
         ...n,
         data: {
           ...n.data,
@@ -242,7 +311,7 @@ export function TopologyGraphV2({
           isDimmed: !nodeIds.has(n.id),
         },
       }));
-      const edges = graphEdges.map((e) => ({
+      const edges = graphEdges.map((e: any) => ({
         ...e,
         data: {
           ...e.data,
@@ -255,7 +324,7 @@ export function TopologyGraphV2({
     }
 
     const { nodeIds, edgeIds } = pathResult;
-    const nodes = blastRadiusNodes.map((n) => ({
+    const nodes = blastRadiusNodes.map((n: any) => ({
       ...n,
       data: {
         ...n.data,
@@ -263,7 +332,7 @@ export function TopologyGraphV2({
         isDimmed: !nodeIds.has(n.id),
       },
     }));
-    const edges = graphEdges.map((e) => ({
+    const edges = graphEdges.map((e: any) => ({
       ...e,
       data: {
         ...e.data,
@@ -275,16 +344,17 @@ export function TopologyGraphV2({
     return { finalNodes: nodes, finalEdges: edges };
   }, [blastRadiusNodes, graphEdges, pathTraceMode, pathTraceStart, pathTraceEnd, filteredNodes, data.edges, highlightedNodeIds]);
 
-  // Fit view on data change
+
+  // Fit view whenever nodes load or layout mode changes
   useEffect(() => {
-    if (rfInstance && finalNodes.length > 0 && !firstFitDone.current) {
-      firstFitDone.current = true;
+    if (rfInstance && finalNodes.length > 0) {
       const timer = setTimeout(() => {
         rfInstance.fitView({ padding: 0.15, duration: 300 });
-      }, 100);
+      }, 150);
       return () => clearTimeout(timer);
     }
-  }, [rfInstance, finalNodes.length]);
+  }, [rfInstance, finalNodes.length, isBackbone, activeSiteId, layoutMode]);
+
 
   // Re-fit when highlighted nodes change
   useEffect(() => {
@@ -399,8 +469,9 @@ export function TopologyGraphV2({
     <div className="space-y-3">
       {/* Toolbar */}
       <TopologyToolbar
-        totalNodes={filteredNodes.length}
-        totalEdges={data.edges.length}
+        totalNodes={finalNodes.length}
+        totalEdges={finalEdges.length}
+
         searchQuery={searchQuery}
         onSearchChange={setSearchQuery}
         searchResults={searchResults}
@@ -421,7 +492,10 @@ export function TopologyGraphV2({
         isBackbone={!!isBackbone}
         onBackToBackbone={onBackToBackbone}
         siteName={siteName}
+        backboneViewMode={backboneViewMode}
+        onBackboneViewModeChange={setBackboneViewMode}
       />
+
 
       {/* Path trace instructions */}
       {pathTraceMode && (
@@ -443,63 +517,71 @@ export function TopologyGraphV2({
         </div>
       )}
 
-      {/* Graph canvas */}
-      <div ref={reactFlowWrapper} className="relative h-[640px] w-full">
-        <ReactFlow
-          nodes={finalNodes}
-          edges={finalEdges}
-          nodeTypes={topologyNodeTypes}
-          edgeTypes={topologyEdgeTypes}
-          onInit={setRfInstance}
-          onNodeClick={handleNodeClick}
-          fitView={false}
-          onlyRenderVisibleElements
-          attributionPosition="bottom-left"
-          connectionLineType={ConnectionLineType.SmoothStep}
-          minZoom={0.05}
-          maxZoom={4}
-          deleteKeyCode={null}
-          multiSelectionKeyCode={["Shift", "Control"]}
-          className="border border-border/40 bg-surface/20 rounded-lg"
-          defaultEdgeOptions={{
-            type: "topologyEdge",
-            style: { stroke: "#9ca3af", strokeWidth: 1.5 },
-          }}
-        >
-          <Background color="hsl(var(--border) / 0.25)" gap={24} size={1} />
-          <Controls
-            className="!rounded-lg !border-border/60 !bg-surface !shadow-surface"
-            showInteractive={false}
-          />
-          <MiniMap
-            className="!rounded-lg !border-border/60 !bg-surface"
-            nodeColor={(node) => {
-              const color = (node.data as any)?.deviceColor ?? "#6b7280";
-              const health = (node.data as any)?.healthStatus;
-              if (health === "critical") return "#ef4444";
-              if (health === "warning") return "#eab308";
-              return color;
-            }}
-            maskColor="rgba(0,0,0,0.05)"
-            style={{ width: 160, height: 100 }}
-          />
-          <Panel position="bottom-left" className="!mb-14 !ml-3 z-30 pointer-events-auto">
-            <TopologyLegend visible={legendVisible} onClose={() => setLegendVisible(false)} />
-          </Panel>
-
-        </ReactFlow>
-
-        {/* Side panel */}
-        <TopologySidePanel
-          mode={panelMode}
-          incidentId={incidentId}
-          incidentDetail={incidentDetail ?? null}
-          nodeDetail={nodeDetail ?? null}
-          onClose={handlePanelClose}
-          incidentLoading={incidentLoading}
-          nodeLoading={nodeLoading}
+      {/* All-Sites grid view — replaces canvas when mode is "all" */}
+      {isBackbone && backboneViewMode === "all" ? (
+        <AllSitesGrid
+          sites={data.nodes.filter((n) => n.node_type === "site")}
+          onSiteClick={onSiteSelect}
         />
-      </div>
+      ) : (
+        /* Graph canvas */
+        <div ref={reactFlowWrapper} className="relative h-[640px] w-full">
+          <ReactFlow
+            nodes={finalNodes}
+            edges={finalEdges}
+            nodeTypes={topologyNodeTypes}
+            edgeTypes={topologyEdgeTypes}
+            onInit={setRfInstance}
+            onNodeClick={handleNodeClick}
+            fitView={true}
+            fitViewOptions={{ padding: 0.15 }}
+            onlyRenderVisibleElements
+            attributionPosition="bottom-left"
+            connectionLineType={ConnectionLineType.SmoothStep}
+            minZoom={0.05}
+            maxZoom={4}
+            deleteKeyCode={null}
+            multiSelectionKeyCode={["Shift", "Control"]}
+            className="border border-border/40 bg-surface/20 rounded-lg"
+            defaultEdgeOptions={{
+              type: "topologyEdge",
+              style: { stroke: "#9ca3af", strokeWidth: 1.5 },
+            }}
+          >
+            <Background color="hsl(var(--border) / 0.25)" gap={24} size={1} />
+            <Controls
+              className="!rounded-lg !border-border/60 !bg-surface !shadow-surface"
+              showInteractive={false}
+            />
+            <MiniMap
+              className="!rounded-lg !border-border/60 !bg-surface"
+              nodeColor={(node) => {
+                const color = (node.data as any)?.deviceColor ?? "#6b7280";
+                const health = (node.data as any)?.healthStatus;
+                if (health === "critical") return "#ef4444";
+                if (health === "warning") return "#eab308";
+                return color;
+              }}
+              maskColor="rgba(0,0,0,0.05)"
+              style={{ width: 160, height: 100 }}
+            />
+            <Panel position="bottom-left" className="!mb-14 !ml-3 z-30 pointer-events-auto">
+              <TopologyLegend visible={legendVisible} onClose={() => setLegendVisible(false)} />
+            </Panel>
+          </ReactFlow>
+
+          {/* Side panel */}
+          <TopologySidePanel
+            mode={panelMode}
+            incidentId={incidentId}
+            incidentDetail={incidentDetail ?? null}
+            nodeDetail={nodeDetail ?? null}
+            onClose={handlePanelClose}
+            incidentLoading={incidentLoading}
+            nodeLoading={nodeLoading}
+          />
+        </div>
+      )}
     </div>
   );
 }

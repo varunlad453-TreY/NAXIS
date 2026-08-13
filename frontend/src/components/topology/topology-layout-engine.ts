@@ -201,6 +201,131 @@ export function buildFlatLayout(
   });
 }
 
+export interface RegionGroup {
+  id: string;
+  name: string;
+  sites: TopologyNode[];
+}
+
+export function groupSitesIntoRegions(siteNodes: TopologyNode[]): RegionGroup[] {
+  const regions: Record<string, { id: string; name: string; sites: TopologyNode[] }> = {
+    "delhi-ncr": { id: "delhi-ncr", name: "Delhi NCR Hub", sites: [] },
+    "mumbai-region": { id: "mumbai-region", name: "Mumbai & West Coast Hub", sites: [] },
+    "bengaluru-region": { id: "bengaluru-region", name: "Bengaluru Tech Region", sites: [] },
+    "pune-region": { id: "pune-region", name: "Pune & Pimpri Belt", sites: [] },
+    "north-region": { id: "north-region", name: "North India Zone", sites: [] },
+    "south-region": { id: "south-region", name: "South India Zone", sites: [] },
+    "east-region": { id: "east-region", name: "East & North East Zone", sites: [] },
+    "central-region": { id: "central-region", name: "Central India Zone", sites: [] },
+    "industrial-hub": { id: "industrial-hub", name: "Plant & Warehouse Facilities", sites: [] },
+    "other": { id: "other", name: "Regional Facilities", sites: [] },
+  };
+
+  for (const site of siteNodes) {
+    const name = (site.name || "").toLowerCase();
+
+    if (name.includes("delhi") || name.includes("gurugram") || name.includes("palwal") || name.includes("noida")) {
+      regions["delhi-ncr"].sites.push(site);
+    } else if (name.includes("mumbai") || name.includes("patalganga") || name.includes("bhiwandi") || name.includes("thane")) {
+      regions["mumbai-region"].sites.push(site);
+    } else if (name.includes("bengaluru") || name.includes("bangalore")) {
+      regions["bengaluru-region"].sites.push(site);
+    } else if (name.includes("pune") || name.includes("pimpri") || name.includes("chinchwad")) {
+      regions["pune-region"].sites.push(site);
+    } else if (name.includes("jaipur") || name.includes("ludhiana") || name.includes("chandigarh") || name.includes("lucknow")) {
+      regions["north-region"].sites.push(site);
+    } else if (name.includes("chennai") || name.includes("hyderabad") || name.includes("vijayawada") || name.includes("kochi")) {
+      regions["south-region"].sites.push(site);
+    } else if (name.includes("kolkata") || name.includes("patna") || name.includes("guwahati") || name.includes("siliguri") || name.includes("jamshedpur")) {
+      regions["east-region"].sites.push(site);
+    } else if (name.includes("bhopal") || name.includes("indore") || name.includes("raipur") || name.includes("jabalpur") || name.includes("nagpur")) {
+      regions["central-region"].sites.push(site);
+    } else if (name.includes("cvbu") || name.includes("pvbu") || name.includes("plant") || name.includes("warehouse")) {
+      regions["industrial-hub"].sites.push(site);
+    } else {
+      regions["other"].sites.push(site);
+    }
+  }
+
+  return Object.values(regions).filter((r) => r.sites.length > 0);
+}
+
+/**
+ * Build Regional Hub layout for backbone view.
+ * Renders 10-12 large regional cluster cards in a clean 3-column matrix at 1.0x readability scale.
+ */
+export function buildRegionClustersLayout(
+  siteNodes: TopologyNode[],
+  highlightSet?: Set<string>
+): { nodes: GraphNode[]; edges: GraphEdge[] } {
+  const groups = groupSitesIntoRegions(siteNodes);
+  if (!groups.length) return { nodes: [], edges: [] };
+
+  const COLS = 3;
+  const X_GAP = 60;
+  const Y_GAP = 50;
+  const CARD_WIDTH = 320;
+  const CARD_HEIGHT = 110;
+
+  const nodes: GraphNode[] = groups.map((group, index) => {
+    const col = index % COLS;
+    const row = Math.floor(index / COLS);
+
+    const x = 60 + col * (CARD_WIDTH + X_GAP);
+    const y = 60 + row * (CARD_HEIGHT + Y_GAP);
+
+    const criticalCount = group.sites.filter((s) => s.health_status === "critical").length;
+    const warningCount = group.sites.filter((s) => s.health_status === "warning" || s.health_status === "degraded").length;
+    const healthyCount = group.sites.length - criticalCount - warningCount;
+
+    const aggregateHealth = criticalCount > 0 ? "critical" : warningCount > 0 ? "warning" : "healthy";
+
+    return {
+      id: `region-${group.id}`,
+      type: "regionalHub",
+      position: { x, y },
+
+      data: {
+        topoNode: {
+          node_id: `region-${group.id}`,
+          node_type: "site",
+          name: group.name,
+          ip_address: "",
+          vendor: "regional_hub",
+          model: "Hub Cluster",
+          site_id: `region-${group.id}`,
+          site_name: group.name,
+          health_status: aggregateHealth,
+          health_label: criticalCount > 0 ? `${criticalCount} critical` : warningCount > 0 ? `${warningCount} degraded` : "All healthy",
+          device_count: group.sites.reduce((acc, s) => acc + ((s as any).device_count ?? 1), 0),
+          critical_count: criticalCount,
+          warning_count: warningCount,
+        },
+        label: group.name,
+        nodeType: "site",
+        healthStatus: aggregateHealth as any,
+        healthColor: "",
+        deviceColor: "#6366f1",
+        deviceLabel: "Region Hub",
+        rank: 0,
+        isHighlighted: false,
+        isDimmed: false,
+        isRootCause: false,
+        isSymptom: false,
+        isSelected: false,
+        isSiteGroup: true,
+        childCount: group.sites.length,
+        crossSiteEdgeCount: 0,
+        regionSites: group.sites,
+      },
+      width: CARD_WIDTH,
+      height: CARD_HEIGHT,
+    };
+  });
+
+  return { nodes, edges: [] };
+}
+
 /**
  * Build backbone layout: sites only with inter-site edges.
  * Uses a smart 5-column 2D Matrix Grid layout sorted by health status (critical/warning first)
@@ -288,6 +413,7 @@ export function buildBackboneLayout(
 
   return { nodes, edges };
 }
+
 
 
 /**

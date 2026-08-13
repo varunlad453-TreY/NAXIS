@@ -46,7 +46,10 @@ export interface TopologyToolbarProps {
   isBackbone: boolean;
   onBackToBackbone?: () => void;
   siteName?: string;
+  backboneViewMode?: "regions" | "degraded" | "all";
+  onBackboneViewModeChange?: (mode: "regions" | "degraded" | "all") => void;
 }
+
 
 export function TopologyToolbar({
   totalNodes,
@@ -71,7 +74,10 @@ export function TopologyToolbar({
   isBackbone,
   onBackToBackbone,
   siteName,
+  backboneViewMode = "regions",
+  onBackboneViewModeChange,
 }: TopologyToolbarProps) {
+
   const [showSearch, setShowSearch] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
   const [showLayoutMenu, setShowLayoutMenu] = useState(false);
@@ -117,9 +123,56 @@ export function TopologyToolbar({
       <span className="h-4 w-px bg-border/60" />
 
       {/* Stats */}
-      <span className="text-[11px] text-foreground-muted whitespace-nowrap">
-        {totalNodes} nodes · {totalEdges} links
+      <span className="text-[11px] text-foreground-muted whitespace-nowrap font-medium">
+        {totalNodes}{" "}
+        {isBackbone && backboneViewMode === "regions"
+          ? "regional hubs"
+          : isBackbone && backboneViewMode === "degraded"
+          ? "problem sites"
+          : "sites"}{" "}
+        · {totalEdges} links
       </span>
+
+
+      {/* Backbone View Mode Switcher */}
+      {isBackbone && onBackboneViewModeChange && (
+        <>
+          <span className="h-4 w-px bg-border/60" />
+          <div className="flex items-center gap-1 rounded-lg border border-border/60 bg-surface/80 p-0.5">
+            <button
+              onClick={() => onBackboneViewModeChange("regions")}
+              className={`rounded px-2.5 py-1 text-[11px] font-medium transition-all ${
+                backboneViewMode === "regions"
+                  ? "bg-primary text-white shadow-sm"
+                  : "text-foreground-muted hover:text-foreground"
+              }`}
+            >
+              Regional Hubs
+            </button>
+            <button
+              onClick={() => onBackboneViewModeChange("degraded")}
+              className={`rounded px-2.5 py-1 text-[11px] font-medium transition-all ${
+                backboneViewMode === "degraded"
+                  ? "bg-warning/20 text-warning border border-warning/30 font-semibold"
+                  : "text-foreground-muted hover:text-foreground"
+              }`}
+            >
+              Problem Sites
+            </button>
+            <button
+              onClick={() => onBackboneViewModeChange("all")}
+              className={`rounded px-2.5 py-1 text-[11px] font-medium transition-all ${
+                backboneViewMode === "all"
+                  ? "bg-primary text-white shadow-sm"
+                  : "text-foreground-muted hover:text-foreground"
+              }`}
+            >
+              All Sites (153)
+            </button>
+          </div>
+        </>
+      )}
+
 
       <span className="h-4 w-px bg-border/60" />
 

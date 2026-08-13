@@ -19,4 +19,5 @@ export { topologyNodeTypes, TopologyNodeComponent, LeafNodeComponent, SiteGroupN
 export { topologyEdgeTypes, TopologyEdge } from "./topology-edge-types";
 export { normalizeTopology, tracePath, getDownstreamImpact, getNodeRank } from "./topology-graph-model";
 export type { GraphNode, GraphEdge, GraphNodeData, GraphEdgeData, NormalizedGraph } from "./topology-graph-model";
-export { buildHierarchicalLayout, buildFlatLayout, buildBackboneLayout, buildSiteGroupedLayout } from "./topology-layout-engine";
+export { buildHierarchicalLayout, buildFlatLayout, buildBackboneLayout, buildSiteGroupedLayout, buildRegionClustersLayout } from "./topology-layout-engine";
+
