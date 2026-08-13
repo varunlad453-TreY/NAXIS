@@ -203,40 +203,46 @@ export function buildFlatLayout(
 
 /**
  * Build backbone layout: sites only with inter-site edges.
+ * Uses a smart 5-column 2D Matrix Grid layout sorted by health status (critical/warning first)
+ * so disconnected sites do not stack in a single 1D vertical line.
  */
 export function buildBackboneLayout(
   siteNodes: TopologyNode[],
   interSiteEdges: TopologyEdge[],
   highlightSet?: Set<string>
 ): { nodes: GraphNode[]; edges: GraphEdge[] } {
-  const g = new dagre.graphlib.Graph();
-  g.setDefaultEdgeLabel(() => ({}));
-  g.setGraph({
-    rankdir: "LR",
-    nodesep: 80,
-    ranksep: 120,
-    marginx: 60,
-    marginy: 60,
+  if (!siteNodes.length) return { nodes: [], edges: [] };
+
+  // 1. Sort site nodes: critical/warning first, then connected hubs, then name
+  const sortedSites = [...siteNodes].sort((a, b) => {
+    const healthWeight = (status?: string) =>
+      status === "critical" ? 0 : status === "warning" ? 1 : status === "degraded" ? 2 : 3;
+
+    const wA = healthWeight(a.health_status);
+    const wB = healthWeight(b.health_status);
+    if (wA !== wB) return wA - wB;
+
+    return (a.name || a.node_id).localeCompare(b.name || b.node_id);
   });
 
-  for (const node of siteNodes) {
-    g.setNode(node.node_id, { width: SITE_GROUP_WIDTH, height: SITE_GROUP_HEIGHT });
-  }
+  // 2. 2D Matrix Grid calculation: 5 columns
+  const COLS = 5;
+  const X_GAP = 50;
+  const Y_GAP = 40;
+  const CARD_WIDTH = SITE_GROUP_WIDTH; // 260
+  const CARD_HEIGHT = SITE_GROUP_HEIGHT; // 52
 
-  for (const edge of interSiteEdges) {
-    g.setEdge(edge.dst_id, edge.src_id);
-  }
+  const nodes: GraphNode[] = sortedSites.map((node, index) => {
+    const col = index % COLS;
+    const row = Math.floor(index / COLS);
 
-  dagre.layout(g);
+    const x = 60 + col * (CARD_WIDTH + X_GAP);
+    const y = 60 + row * (CARD_HEIGHT + Y_GAP);
 
-  const nodes: GraphNode[] = [];
-  for (const node of siteNodes) {
-    const dn = g.node(node.node_id);
-    if (!dn) continue;
-    nodes.push({
+    return {
       id: node.node_id,
       type: "siteGroup",
-      position: { x: dn.x - SITE_GROUP_WIDTH / 2, y: dn.y - SITE_GROUP_HEIGHT / 2 },
+      position: { x, y },
       data: {
         topoNode: node,
         label: node.name || node.node_id,
@@ -255,10 +261,10 @@ export function buildBackboneLayout(
         childCount: (node as any).device_count ?? 0,
         crossSiteEdgeCount: 0,
       },
-      width: SITE_GROUP_WIDTH,
-      height: SITE_GROUP_HEIGHT,
-    });
-  }
+      width: CARD_WIDTH,
+      height: CARD_HEIGHT,
+    };
+  });
 
   const edges: GraphEdge[] = [];
   for (const edge of interSiteEdges) {
@@ -282,6 +288,7 @@ export function buildBackboneLayout(
 
   return { nodes, edges };
 }
+
 
 /**
  * Grouped site layout: wraps devices inside site containers.
