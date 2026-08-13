@@ -142,6 +142,7 @@ export const NODE_TYPE_META: Record<
   string,
   { label: string; category: DeviceCategory; color: string }
 > = {
+  site: { label: "Site", category: "infrastructure", color: "#6366f1" },
   switch: { label: "Switch", category: "infrastructure", color: "#3b82f6" },
   core_switch: { label: "Core Switch", category: "infrastructure", color: "#1d4ed8" },
   distribution_switch: { label: "Dist Switch", category: "infrastructure", color: "#2563eb" },
@@ -159,3 +160,4 @@ export const NODE_TYPE_META: Record<
   camera: { label: "Camera", category: "leaf", color: "#0d9488" },
   iot: { label: "IoT", category: "leaf", color: "#eab308" },
 };
+

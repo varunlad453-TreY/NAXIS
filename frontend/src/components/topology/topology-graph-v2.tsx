@@ -138,8 +138,9 @@ export function TopologyGraphV2({
   // Filter nodes by type
   const filteredNodes = useMemo(() => {
     if (activeFilters.size === 0) return [];
-    return data.nodes.filter((n) => activeFilters.has(n.node_type));
+    return data.nodes.filter((n) => n.node_type === "site" || activeFilters.has(n.node_type));
   }, [data.nodes, activeFilters]);
+
 
   // Compute search results
   const searchResults = useMemo(() => {
