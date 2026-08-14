@@ -6,7 +6,7 @@ import type { TopologyNode } from "@/types/topology";
 
 // ─── helpers ───────────────────────────────────────────────────────────────
 
-function healthColor(status: string): string {
+export function healthColor(status: string): string {
   switch (status) {
     case "critical": return "#ef4444";
     case "warning":  return "#f59e0b";
@@ -15,7 +15,7 @@ function healthColor(status: string): string {
   }
 }
 
-function regionFromSite(siteId: string, siteName: string | null): string {
+export function regionFromSite(siteId: string, siteName: string | null): string {
   const name = (siteName ?? siteId ?? "").toLowerCase();
   if (name.includes("delhi") || name.includes("ncr") || name.includes("gurgaon") || name.includes("noida")) return "North India";
   if (name.includes("mumbai") || name.includes("pune") || name.includes("west")) return "West India";
@@ -36,12 +36,14 @@ const STATUS_OPTS = ["All Status","healthy","warning","critical","degraded"];
 export function AllSitesGrid({
   sites,
   onSiteClick,
+  defaultRegion,
 }: {
   sites: TopologyNode[];
   onSiteClick?: (siteId: string) => void;
+  defaultRegion?: string;
 }) {
   const [search,       setSearch]  = useState("");
-  const [region,       setRegion]  = useState("All Regions");
+  const [region,       setRegion]  = useState(defaultRegion && REGIONS.includes(defaultRegion) ? defaultRegion : "All Regions");
   const [statusFilter, setStatus]  = useState("All Status");
   const [sortKey,      setSortKey] = useState<SortKey>("status");
   const [sortDir,      setSortDir] = useState<"asc"|"desc">("desc");

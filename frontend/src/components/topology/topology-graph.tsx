@@ -450,9 +450,22 @@ export function TopologyGraph({
 
   const onNodeClickHandler = useCallback(
     (_event: React.MouseEvent, node: Node) => {
-      if (node.type === "siteGroup") {
-        const siteId = (node.data as Record<string, unknown>)?.site_id as string;
-        if (siteId) toggleSite(siteId);
+      const isGroupNode =
+        node.type === "siteGroup" ||
+        node.type === "regionalHub" ||
+        node.type === "statusBanner";
+
+      if (isGroupNode) {
+        const siteId =
+          ((node.data as any)?.regionSites?.[0] as any)?.site_id ||
+          ((node.data as any)?.regionSites?.[0] as any)?.node_id ||
+          (node.data as Record<string, unknown>)?.site_id as string;
+
+        if (siteId && !siteId.startsWith("all-") && !siteId.startsWith("region-")) {
+          if (onSiteSelect) onSiteSelect(siteId);
+          else toggleSite(siteId);
+          return;
+        }
         return;
       }
 

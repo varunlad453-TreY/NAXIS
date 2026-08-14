@@ -23,7 +23,7 @@ import { topologyNodeTypes } from "./topology-node-types";
 import { topologyEdgeTypes } from "./topology-edge-types";
 import { TopologyToolbar } from "./topology-toolbar";
 import { TopologyLegend } from "./topology-legend";
-import { AllSitesGrid } from "./all-sites-grid";
+import { AllSitesGrid, regionFromSite, healthColor } from "./all-sites-grid";
 import {
   normalizeTopology,
   tracePath,
@@ -110,10 +110,17 @@ export function TopologyGraphV2({
   const [layoutMode, setLayoutMode] = useState<"hierarchical" | "flat">("hierarchical");
   const [activeFilters, setActiveFilters] = useState<Set<string>>(new Set(Object.keys(NODE_TYPE_META)));
   const [searchQuery, setSearchQuery] = useState("");
-  const [legendVisible, setLegendVisible] = useState(true);
+  const [legendVisible, setLegendVisible] = useState(false);
   const [pathTraceMode, setPathTraceMode] = useState(false);
   const [pathTraceStart, setPathTraceStart] = useState<string | null>(null);
   const [pathTraceEnd, setPathTraceEnd] = useState<string | null>(null);
+  const [selectedRegionHub, setSelectedRegionHub] = useState<{
+    name: string;
+    sites: TopologyNode[];
+    criticalCount: number;
+    warningCount: number;
+    deviceCount: number;
+  } | null>(null);
   const firstFitDone = useRef(false);
 
   // Incident detail query
@@ -161,6 +168,7 @@ export function TopologyGraphV2({
   }, [searchQuery, filteredNodes]);
 
   const [backboneViewMode, setBackboneViewMode] = useState<"regions" | "degraded" | "all">("regions");
+  const [hubRegionFilter, setHubRegionFilter] = useState<string | undefined>(undefined);
 
   // Compute graph nodes and edges using the layout engine
   const { graphNodes, graphEdges } = useMemo(() => {
@@ -370,10 +378,47 @@ export function TopologyGraphV2({
     }
   }, [rfInstance, highlightedNodeIds]);
 
+  // Clear region filter when leaving All Sites view
+  useEffect(() => {
+    if (backboneViewMode !== "all") {
+      setHubRegionFilter(undefined);
+    }
+  }, [backboneViewMode]);
+
   const handleNodeClick = useCallback(
     (_event: React.MouseEvent, node: Node) => {
-      if (node.type === "siteGroup" && onSiteSelect && node.data?.topoNode?.site_id) {
-        onSiteSelect(node.data.topoNode.site_id);
+      // Regional hub → open hub detail panel showing all sites in the region
+      if (node.type === "regionalHub") {
+        const sites = node.data?.regionSites as TopologyNode[] | undefined;
+        const topoNode = node.data?.topoNode as any;
+        if (sites && sites.length > 0) {
+          setSelectedRegionHub({
+            name: topoNode?.name || node.data?.label || "Regional Hub",
+            sites,
+            criticalCount: sites.filter((s) => s.health_status === "critical").length,
+            warningCount: sites.filter((s) => s.health_status === "warning" || s.health_status === "degraded").length,
+            deviceCount: sites.reduce((acc, s) => acc + ((s as any).device_count ?? 1), 0),
+          });
+        }
+        return;
+      }
+
+      const isGroupNode =
+        node.type === "siteGroup" ||
+        node.type === "site" ||
+        node.type === "statusBanner";
+
+      if (isGroupNode) {
+        if (onSiteSelect) {
+          const targetSiteId =
+            node.data?.topoNode?.site_id ||
+            node.data?.topoNode?.node_id;
+
+          if (targetSiteId && targetSiteId !== "none" && !targetSiteId.startsWith("all-") && !targetSiteId.startsWith("region-")) {
+            onSiteSelect(targetSiteId);
+            return;
+          }
+        }
         return;
       }
 
@@ -402,6 +447,10 @@ export function TopologyGraphV2({
     setPanelMode(incidentId ? "incident" : null);
     setSelectedNodeId(null);
   }, [incidentId]);
+
+  const handleRegionHubClose = useCallback(() => {
+    setSelectedRegionHub(null);
+  }, []);
 
   const handleZoomIn = useCallback(() => {
     rfInstance?.zoomIn({ duration: 200 });
@@ -522,6 +571,7 @@ export function TopologyGraphV2({
         <AllSitesGrid
           sites={data.nodes.filter((n) => n.node_type === "site")}
           onSiteClick={onSiteSelect}
+          defaultRegion={hubRegionFilter}
         />
       ) : (
         /* Graph canvas */
@@ -580,6 +630,107 @@ export function TopologyGraphV2({
             incidentLoading={incidentLoading}
             nodeLoading={nodeLoading}
           />
+
+          {/* Region Hub detail panel */}
+          {selectedRegionHub && (
+            <div className="absolute right-0 top-0 h-full w-[380px] bg-slate-950 border-l border-slate-800/60 flex flex-col z-40 shadow-2xl">
+              {/* Header */}
+              <div className="shrink-0 px-5 py-4 border-b border-slate-800/60">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <span className="text-[10px] font-semibold uppercase tracking-wider text-indigo-400">
+                      Regional Hub
+                    </span>
+                    <h2 className="text-lg font-semibold text-white truncate mt-0.5">
+                      {selectedRegionHub.name}
+                    </h2>
+                  </div>
+                  <button
+                    onClick={handleRegionHubClose}
+                    className="p-1 text-slate-500 hover:text-white hover:bg-slate-800 rounded-sm transition-colors flex-shrink-0"
+                  >
+                    ✕
+                  </button>
+                </div>
+
+                {/* Aggregate stats */}
+                <div className="flex items-baseline gap-x-6 gap-y-2 mt-3 text-xs">
+                  <div className="flex items-baseline gap-1.5">
+                    <span className="text-slate-500 uppercase tracking-wider">Sites</span>
+                    <span className="font-semibold text-white font-mono">{selectedRegionHub.sites.length}</span>
+                  </div>
+                  <span className="text-slate-700">|</span>
+                  <div className="flex items-baseline gap-1.5">
+                    <span className="text-slate-500 uppercase tracking-wider">Devices</span>
+                    <span className="font-semibold text-white font-mono">{selectedRegionHub.deviceCount}</span>
+                  </div>
+                  <span className="text-slate-700">|</span>
+                  {selectedRegionHub.criticalCount > 0 && (
+                    <div className="flex items-baseline gap-1.5">
+                      <span className="text-slate-500 uppercase tracking-wider">Critical</span>
+                      <span className="font-semibold text-rose-400 font-mono">{selectedRegionHub.criticalCount}</span>
+                    </div>
+                  )}
+                  {selectedRegionHub.warningCount > 0 && (
+                    <>
+                      <span className="text-slate-700">|</span>
+                      <div className="flex items-baseline gap-1.5">
+                        <span className="text-slate-500 uppercase tracking-wider">Degraded</span>
+                        <span className="font-semibold text-amber-400 font-mono">{selectedRegionHub.warningCount}</span>
+                      </div>
+                    </>
+                  )}
+                </div>
+              </div>
+
+              {/* Site list */}
+              <div className="flex-1 overflow-y-auto">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="border-b border-slate-800/60 text-slate-500 text-[10px] uppercase tracking-wider font-semibold">
+                      <th className="py-2 px-4">Site</th>
+                      <th className="py-2 px-3 text-center">APs</th>
+                      <th className="py-2 px-3 text-center">Alerts</th>
+                      <th className="py-2 px-3 text-right">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800/40 text-xs">
+                    {selectedRegionHub.sites.map((site) => {
+                      const color = healthColor(site.health_status);
+                      const alertCount = (site.critical_count ?? 0) + (site.warning_count ?? 0);
+                      return (
+                        <tr
+                          key={site.node_id}
+                          onClick={() => { onSiteSelect?.(site.site_id || site.node_id); handleRegionHubClose(); }}
+                          className="hover:bg-slate-800/30 cursor-pointer transition-colors"
+                        >
+                          <td className="py-2 px-4 font-medium text-white truncate max-w-[180px]">
+                            {site.name || site.site_name || site.site_id || site.node_id}
+                          </td>
+                          <td className="py-2 px-3 text-center font-mono text-slate-300">
+                            {(site as any).device_count ?? 0}
+                          </td>
+                          <td className="py-2 px-3 text-center font-mono">
+                            <span className={alertCount > 0 ? "text-amber-400 font-semibold" : "text-slate-500"}>
+                              {alertCount}
+                            </span>
+                          </td>
+                          <td className="py-2 px-3 text-right">
+                            <span className="flex items-center justify-end gap-1.5">
+                              <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: color }} />
+                              <span className="capitalize" style={{ color }}>
+                                {site.health_status === "healthy" ? "Operational" : site.health_status}
+                              </span>
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>

@@ -1,6 +1,6 @@
 # Topology Visualization
 
-Interactive network topology built with a **drill-down architecture**: the default view shows a **site browser** (searchable card grid), and clicking a site fetches its internal ReactFlow graph.
+Interactive network topology with a **three-mode backbone** and **drill-down architecture**. The backbone view offers three distinct ways to explore 153 sites: Regional Hubs (clustered by geography), Problem Sites (filtered to degraded), and All Sites (full data table). Clicking any site drills into its internal ReactFlow device graph.
 
 ## Architecture
 
@@ -146,7 +146,7 @@ User opens /topology
         ├── api.getTopologyBackbone()
         │   └── Returns 153 site nodes with device_count, critical_count, warning_count
         │
-        ├── SiteBrowser renders searchable card grid
+        ├── TopologyGraphV2 renders three-mode backbone view
         │   ├── Each card shows aggregated health:
         │   │   critical_count > 0  → red dot + badge
         │   │   warning_count > 0   → yellow dot + badge
@@ -185,7 +185,7 @@ User clicks "← All sites" or browser back button
   router.push("/topology")
         │
         ▼
-  Back to SiteBrowser (backbone mode) — cached data, instant render
+  Back to backbone view — cached data, instant render
 ```
 
 ## URL-Synced Drill-Down
@@ -314,7 +314,7 @@ In order of precedence:
 
 ## Layout Performance
 
-**Dagre is only used for single-site internal graphs**, where it processes ~20-50 nodes with real edges via a Web Worker (~10ms). The backbone SiteBrowser has zero layout cost (CSS grid).
+**Dagre is only used for single-site internal graphs**, where it processes ~20-50 nodes with real edges via a Web Worker (~10ms). The All Sites table has zero layout cost (native table). Regional Hubs use fixed grid layout (no dagre).
 
 ## Device Type Color Scheme
 

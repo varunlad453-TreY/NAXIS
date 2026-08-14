@@ -128,8 +128,8 @@ export function TopologyToolbar({
         {isBackbone && backboneViewMode === "regions"
           ? "regional hubs"
           : isBackbone && backboneViewMode === "degraded"
-          ? "problem sites"
-          : "sites"}{" "}
+            ? "problem sites"
+            : "sites"}{" "}
         · {totalEdges} links
       </span>
 
@@ -141,31 +141,28 @@ export function TopologyToolbar({
           <div className="flex items-center gap-1 rounded-lg border border-border/60 bg-surface/80 p-0.5">
             <button
               onClick={() => onBackboneViewModeChange("regions")}
-              className={`rounded px-2.5 py-1 text-[11px] font-medium transition-all ${
-                backboneViewMode === "regions"
+              className={`rounded px-2.5 py-1 text-[11px] font-medium transition-all ${backboneViewMode === "regions"
                   ? "bg-primary text-white shadow-sm"
                   : "text-foreground-muted hover:text-foreground"
-              }`}
+                }`}
             >
               Regional Hubs
             </button>
             <button
               onClick={() => onBackboneViewModeChange("degraded")}
-              className={`rounded px-2.5 py-1 text-[11px] font-medium transition-all ${
-                backboneViewMode === "degraded"
+              className={`rounded px-2.5 py-1 text-[11px] font-medium transition-all ${backboneViewMode === "degraded"
                   ? "bg-warning/20 text-warning border border-warning/30 font-semibold"
                   : "text-foreground-muted hover:text-foreground"
-              }`}
+                }`}
             >
               Problem Sites
             </button>
             <button
               onClick={() => onBackboneViewModeChange("all")}
-              className={`rounded px-2.5 py-1 text-[11px] font-medium transition-all ${
-                backboneViewMode === "all"
+              className={`rounded px-2.5 py-1 text-[11px] font-medium transition-all ${backboneViewMode === "all"
                   ? "bg-primary text-white shadow-sm"
                   : "text-foreground-muted hover:text-foreground"
-              }`}
+                }`}
             >
               All Sites (153)
             </button>
