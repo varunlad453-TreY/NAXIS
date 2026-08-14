@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { Search, SlidersHorizontal } from "lucide-react";
 import type { TopologyNode } from "@/types/topology";
 
 // ─── helpers ───────────────────────────────────────────────────────────────
@@ -12,22 +13,6 @@ function healthColor(status: string): string {
     case "degraded": return "#f97316";
     default:         return "#10b981";
   }
-}
-
-function healthBg(status: string): string {
-  switch (status) {
-    case "critical": return "rgba(239,68,68,0.08)";
-    case "warning":  return "rgba(245,158,11,0.08)";
-    case "degraded": return "rgba(249,115,22,0.08)";
-    default:         return "rgba(16,185,129,0.06)";
-  }
-}
-
-function badgeForStatus(status: string) {
-  const label =
-    status === "healthy" ? "Operational"
-    : status.charAt(0).toUpperCase() + status.slice(1);
-  return { label, color: healthColor(status), bg: healthBg(status) };
 }
 
 function regionFromSite(siteId: string, siteName: string | null): string {
@@ -60,8 +45,6 @@ export function AllSitesGrid({
   const [statusFilter, setStatus]  = useState("All Status");
   const [sortKey,      setSortKey] = useState<SortKey>("status");
   const [sortDir,      setSortDir] = useState<"asc"|"desc">("desc");
-  const [page,         setPage]    = useState(0);
-  const PER_PAGE = 24;
 
   const enriched = useMemo(() =>
     sites.map((s) => ({
@@ -96,9 +79,6 @@ export function AllSitesGrid({
     });
   }, [filtered, sortKey, sortDir]);
 
-  const totalPages = Math.ceil(sorted.length / PER_PAGE);
-  const paginated  = sorted.slice(page * PER_PAGE, (page + 1) * PER_PAGE);
-
   const stats = useMemo(() => ({
     critical: enriched.filter((s) => s.health_status === "critical").length,
     warning:  enriched.filter((s) => s.health_status === "warning" || s.health_status === "degraded").length,
@@ -109,207 +89,170 @@ export function AllSitesGrid({
   function toggleSort(key: SortKey) {
     if (sortKey === key) setSortDir((d) => d === "asc" ? "desc" : "asc");
     else { setSortKey(key); setSortDir("desc"); }
-    setPage(0);
   }
 
   const SortArrow = ({ k }: { k: SortKey }) =>
     sortKey !== k
-      ? <span style={{ opacity: 0.25 }}>↕</span>
-      : <span style={{ color: "#818cf8" }}>{sortDir === "asc" ? "↑" : "↓"}</span>;
-
-  const sel: React.CSSProperties = {
-    height: 32, padding: "0 10px", borderRadius: 6, fontSize: 12, cursor: "pointer",
-    border: "1px solid hsl(var(--border)/0.6)", background: "hsl(var(--surface))",
-    color: "hsl(var(--foreground))",
-  };
+      ? <span className="opacity-25 ml-1">↕</span>
+      : <span className="text-indigo-400 ml-1">{sortDir === "asc" ? "↑" : "↓"}</span>;
 
   return (
-    <div style={{
-      display: "flex", flexDirection: "column", minHeight: 640,
-      background: "hsl(var(--surface)/0.2)", borderRadius: 12,
-      border: "1px solid hsl(var(--border)/0.4)", overflow: "hidden",
-    }}>
-
-      {/* ─── Stats bar ──────────────────────────────────────────────────── */}
-      <div style={{ display: "flex", borderBottom: "1px solid hsl(var(--border)/0.4)" }}>
-        {([
-          { label: "Total Sites",  value: sites.length,                    color: "#6366f1", icon: "🏢" },
-          { label: "Operational",  value: stats.healthy,                   color: "#10b981", icon: "✅" },
-          { label: "Alerts",       value: stats.warning,                   color: "#f59e0b", icon: "⚠️" },
-          { label: "Critical",     value: stats.critical,                  color: "#ef4444", icon: "🔴" },
-          { label: "Total APs",    value: stats.totalAPs.toLocaleString(), color: "#8b5cf6", icon: "📡" },
-        ] as const).map(({ label, value, color, icon }) => (
-          <div key={label} style={{ flex: 1, padding: "14px 20px", borderRight: "1px solid hsl(var(--border)/0.3)", display: "flex", alignItems: "center", gap: 10 }}>
-            <span style={{ fontSize: 18 }}>{icon}</span>
-            <div>
-              <div style={{ fontSize: 22, fontWeight: 700, color, lineHeight: 1.1 }}>{value}</div>
-              <div style={{ fontSize: 11, color: "hsl(var(--foreground-muted))", marginTop: 2 }}>{label}</div>
-            </div>
-          </div>
-        ))}
+    <div className="space-y-6">
+      {/* ─── Inline Metrics Bar ─────────────────────────────────────────── */}
+      <div className="flex flex-wrap items-baseline gap-x-8 gap-y-3 text-sm">
+        <div className="flex items-baseline gap-2">
+          <span className="text-xs text-slate-500 uppercase tracking-wider">Total Sites</span>
+          <span className="text-lg font-semibold text-white font-mono">{sites.length}</span>
+        </div>
+        <span className="hidden sm:block text-slate-700">|</span>
+        <div className="flex items-baseline gap-2">
+          <span className="text-xs text-slate-500 uppercase tracking-wider">Operational</span>
+          <span className="text-lg font-semibold text-emerald-400 font-mono">{stats.healthy}</span>
+        </div>
+        <span className="hidden sm:block text-slate-700">|</span>
+        <div className="flex items-baseline gap-2">
+          <span className="text-xs text-slate-500 uppercase tracking-wider">Alerts</span>
+          <span className="text-lg font-semibold text-amber-400 font-mono">{stats.warning}</span>
+        </div>
+        <span className="hidden sm:block text-slate-700">|</span>
+        <div className="flex items-baseline gap-2">
+          <span className="text-xs text-slate-500 uppercase tracking-wider">Critical</span>
+          <span className="text-lg font-semibold text-rose-400 font-mono">{stats.critical}</span>
+        </div>
+        <span className="hidden sm:block text-slate-700">|</span>
+        <div className="flex items-baseline gap-2">
+          <span className="text-xs text-slate-500 uppercase tracking-wider">Total APs</span>
+          <span className="text-lg font-semibold text-white font-mono">{stats.totalAPs.toLocaleString()}</span>
+        </div>
       </div>
 
-      {/* ─── Filter bar ─────────────────────────────────────────────────── */}
-      <div style={{ display: "flex", gap: 10, padding: "12px 16px", borderBottom: "1px solid hsl(var(--border)/0.4)", alignItems: "center", flexWrap: "wrap" }}>
-        {/* Search */}
-        <div style={{ position: "relative", flex: "1 1 200px", minWidth: 160 }}>
-          <span style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", opacity: 0.4, fontSize: 13, pointerEvents: "none" }}>🔍</span>
-          <input
-            value={search}
-            onChange={(e) => { setSearch(e.target.value); setPage(0); }}
-            placeholder="Search by name, ID…"
-            style={{
-              width: "100%", paddingLeft: 30, paddingRight: 10, height: 32, borderRadius: 6, boxSizing: "border-box",
-              border: "1px solid hsl(var(--border)/0.6)", background: "hsl(var(--surface)/0.6)",
-              color: "hsl(var(--foreground))", fontSize: 12, outline: "none",
-            }}
-          />
+      {/* ─── Filters ────────────────────────────────────────────────────── */}
+      <div className="flex flex-col gap-4 border-b border-slate-800/60 pb-4">
+        {/* Search + region tabs */}
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div className="relative w-full md:w-80">
+            <Search className="w-4 h-4 absolute left-3 top-3 text-slate-500" />
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search by name, ID, or region..."
+              className="w-full bg-transparent border-b border-slate-800/60 pl-9 pr-4 py-2 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-indigo-500 transition-colors"
+            />
+          </div>
+          <div className="flex items-center gap-1 w-full md:w-auto overflow-x-auto">
+            <SlidersHorizontal className="w-4 h-4 text-slate-500 mr-2 hidden md:block" />
+            {REGIONS.map((r) => (
+              <button
+                key={r}
+                onClick={() => setRegion(r)}
+                className={`px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider transition-colors whitespace-nowrap ${
+                  region === r
+                    ? "text-indigo-400 border-b-2 border-indigo-500"
+                    : "text-slate-400 hover:text-slate-200 border-b-2 border-transparent"
+                }`}
+              >
+                {r === "All Regions" ? "All" : r}
+              </button>
+            ))}
+          </div>
         </div>
 
-        <select value={region} onChange={(e) => { setRegion(e.target.value); setPage(0); }} style={sel}>
-          {REGIONS.map((r) => <option key={r} value={r}>{r}</option>)}
-        </select>
-
-        <select value={statusFilter} onChange={(e) => { setStatus(e.target.value); setPage(0); }} style={sel}>
+        {/* Status tabs */}
+        <div className="flex items-center gap-1 w-full overflow-x-auto">
+          <span className="text-[11px] text-slate-500 uppercase tracking-wider mr-2 hidden md:block">Status</span>
           {STATUS_OPTS.map((s) => (
-            <option key={s} value={s}>{s === "All Status" ? "All Status" : s.charAt(0).toUpperCase() + s.slice(1)}</option>
-          ))}
-        </select>
-
-        {/* Sort pills */}
-        <div style={{ display: "flex", gap: 4, marginLeft: "auto", flexWrap: "wrap" }}>
-          {(["name","status","alerts","devices","region"] as SortKey[]).map((k) => (
-            <button key={k} onClick={() => toggleSort(k)} style={{
-              height: 28, padding: "0 10px", borderRadius: 5, fontSize: 11, cursor: "pointer",
-              border: `1px solid ${sortKey === k ? "#6366f1" : "hsl(var(--border)/0.5)"}`,
-              background: sortKey === k ? "rgba(99,102,241,0.12)" : "transparent",
-              color: sortKey === k ? "#818cf8" : "hsl(var(--foreground-muted))",
-              display: "flex", alignItems: "center", gap: 3, transition: "all 0.15s",
-            }}>
-              {k.charAt(0).toUpperCase() + k.slice(1)} <SortArrow k={k} />
+            <button
+              key={s}
+              onClick={() => setStatus(s)}
+              className={`px-3 py-1 text-[11px] font-bold uppercase tracking-wider transition-colors whitespace-nowrap ${
+                statusFilter === s
+                  ? "text-indigo-400 border-b-2 border-indigo-500"
+                  : "text-slate-400 hover:text-slate-200 border-b-2 border-transparent"
+              }`}
+            >
+              {s === "All Status" ? "All" : s.charAt(0).toUpperCase() + s.slice(1)}
             </button>
           ))}
-        </div>
-
-        <div style={{ fontSize: 11, color: "hsl(var(--foreground-muted))", whiteSpace: "nowrap" }}>
-          {filtered.length} of {sites.length}
+          <span className="text-xs text-slate-500 ml-auto whitespace-nowrap">
+            {filtered.length} of {sites.length}
+          </span>
         </div>
       </div>
 
-      {/* ─── Grid ───────────────────────────────────────────────────────── */}
-      <div style={{ flex: 1, overflowY: "auto", padding: "16px 16px 8px" }}>
-        {paginated.length === 0 ? (
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: 300, color: "hsl(var(--foreground-muted))", fontSize: 14 }}>
-            No sites match your filters
-          </div>
-        ) : (
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(210px, 1fr))", gap: 10 }}>
-            {paginated.map((site) => {
-              const badge    = badgeForStatus(site.health_status);
-              const hasAlert = site._alertCount > 0;
-
+      {/* ─── Table ──────────────────────────────────────────────────────── */}
+      <div className="overflow-x-auto">
+        <table className="w-full text-left border-collapse">
+          <thead>
+            <tr className="border-b border-slate-800/60 text-slate-500 text-[11px] uppercase tracking-wider font-semibold">
+              <th className="py-2.5 px-3 cursor-pointer hover:text-slate-300 transition-colors" onClick={() => toggleSort("name")}>
+                Site <SortArrow k="name" />
+              </th>
+              <th className="py-2.5 px-3 cursor-pointer hover:text-slate-300 transition-colors" onClick={() => toggleSort("region")}>
+                Region <SortArrow k="region" />
+              </th>
+              <th className="py-2.5 px-3 cursor-pointer hover:text-slate-300 transition-colors" onClick={() => toggleSort("status")}>
+                Status <SortArrow k="status" />
+              </th>
+              <th className="py-2.5 px-3 text-center cursor-pointer hover:text-slate-300 transition-colors" onClick={() => toggleSort("devices")}>
+                APs <SortArrow k="devices" />
+              </th>
+              <th className="py-2.5 px-3 text-center cursor-pointer hover:text-slate-300 transition-colors" onClick={() => toggleSort("alerts")}>
+                Alerts <SortArrow k="alerts" />
+              </th>
+              <th className="py-2.5 px-3 text-center">Critical</th>
+              <th className="py-2.5 px-3 text-center">Warnings</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-800/40 text-xs">
+            {sorted.map((site) => {
+              const color = healthColor(site.health_status);
               return (
-                <button
+                <tr
                   key={site.node_id}
                   onClick={() => onSiteClick?.(site.site_id)}
-                  style={{
-                    display: "flex", flexDirection: "column", textAlign: "left", cursor: "pointer",
-                    border: `1px solid ${hasAlert ? badge.color : "hsl(var(--border)/0.4)"}`,
-                    borderLeft: `3px solid ${badge.color}`,
-                    borderRadius: 8,
-                    background: hasAlert ? healthBg(site.health_status) : "hsl(var(--surface)/0.6)",
-                    padding: "12px 14px",
-                    transition: "transform 0.15s, box-shadow 0.15s",
-                    gap: 0,
-                  }}
-                  onMouseEnter={(e) => {
-                    const el = e.currentTarget;
-                    el.style.transform = "translateY(-2px)";
-                    el.style.boxShadow = `0 4px 20px ${badge.color}28`;
-                  }}
-                  onMouseLeave={(e) => {
-                    const el = e.currentTarget;
-                    el.style.transform = "";
-                    el.style.boxShadow = "";
-                  }}
+                  className="hover:bg-slate-800/30 cursor-pointer transition-colors"
                 >
-                  {/* Name + status dot */}
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 6, marginBottom: 6 }}>
-                    <span style={{ fontSize: 12, fontWeight: 600, color: "hsl(var(--foreground))", lineHeight: 1.3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>
-                      {site.name || site.site_name || site.site_id}
+                  <td className="py-2.5 px-3 font-medium text-white">
+                    {site.name || site.site_name || site.site_id}
+                  </td>
+                  <td className="py-2.5 px-3 text-slate-400">{site._region}</td>
+                  <td className="py-2.5 px-3">
+                    <span className="flex items-center gap-1.5">
+                      <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: color }} />
+                      <span className="capitalize" style={{ color }}>
+                        {site.health_status === "healthy" ? "Operational" : site.health_status}
+                      </span>
                     </span>
-                    <span style={{ width: 8, height: 8, borderRadius: "50%", background: badge.color, flexShrink: 0, marginTop: 4, boxShadow: hasAlert ? `0 0 6px ${badge.color}` : "none" }} />
-                  </div>
-
-                  {/* Region */}
-                  <div style={{ fontSize: 10, color: "hsl(var(--foreground-muted))", marginBottom: 10, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    📍 {site._region}
-                  </div>
-
-                  {/* Metrics */}
-                  <div style={{ display: "flex", gap: 0, border: "1px solid hsl(var(--border)/0.3)", borderRadius: 6, overflow: "hidden", marginBottom: hasAlert ? 8 : 0 }}>
-                    {([
-                      { val: site.device_count ?? 0,   label: "APs",    color: "#8b5cf6" },
-                      { val: site._alertCount,          label: "Alerts", color: site._alertCount > 0 ? badge.color : "#10b981" },
-                    ] as const).map(({ val, label, color }, i) => (
-                      <div key={label} style={{ flex: 1, padding: "6px 4px", textAlign: "center", borderRight: i === 0 ? "1px solid hsl(var(--border)/0.3)" : "none" }}>
-                        <div style={{ fontSize: 14, fontWeight: 700, color }}>{val}</div>
-                        <div style={{ fontSize: 9, color: "hsl(var(--foreground-muted))", marginTop: 1 }}>{label}</div>
-                      </div>
-                    ))}
-                    <div style={{ flex: 1, padding: "5px 4px", textAlign: "center", borderLeft: "1px solid hsl(var(--border)/0.3)" }}>
-                      <div style={{ fontSize: 10, fontWeight: 600, color: badge.color, paddingTop: 2 }}>{badge.label}</div>
-                      <div style={{ fontSize: 9, color: "hsl(var(--foreground-muted))", marginTop: 1 }}>Status</div>
-                    </div>
-                  </div>
-
-                  {/* Alert chips */}
-                  {hasAlert && (
-                    <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
-                      {(site.critical_count ?? 0) > 0 && (
-                        <span style={{ fontSize: 9, padding: "2px 7px", borderRadius: 99, background: "rgba(239,68,68,0.15)", color: "#ef4444", fontWeight: 600 }}>
-                          {site.critical_count} Critical
-                        </span>
-                      )}
-                      {(site.warning_count ?? 0) > 0 && (
-                        <span style={{ fontSize: 9, padding: "2px 7px", borderRadius: 99, background: "rgba(245,158,11,0.15)", color: "#f59e0b", fontWeight: 600 }}>
-                          {site.warning_count} Warning
-                        </span>
-                      )}
-                    </div>
-                  )}
-                </button>
+                  </td>
+                  <td className="py-2.5 px-3 text-center font-mono text-slate-300">
+                    {site.device_count ?? 0}
+                  </td>
+                  <td className="py-2.5 px-3 text-center font-mono">
+                    <span className={site._alertCount > 0 ? "text-amber-400 font-semibold" : "text-slate-500"}>
+                      {site._alertCount}
+                    </span>
+                  </td>
+                  <td className="py-2.5 px-3 text-center font-mono">
+                    <span className={site.critical_count ? "text-rose-400 font-semibold" : "text-slate-500"}>
+                      {site.critical_count ?? 0}
+                    </span>
+                  </td>
+                  <td className="py-2.5 px-3 text-center font-mono">
+                    <span className={site.warning_count ? "text-amber-400 font-semibold" : "text-slate-500"}>
+                      {site.warning_count ?? 0}
+                    </span>
+                  </td>
+                </tr>
               );
             })}
+          </tbody>
+        </table>
+        {sorted.length === 0 && (
+          <div className="py-12 text-center text-sm text-slate-500">
+            No sites match your filters
           </div>
         )}
       </div>
-
-      {/* ─── Pagination ─────────────────────────────────────────────────── */}
-      {totalPages > 1 && (
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: "12px 16px", borderTop: "1px solid hsl(var(--border)/0.4)" }}>
-          <button disabled={page === 0} onClick={() => setPage((p) => Math.max(0, p - 1))}
-            style={{ height: 28, padding: "0 12px", borderRadius: 6, border: "1px solid hsl(var(--border)/0.5)", background: "transparent", color: "hsl(var(--foreground))", fontSize: 12, cursor: page === 0 ? "not-allowed" : "pointer", opacity: page === 0 ? 0.4 : 1 }}>
-            ← Prev
-          </button>
-          {Array.from({ length: Math.min(totalPages, 7) }, (_, i) => (
-            <button key={i} onClick={() => setPage(i)} style={{
-              width: 28, height: 28, borderRadius: 6, fontSize: 11, cursor: "pointer",
-              border: `1px solid ${i === page ? "#6366f1" : "hsl(var(--border)/0.4)"}`,
-              background: i === page ? "rgba(99,102,241,0.15)" : "transparent",
-              color: i === page ? "#818cf8" : "hsl(var(--foreground-muted))",
-              fontWeight: i === page ? 700 : 400,
-            }}>{i + 1}</button>
-          ))}
-          <button disabled={page >= totalPages - 1} onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
-            style={{ height: 28, padding: "0 12px", borderRadius: 6, border: "1px solid hsl(var(--border)/0.5)", background: "transparent", color: "hsl(var(--foreground))", fontSize: 12, cursor: page >= totalPages - 1 ? "not-allowed" : "pointer", opacity: page >= totalPages - 1 ? 0.4 : 1 }}>
-            Next →
-          </button>
-          <span style={{ fontSize: 11, color: "hsl(var(--foreground-muted))", marginLeft: 4 }}>
-            Showing {page * PER_PAGE + 1}–{Math.min((page + 1) * PER_PAGE, sorted.length)} of {sorted.length}
-          </span>
-        </div>
-      )}
     </div>
   );
 }
