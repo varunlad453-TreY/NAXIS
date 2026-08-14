@@ -1,6 +1,6 @@
 # Telemetry Upgrade — Architecture Documentation
 
-> **Version:** 1.2 · **Date:** July 21, 2026 · **Status:** Live (All phases A–F complete, 26/26 items delivered)
+> **Version:** 1.3 · **Date:** August 14, 2026 · **Status:** Live (Phases 1–15 complete + WP-0–WP-2 delivered)
 
 ---
 
@@ -585,8 +585,8 @@ LOG_LEVEL=INFO
 |-----------|-------------|
 | **Trust in data** | Operators can see exactly how fresh and reliable the data is before making decisions. |
 | **Faster MTTR** | When a collector fails, the operator knows *which* collector, *what* it collects, and *why* it might be failing. |
-| **Vendor coverage** | DNAC is now live, covering wired infrastructure alongside Mist's wireless. |
-| **Scalability** | New vendors follow the same contract — VeloCloud and Arista can be added without architectural changes. |
+| **Vendor coverage** | Mist (wireless) and VeloCloud (SD-WAN) are live. DNAC is registered but not configured. Arista WLC code exists but host/password not configured. |
+| **Scalability** | New vendors follow the same contract — Aruba Central added post-Phase 9 without architectural changes. |
 
 ---
 

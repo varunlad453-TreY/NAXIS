@@ -23,6 +23,12 @@ const NODESEP = 50;
 const MARGINX = 60;
 const MARGINY = 60;
 
+// ponytail: generous spacing for readable site topology — increase if still cramped
+const SITE_RANKSEP = 140;
+const SITE_NODESEP = 80;
+const SITE_MARGINX = 80;
+const SITE_MARGINY = 60;
+
 /**
  * Build a hierarchical layout for infrastructure topology.
  * Ranks nodes by their network role (internet → edge → core → dist → access → endpoints).
@@ -146,6 +152,213 @@ export function buildHierarchicalLayout(
     graphEdges.push({
       id: `${edge.src_id}->${edge.dst_id}`,
       source: edge.dst_id, // visual direction: parent → child (top to bottom)
+      target: edge.src_id,
+      type: "topologyEdge",
+      data: {
+        topoEdge: edge,
+        edgeType: edge.edge_type,
+        linkStatus,
+        isHighlighted,
+        isDimmed: false,
+        isPathTrace: false,
+      },
+      markerEnd: {
+        type: MarkerType.ArrowClosed,
+        color: linkStatus === "down" ? "#ef4444" : linkStatus === "degraded" ? "#eab308" : "#9ca3af",
+        width: 8,
+        height: 8,
+      },
+      style: {
+        stroke:
+          linkStatus === "down"
+            ? "#ef4444"
+            : linkStatus === "degraded"
+            ? "#eab308"
+            : isHighlighted
+            ? "#3b82f6"
+            : "#9ca3af",
+        strokeWidth: isHighlighted ? 2.5 : linkStatus === "down" ? 2 : 1.5,
+        strokeDasharray:
+          edge.edge_type === "logical" || edge.edge_type === "wan_link" || linkStatus === "unknown"
+            ? "4 4"
+            : linkStatus === "down"
+            ? "6 3"
+            : undefined,
+        opacity: 1,
+      },
+    });
+  }
+
+  return { nodes: graphNodes, edges: graphEdges };
+}
+
+// ---------------------------------------------------------------------------
+// Readable Layered Layout — replaces dagre for site-level topology
+// ---------------------------------------------------------------------------
+
+function groupNodesByRank(nodes: TopologyNode[]) {
+  const groups = new Map<number, TopologyNode[]>();
+  for (const n of nodes) {
+    const rank = getNodeRank(n.node_type);
+    const arr = groups.get(rank) ?? [];
+    arr.push(n);
+    groups.set(rank, arr);
+  }
+  return groups;
+}
+
+function orderNodesInRank(
+  rankNodes: TopologyNode[],
+  edgeMap: Map<string, TopologyEdge[]>,
+  prevRankPositions: Map<string, number>
+): TopologyNode[] {
+  if (rankNodes.length <= 1) return rankNodes;
+
+  // Sort by average x-position of connected nodes in previous rank
+  return [...rankNodes].sort((a, b) => {
+    const aEdges = edgeMap.get(a.node_id) ?? [];
+    const bEdges = edgeMap.get(b.node_id) ?? [];
+    const aConn = aEdges
+      .map((e) => prevRankPositions.get(e.dst_id))
+      .filter((x): x is number => x !== undefined);
+    const bConn = bEdges
+      .map((e) => prevRankPositions.get(e.dst_id))
+      .filter((x): x is number => x !== undefined);
+    const aAvg = aConn.length ? aConn.reduce((s, x) => s + x, 0) / aConn.length : Infinity;
+    const bAvg = bConn.length ? bConn.reduce((s, x) => s + x, 0) / bConn.length : Infinity;
+    return aAvg - bAvg;
+  });
+}
+
+/**
+ * Build a clean layered layout for site-level topology.
+ * Nodes are placed in horizontal rows by network role (internet → edge → core → dist → access → wireless → endpoints).
+ * Much more readable than dagre for network diagrams because we enforce the semantic hierarchy.
+ */
+export function buildReadableHierarchicalLayout(
+  topologyNodes: TopologyNode[],
+  topologyEdges: TopologyEdge[],
+  options: {
+    rankdir?: "TB" | "LR";
+    highlightSet?: Set<string>;
+  } = {}
+): { nodes: GraphNode[]; edges: GraphEdge[] } {
+  const { rankdir = "TB", highlightSet = new Set() } = options;
+  const nodeMap = new Map(topologyNodes.map((n) => [n.node_id, n]));
+
+  if (topologyNodes.length === 0) return { nodes: [], edges: [] };
+
+  const rankGroups = groupNodesByRank(topologyNodes);
+  const sortedRanks = Array.from(rankGroups.keys()).sort((a, b) => a - b);
+
+  // Build adjacency: edges where current node is source (child → parent in data model)
+  const outgoingEdges = new Map<string, TopologyEdge[]>();
+  for (const e of topologyEdges) {
+    const arr = outgoingEdges.get(e.src_id) ?? [];
+    arr.push(e);
+    outgoingEdges.set(e.src_id, arr);
+  }
+
+  const isHorizontal = rankdir === "LR";
+  const rankSep = SITE_RANKSEP;
+  const nodeSep = SITE_NODESEP;
+  const marginX = SITE_MARGINX;
+  const marginY = SITE_MARGINY;
+
+  const graphNodes: GraphNode[] = [];
+  const positionMap = new Map<string, { x: number; y: number }>();
+
+  // Place nodes rank by rank
+  for (let rIndex = 0; rIndex < sortedRanks.length; rIndex++) {
+    const rank = sortedRanks[rIndex];
+    let rankNodes = rankGroups.get(rank)!;
+
+    // Order nodes to minimize edge crossings with previous rank
+    if (rIndex > 0) {
+      const prevPositions = new Map<string, number>();
+      for (const n of graphNodes) {
+        prevPositions.set(n.id, isHorizontal ? n.position.y : n.position.x);
+      }
+      rankNodes = orderNodesInRank(rankNodes, outgoingEdges, prevPositions);
+    }
+
+    const maxInRank = Math.max(
+      ...Array.from(rankGroups.values()).map((arr) => arr.length)
+    );
+    const rankWidth = maxInRank * nodeSep + marginX * 2;
+
+    for (let i = 0; i < rankNodes.length; i++) {
+      const node = rankNodes[i];
+      const isSite = node.node_type === "site";
+      const isLeaf = ["client", "endpoint", "sensor", "camera", "iot", "ap", "access_point"].includes(node.node_type);
+      const width = isSite ? SITE_GROUP_WIDTH : isLeaf ? LEAF_NODE_WIDTH : INFRA_NODE_WIDTH;
+      const height = isSite ? SITE_GROUP_HEIGHT : isLeaf ? LEAF_NODE_HEIGHT : INFRA_NODE_HEIGHT;
+
+      // Spread evenly within the rank, centered
+      const span = rankNodes.length * nodeSep;
+      const offset = (rankWidth - span) / 2 + i * nodeSep + nodeSep / 2;
+
+      let x: number;
+      let y: number;
+      if (isHorizontal) {
+        x = marginX + rIndex * rankSep;
+        y = marginY + offset;
+      } else {
+        x = marginX + offset;
+        y = marginY + rIndex * rankSep;
+      }
+
+      positionMap.set(node.node_id, { x, y });
+
+      graphNodes.push({
+        id: node.node_id,
+        type: isSite ? "siteGroup" : isLeaf ? "leafNode" : "topologyNode",
+        position: { x: x - width / 2, y: y - height / 2 },
+        data: {
+          topoNode: node,
+          label: node.name || node.node_id,
+          nodeType: node.node_type,
+          healthStatus: (node.health_status as any) || "unknown",
+          healthColor: "",
+          deviceColor: "",
+          deviceLabel: "",
+          rank: getNodeRank(node.node_type),
+          isHighlighted: highlightSet.has(node.node_id),
+          isDimmed: false,
+          isRootCause: false,
+          isSymptom: false,
+          isSelected: false,
+          isSiteGroup: isSite,
+          childCount: (node as any).device_count ?? 0,
+          crossSiteEdgeCount: 0,
+        },
+        width,
+        height,
+      });
+    }
+  }
+
+  // Build edges
+  const graphEdges: GraphEdge[] = [];
+  for (const edge of topologyEdges) {
+    if (!nodeMap.has(edge.src_id) || !nodeMap.has(edge.dst_id)) continue;
+
+    const srcNode = nodeMap.get(edge.src_id)!;
+    const dstNode = nodeMap.get(edge.dst_id)!;
+    let linkStatus: "healthy" | "degraded" | "down" | "unknown" = "unknown";
+    if (srcNode.health_status === "critical" || dstNode.health_status === "critical") {
+      linkStatus = "down";
+    } else if (srcNode.health_status === "warning" || dstNode.health_status === "warning") {
+      linkStatus = "degraded";
+    } else if (srcNode.health_status === "healthy" && dstNode.health_status === "healthy") {
+      linkStatus = "healthy";
+    }
+
+    const isHighlighted = highlightSet.has(edge.src_id) && highlightSet.has(edge.dst_id);
+
+    graphEdges.push({
+      id: `${edge.src_id}->${edge.dst_id}`,
+      source: edge.dst_id, // visual direction: parent → child
       target: edge.src_id,
       type: "topologyEdge",
       data: {

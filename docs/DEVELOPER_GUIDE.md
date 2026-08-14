@@ -222,7 +222,7 @@ The `WorkerDaemon.run_once()` cycle:
 11. Runs data retention cleanup (purging >7d data from telemetry tables)
 12. Sleeps for `COLLECTOR_INTERVAL` seconds
 
-### Current collectors (21 total across 4 vendors)
+### Current collectors (22+ total across 5+ vendors)
 
 | Collector | Source | Status |
 |-----------|--------|--------|
@@ -247,6 +247,7 @@ The `WorkerDaemon.run_once()` cycle:
 | `arista-wlc-aps` | Arista WLC API (AP inventory) | ✅ Registered (not configured) |
 | `arista-wlc-radios` | Arista WLC API (channel utilization) | ✅ Registered (not configured) |
 | `arista-wlc-events` | Arista WLC API (controller events) | ✅ Registered (not configured) |
+| `aruba-central` | Aruba Central API (cloud Wi-Fi) | ⬜ Code exists, not configured |
 
 ### Adding a new collector
 
@@ -402,7 +403,25 @@ Current: **432 backend tests, 0 failures** + **114 frontend tests** (`cd fronten
 | 18 | Phase A–F completion: 26 items across oversight, pipeline wiring, monitoring, frontend UX, technical debt |
 | 19 | VeloCloud all-5-collectors live, notification system (Slack+email+dedup), dashboard event count UX overhaul, DB index + shm_size |
 | 20 | Boil-the-ocean audit: verified every claim against production DB, fixed hardcoded vendor/site counts, corrected all doc statuses, removed duplicate index, VACUUM completed, fixed ReactFlow border conflict |
+| 21 | Topology cascade fix: identifier translation (node_id → device_id), removed heuristic fallback, fixed 11 silent `except: pass` patterns, 30 new topology tests |
+| 22 | Correlation noise fix: root-cause merge via `ON CONFLICT DO UPDATE`, recovery resolution (`DEVICE_REACHABLE` auto-resolves), incident count stable at ~8,845 |
+| 23 | Human incident titles: real site names + root device hostnames + plain-language issues (e.g. "Pimpri Plant · AP32-02 unreachable — 5 devices affected") |
+| 24 | Close out 10 pre-existing test failures (stale tests, not env issues); fixed worker healthcheck (`ps` → `/proc/1/cmdline`) |
+| 25 | Truthful KPIs: `GET /incidents/stats` single-pass SQL aggregates; replaced N+1 `get_stats()`; added "Sites affected" / "Devices affected" |
+| 26 | Dead code removal: deleted legacy `run_worker.py`, `services/`, `db/`, `mock_ingest/` — 392 tests pass after removal |
+| 27 | Alerts page UX: grouped by root cause, "ongoing for 2h 14m" duration, backend enrichment via `resolve_display_names()` |
+| 28 | Storage hygiene: retention fixes, diff-on-write RF/uplink emitters, 7-day raw_event debug window, `INCIDENT_RETENTION_DAYS`, dead code removed |
+| 29 | WP-0 follow-up: raw_event bloat stripped (5.2 GB → 877 MB), 50K fixture export, docs sweep corrected |
+| 30 | WP-1 Canonical Identity Layer: `sites/devices/device_identities` tables, `IdentityResolver`, 4,102 identities backfilled |
+| 31 | WP-2.1 Fix Inverted Edge Direction: `links` table with `parent_node_id`/`child_node_id`, corrected physical link direction |
+| 32 | WP-2.2 Fix Incident Identity: deterministic fault fingerprint `SHA-256(site_id | root_device_id | category)`, SQL array union, severity escalation only |
+| 33–49 | Enterprise topology redesign: readable layered layout, regional hub cards, all-sites data grid, NOC floorplans redesign, locations registry |
+
+**Work Packages (WP):**
+- **WP-0** — Storage hygiene (retention, diff-on-write, dead code)
+- **WP-1** — Canonical identity layer (cross-vendor device resolution)
+- **WP-2** — Correlation hardening (edge direction, incident identity, evidence merge)
 
 ---
 
-*Last updated: 2026-07-27*
+*Last updated: 2026-08-14*

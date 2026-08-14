@@ -231,9 +231,23 @@ When clicking a site card, the internal topology adapts to the site size:
 
 ### Small sites (< 50 devices)
 
-Renders as a **flat dagre graph** (no site grouping). All devices appear as individual nodes with `site_membership` edges connecting each device to the site node, plus any `physical_link` or other edge types. This gives a proper tree/star layout — the site node at top, devices hierarchically below with visible connection lines.
+Renders as a **readable layered layout** by default (with dagre as fallback). Devices are placed into horizontal rows by their network role, making upstream/downstream relationships immediately visible:
 
-Device type filters default to showing all types. The expand/collapse toolbar is hidden since there are no site groups to expand.
+| Row | Network Role | Device Types |
+|-----|-------------|--------------|
+| 0 | Internet / WAN / Site | Globe, WAN links |
+| 1 | Edge / Security | Firewall, Router, Gateway, WAN Edge |
+| 2 | Core / Controllers | Core Switch, Server, Controller |
+| 3 | Distribution | Distribution Switch |
+| 4 | Access | Access Switch |
+| 5 | Wireless | AP, Access Point, Wireless Controller |
+| 6 | Endpoints | Client, Endpoint, Sensor, Camera, IoT |
+
+Nodes within each row are sorted to minimize edge crossings. Two layout directions are available:
+- **Layered (Top → Bottom)** — WAN at top, endpoints at bottom (default)
+- **Layered (Left → Right)** — WAN on the left, endpoints on the right
+
+Users can also switch to **Auto Hierarchical** (dagre) or **Flat** via the Layout dropdown in the toolbar.
 
 ### Large sites (≥ 50 devices)
 

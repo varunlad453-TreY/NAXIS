@@ -30,8 +30,8 @@ export interface TopologyToolbarProps {
   onSearchChange: (q: string) => void;
   searchResults: Array<{ node_id: string; name: string; node_type: string }>;
   onSelectSearchResult: (nodeId: string) => void;
-  layoutMode: "hierarchical" | "flat";
-  onLayoutModeChange: (mode: "hierarchical" | "flat") => void;
+  layoutMode: "hierarchical" | "readable" | "readable-lr" | "flat";
+  onLayoutModeChange: (mode: "hierarchical" | "readable" | "readable-lr" | "flat") => void;
   activeFilters: Set<string>;
   onToggleFilter: (type: string) => void;
   onFitView: () => void;
@@ -240,16 +240,28 @@ export function TopologyToolbar({
           className="inline-flex items-center gap-1.5 rounded-md border border-border/60 px-2.5 py-1 text-[11px] font-medium text-foreground-muted transition-colors hover:bg-surface hover:text-foreground"
         >
           <LayoutTemplate className="h-3.5 w-3.5" />
-          {layoutMode === "hierarchical" ? "Hierarchical" : "Flat"}
+          {layoutMode === "hierarchical" ? "Hierarchical" : layoutMode === "readable" ? "Layered ↓" : layoutMode === "readable-lr" ? "Layered →" : "Flat"}
           <ChevronDown className="h-3 w-3" />
         </button>
         {showLayoutMenu && (
-          <div className="absolute left-0 top-full z-50 mt-1 w-40 overflow-hidden rounded-lg border border-border/60 bg-surface shadow-lg">
+          <div className="absolute left-0 top-full z-50 mt-1 w-44 overflow-hidden rounded-lg border border-border/60 bg-surface shadow-lg">
+            <button
+              onClick={() => { onLayoutModeChange("readable"); setShowLayoutMenu(false); }}
+              className={`flex w-full items-center px-3 py-2 text-left text-xs transition-colors hover:bg-surface-hover ${layoutMode === "readable" ? "bg-primary/5 text-primary font-medium" : "text-foreground"}`}
+            >
+              Layered (Top → Bottom)
+            </button>
+            <button
+              onClick={() => { onLayoutModeChange("readable-lr"); setShowLayoutMenu(false); }}
+              className={`flex w-full items-center px-3 py-2 text-left text-xs transition-colors hover:bg-surface-hover ${layoutMode === "readable-lr" ? "bg-primary/5 text-primary font-medium" : "text-foreground"}`}
+            >
+              Layered (Left → Right)
+            </button>
             <button
               onClick={() => { onLayoutModeChange("hierarchical"); setShowLayoutMenu(false); }}
               className={`flex w-full items-center px-3 py-2 text-left text-xs transition-colors hover:bg-surface-hover ${layoutMode === "hierarchical" ? "bg-primary/5 text-primary font-medium" : "text-foreground"}`}
             >
-              Hierarchical
+              Auto Hierarchical
             </button>
             <button
               onClick={() => { onLayoutModeChange("flat"); setShowLayoutMenu(false); }}

@@ -31,6 +31,7 @@ import {
 } from "./topology-graph-model";
 import {
   buildHierarchicalLayout,
+  buildReadableHierarchicalLayout,
   buildFlatLayout,
   buildBackboneLayout,
   buildSiteGroupedLayout,
@@ -107,7 +108,7 @@ export function TopologyGraphV2({
   const [rfInstance, setRfInstance] = useState<ReactFlowInstance | null>(null);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [panelMode, setPanelMode] = useState<PanelMode>(incidentId ? "incident" : null);
-  const [layoutMode, setLayoutMode] = useState<"hierarchical" | "flat">("hierarchical");
+  const [layoutMode, setLayoutMode] = useState<"hierarchical" | "readable" | "readable-lr" | "flat">("readable");
   const [activeFilters, setActiveFilters] = useState<Set<string>>(new Set(Object.keys(NODE_TYPE_META)));
   const [searchQuery, setSearchQuery] = useState("");
   const [legendVisible, setLegendVisible] = useState(false);
@@ -270,10 +271,17 @@ export function TopologyGraphV2({
     if (layoutMode === "hierarchical") {
       const result = buildHierarchicalLayout(filteredNodes, data.edges, { highlightSet });
       return { graphNodes: result.nodes, graphEdges: result.edges };
-    } else {
-      const result = buildFlatLayout(filteredNodes, data.edges, highlightSet);
+    }
+    if (layoutMode === "readable") {
+      const result = buildReadableHierarchicalLayout(filteredNodes, data.edges, { rankdir: "TB", highlightSet });
       return { graphNodes: result.nodes, graphEdges: result.edges };
     }
+    if (layoutMode === "readable-lr") {
+      const result = buildReadableHierarchicalLayout(filteredNodes, data.edges, { rankdir: "LR", highlightSet });
+      return { graphNodes: result.nodes, graphEdges: result.edges };
+    }
+    const result = buildFlatLayout(filteredNodes, data.edges, highlightSet);
+    return { graphNodes: result.nodes, graphEdges: result.edges };
   }, [filteredNodes, data.edges, highlightedNodeIds, isBackbone, layoutMode, activeFilters, activeSiteId, backboneViewMode]);
 
 

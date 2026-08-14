@@ -46,13 +46,12 @@ Current primary routes:
 | Section      | Route            | Purpose                                  |
 |--------------|------------------|------------------------------------------|
 | Operational  | `/`              | Dashboard with platform HUD + inventory  |
+| Operational  | `/noc`           | NOC floorplans (live)                    |
+| Operational  | `/locations`     | Locations registry                       |
 | Operational  | `/integrations`  | Data-source control plane                |
-| Operational  | `/events`        | Raw unified events list                  |
-| Operational  | `/correlation`   | Alerts page — root-cause grouped incidents, truthful KPIs |
 | Operational  | `/topology`      | Network topology graph (drill-down)      |
-| Operational  | `/sdwan`         | VeloCloud SD-WAN view                    |
-| Operational  | `/mist`          | Juniper Mist view                        |
-| Insights     | `/devices`       | Device inventory                         |
+| Insights     | `/correlation`   | Alerts page — root-cause grouped incidents, truthful KPIs |
+| Insights     | `/path-trace`    | Path trace tool (live)                   |
 | Insights     | `/performance`   | Performance analytics (placeholder)      |
 | Insights     | `/connectivity`  | Link/tunnel monitoring (placeholder)     |
 | Insights     | `/clients`       | Client health (placeholder)              |
@@ -76,14 +75,6 @@ The dashboard delegates to dedicated components:
 - `CollectorHealthWidget` — live collector pipeline health (glass card with summary stats + inline alerts, polls `GET /telemetry` every 30s).
 - `PlatformObserverSection` — platform cards.
 - `InventoryToggle` — collapsible full-inventory panel.
-
-### Devices (`src/app/devices/page.tsx`)
-
-The device inventory delegates to:
-
-- `DeviceFilterBar` — search, platform/status filters, grouping toggle.
-- `DeviceListView` — loading, error, empty, grouped/flat list states.
-- `InventoryRow` / `SiteGroup` / `InventorySkeleton` — row-level presentation.
 
 ## Styling Conventions
 
@@ -114,11 +105,11 @@ The topology page uses a **drill-down architecture** to handle large datasets (2
    - **Problem Sites**: ReactFlow canvas filtered to degraded sites, or a healthy status banner when zero incidents exist.
    - **All Sites**: Data table (`AllSitesGrid`) with inline metrics, underlined tab filters, clickable column sort, and status dots per row — matching the platform's table conventions.
 
-2. **Internal mode** (after click): Fetch `api.getSiteTopology(id)` → render **`TopologyGraph`** with ReactFlow + dagre Web Worker for ~20-50 devices in the site. Devices appear as individual `TopologyNodeComponent` nodes.
+2. **Internal mode** (after click): Fetch `api.getSiteTopology(id)` → render **`TopologyGraphV2`** with ReactFlow + readable layered layout for ~20-50 devices in the site. Devices are placed into rows by network role (internet → edge → core → dist → access → wireless → endpoints), making upstream/downstream relationships immediately readable. Two directions available: Top→Bottom (default) and Left→Right. Dagre and flat layouts remain available via the Layout dropdown.
 
 3. **Deep-link** (`?site_id=XXX`): Skip backbone, directly render `TopologyGraph` for the target site.
 
-**Key files:** `src/app/topology/page.tsx` (state machine, breadcrumbs, health summary), `src/components/topology/topology-graph-v2.tsx` (backbone three-mode view + hub panel), `src/components/topology/topology-graph.tsx` (single-site ReactFlow), `src/components/topology/all-sites-grid.tsx` (data table for All Sites mode), `src/components/topology/topology-node-types.tsx` (hub cards + status banner), `src/components/topology/topology-layout-engine.ts` (layout generation for hubs + backbone), `src/components/topology/topology-toolbar.tsx` (mode selector pills), `src/lib/api.ts` (endpoints).
+**Key files:** `src/app/topology/page.tsx` (state machine, breadcrumbs, health summary), `src/components/topology/topology-graph-v2.tsx` (backbone three-mode view + hub panel + readable layout), `src/components/topology/topology-graph.tsx` (legacy single-site ReactFlow), `src/components/topology/all-sites-grid.tsx` (data table for All Sites mode), `src/components/topology/topology-node-types.tsx` (hub cards + status banner + device nodes), `src/components/topology/topology-layout-engine.ts` (layout generation: readable layered, dagre, backbone grid, regional clusters), `src/components/topology/topology-toolbar.tsx` (mode selector pills + layout dropdown), `src/lib/api.ts` (endpoints).
 
 ## Web Workers
 

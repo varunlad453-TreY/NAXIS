@@ -774,29 +774,29 @@ Consumers subscribe to `naxis:incidents` and can filter by `severity`, `site_id`
 | File | Lines | Purpose |
 |------|-------|---------|
 | `backend/shared/correlation/__init__.py` | 37 | Module exports |
-| `backend/shared/correlation/engine.py` | 677 | `CorrelationEngine` — main entry point, incident creation, cascade integration, telemetry counters |
-| `backend/shared/correlation/rules.py` | 585 | `SiteTimeWindowRule`, `TopologyCascadeRule`, `CascadeGroup`, `TopologyProvider`, grouping, confidence, title |
+| `backend/shared/correlation/engine.py` | ~834 | `CorrelationEngine` — main entry point, incident creation, cascade integration, telemetry counters |
+| `backend/shared/correlation/rules.py` | ~791 | `SiteTimeWindowRule`, `TopologyCascadeRule`, `CascadeGroup`, `TopologyProvider`, grouping, confidence, title |
 | `backend/shared/models/event.py` | — | `UnifiedEvent`, `DeviceInfo`, `ClientInfo`, `EventSeverity`, `EventCategory`, etc. |
 | `backend/shared/models/incident.py` | — | `Incident` Pydantic model with blast radius, confidence, lifecycle |
 | `backend/config/settings.py` | — | `CorrelationSettings` (env var → config mapping, lines ~85-99) |
 | `backend/shared/database/correlation_telemetry.py` | 128 | DB persistence for engine telemetry (write after each cycle, read for API) |
 | `backend/shared/database/redis.py` | 98 | `RedisClient` singleton — async pub/sub for live incident notifications |
-| `backend/worker/main.py` | 370 | `WorkerDaemon` — pipeline: collect → persist → topology sync → correlate → publish → telemetry |
+| `backend/worker/main.py` | ~496 | `WorkerDaemon` — pipeline: collect → persist → topology sync → correlate → publish → telemetry |
 | `backend/api/routes/correlation.py` | 59 | `GET /correlation/stats` — latest engine telemetry for monitoring |
 | `backend/api/routes/incidents.py` | 182 | `GET /incidents` (severity + status filters), `/incidents/stats`, `/incidents/active`, `/incidents/{id}` — list (with site/root-device name enrichment), truthful KPI aggregates, detail |
 | `schemas/postgres/006_correlation_telemetry.sql` | 30 | Correlation telemetry table schema |
-| `backend/tests/conftest.py` | 537 | `make_event()`, `MockTopologyProvider`, all fixtures |
-| `backend/tests/test_correlation_engine.py` | 1529 | 103 tests across 15 test classes (incl. 8 telemetry tests, cross-cycle escalation) |
+| `backend/tests/conftest.py` | ~536 | `make_event()`, `MockTopologyProvider`, all fixtures |
+| `backend/tests/test_correlation_engine.py` | ~1579 | 103+ tests across 15 test classes (incl. 8 telemetry tests, cross-cycle escalation) |
 | `backend/tests/test_correlation_telemetry.py` | 173 | 9 tests for DB persistence layer + API endpoint |
 | `backend/tests/test_correlation_pipeline.py` | 340 | 9 full-pipeline integration tests (incl. 2 Redis pub/sub tests) |
 | `backend/tests/test_incident_enrichment.py` | 145 | 6 Alerts enrichment tests — site/root-device display names (inventory + events fallback) + detail route regression |
 | `backend/tests/test_redis_client.py` | 195 | 11 unit tests for RedisClient (publish, health, warm_up, close, singleton) |
-| `docs/5_handoff.md` | — | AI session handoff (not for human onboarding) |
+| `docs/handoff docs/5_handoff.md` | — | AI session handoff (not for human onboarding) |
 | `docs/why/why-correlation-engine.md` | 216 | Product rationale and business case for the engine |
 
 ---
 
-**Document Version:** 3.0
-**Last Updated:** 2026-07-17
+**Document Version:** 3.1
+**Last Updated:** 2026-08-14
 **Authors:** Naxis Development Team
 **License:** MIT

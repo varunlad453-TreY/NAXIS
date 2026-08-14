@@ -4,9 +4,6 @@ Open-source operational intelligence platform for network telemetry correlation,
 
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Python](https://img.shields.io/badge/python-3.11+-blue.svg)
-![Next.js](https://img.shields.io/badge/next.js-14+-black.svg)
-![License](https://img.shields.io/badge/license-MIT-blue.svg)
-![Python](https://img.shields.io/badge/python-3.11+-blue.svg)
 ![Next.js](https://img.shields.io/badge/next.js-15-black.svg)
 
 ## Overview
@@ -29,7 +26,7 @@ make up
 
 - API: `http://localhost:8000`
 - Frontend: `http://localhost:3000`
-- Full test suite: `pytest backend\tests -v` (432 tests, 0 failures)
+- Full test suite: `pytest backend\tests -v` (432+ backend tests, 0 failures) + `cd frontend && npx vitest run` (114+ frontend tests)
 
 ## Architecture
 
@@ -79,6 +76,7 @@ make up
 - ✅ **Cisco DNAC** — Devices, alarms, topology, clients, interfaces (registered)
 - ✅ **Arista SD-WAN (VeloCloud)** — Edge inventory, WAN links, tunnels, events, topology (live)
 - ⬜ **Arista WLC** — Clients, APs, radios, events (code exists, host/password not configured)
+- ⬜ **Aruba Central** — Cloud-managed Wi-Fi (code exists, not configured)
 
 ## Project Structure
 
@@ -86,12 +84,19 @@ make up
 naxis/
 ├── backend/
 │   ├── main.py            # FastAPI entrypoint
-│   ├── worker/            # Worker daemon (worker/main.py), collectors, topology, pipeline
+│   ├── worker/            # Worker daemon, collectors, topology, pipeline
 │   ├── api/               # REST API routes + services
 │   ├── shared/            # Models, correlation engine, DB clients
-│   └── tests/             # 432 tests
+│   ├── scripts/           # One-off utilities (backfill, export, etc.)
+│   └── tests/             # 432+ tests
 ├── frontend/              # Next.js 15 UI
+│   └── src/
+│       ├── app/           # Routes
+│       ├── components/    # Domain + UI components
+│       ├── lib/           # API client, utils
+│       └── types/         # TypeScript types
 ├── schemas/               # PostgreSQL SQL files
+│   └── postgres/          # Migration scripts (NNN_*.sql)
 ├── config/                # .env
 └── docs/                  # All documentation
 ```
@@ -140,7 +145,7 @@ REDIS_ENABLED=false
 - **[docs/TELEMETRY_ARCHITECTURE.md](docs/TELEMETRY_ARCHITECTURE.md)** — Collector → ledger → UI health architecture.
 - **[docs/CORRELATION_ARCHITECTURE.md](docs/CORRELATION_ARCHITECTURE.md)** — Correlation engine (Stage 1 + Stage 2) design.
 - **[docs/FRONTEND_ARCHITECTURE.md](docs/FRONTEND_ARCHITECTURE.md)** — Frontend structure and patterns.
-- **[docs/handoff docs/](docs/handoff%20docs/)** — Per-session change logs (19 sessions).
+- **[docs/handoff docs/](docs/handoff%20docs/)** — Per-session change logs (49 sessions).
 
 ## License
 
