@@ -3,12 +3,14 @@
 import type { TopologyNodeDetail, TopologyNode } from "@/types/topology";
 import { NODE_TYPE_META, HEALTH_STATUS_META } from "@/types/topology";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Server, ArrowUp, ArrowDown, Network, Building, Cable } from "lucide-react";
+import { Server, ArrowUp, ArrowDown, Network, Building, Cable, Zap, Route } from "lucide-react";
 import { HealthHistoryChart } from "./health-history-chart";
 
 interface NodeDetailPanelProps {
   nodeDetail?: TopologyNodeDetail | null;
   loading?: boolean;
+  onPathTrace?: () => void;
+  onBlastRadius?: () => void;
 }
 
 function deviceTypeMeta(nodeType: string) {
@@ -114,6 +116,8 @@ function ChildrenSection({
 export function NodeDetailPanel({
   nodeDetail,
   loading,
+  onPathTrace,
+  onBlastRadius,
 }: NodeDetailPanelProps) {
   if (loading) {
     return (
@@ -233,6 +237,38 @@ export function NodeDetailPanel({
       {/* Children */}
       <ChildrenSection children={nodeDetail.children} />
 
+      {/* Downstream Impact */}
+      {nodeDetail.children.length > 0 && (
+        <DownstreamImpactSection children={nodeDetail.children} />
+      )}
+
+      {/* Quick Actions */}
+      {(onPathTrace || onBlastRadius) && (
+        <div className="border-t border-border/40 pt-3">
+          <div className="mb-2 text-xs font-semibold text-foreground">Quick Actions</div>
+          <div className="flex flex-wrap gap-2">
+            {onPathTrace && (
+              <button
+                onClick={onPathTrace}
+                className="inline-flex items-center gap-1.5 rounded-md border border-border/60 bg-surface px-2.5 py-1.5 text-[11px] font-medium text-foreground transition-colors hover:bg-surface-hover"
+              >
+                <Route className="h-3.5 w-3.5 text-primary" />
+                Path to Internet
+              </button>
+            )}
+            {onBlastRadius && (
+              <button
+                onClick={onBlastRadius}
+                className="inline-flex items-center gap-1.5 rounded-md border border-border/60 bg-surface px-2.5 py-1.5 text-[11px] font-medium text-foreground transition-colors hover:bg-surface-hover"
+              >
+                <Zap className="h-3.5 w-3.5 text-rose-500" />
+                Blast Radius
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Empty neighbor state */}
       {nodeDetail.parents.length === 0 && nodeDetail.children.length === 0 && (
         <div className="flex items-center gap-2 border-t border-dashed border-border/40 py-3 text-sm text-foreground-muted">
@@ -240,6 +276,56 @@ export function NodeDetailPanel({
           No topology neighbors — this node is isolated or a leaf device
         </div>
       )}
+    </div>
+  );
+}
+
+function DownstreamImpactSection({ children }: { children: TopologyNode[] }) {
+  const distribution = { healthy: 0, warning: 0, critical: 0, unknown: 0 };
+  for (const c of children) {
+    if (c.health_status === "healthy") distribution.healthy++;
+    else if (c.health_status === "warning") distribution.warning++;
+    else if (c.health_status === "critical") distribution.critical++;
+    else distribution.unknown++;
+  }
+  const total = children.length;
+  const alerting = distribution.critical + distribution.warning;
+  return (
+    <div className="border-t border-border/40 pt-3">
+      <div className="mb-2 flex items-center gap-2 text-xs font-semibold text-foreground">
+        <ArrowDown className="h-3.5 w-3.5 text-primary" />
+        Downstream Impact
+      </div>
+      <div className="rounded-md border border-border/40 bg-surface p-2.5 text-xs">
+        <div className="flex items-baseline gap-1.5">
+          <span className="font-semibold text-foreground">{total}</span>
+          <span className="text-foreground-muted">direct downstream devices</span>
+        </div>
+        {alerting > 0 ? (
+          <div className="mt-1.5 flex flex-wrap gap-2">
+            {distribution.critical > 0 && (
+              <span className="inline-flex items-center gap-1 text-rose-500">
+                <span className="h-1.5 w-1.5 rounded-full bg-rose-500" />
+                {distribution.critical} critical
+              </span>
+            )}
+            {distribution.warning > 0 && (
+              <span className="inline-flex items-center gap-1 text-amber-500">
+                <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
+                {distribution.warning} warning
+              </span>
+            )}
+            {distribution.healthy > 0 && (
+              <span className="inline-flex items-center gap-1 text-emerald-500">
+                <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                {distribution.healthy} healthy
+              </span>
+            )}
+          </div>
+        ) : (
+          <div className="mt-1 text-emerald-500">All downstream devices healthy</div>
+        )}
+      </div>
     </div>
   );
 }

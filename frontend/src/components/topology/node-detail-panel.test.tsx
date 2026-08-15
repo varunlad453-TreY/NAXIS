@@ -205,4 +205,33 @@ describe("NodeDetailPanel", () => {
     expect(screen.queryByText(/Other Parents/)).toBeNull();
     expect(screen.queryByText(/Children/)).toBeNull();
   });
+
+  it("renders downstream impact section when children exist", () => {
+    render(<NodeDetailPanel nodeDetail={mockNodeDetail} />);
+    expect(screen.getByText(/Downstream Impact/)).toBeDefined();
+    expect(screen.getByText(/direct downstream devices/)).toBeDefined();
+  });
+
+  it("renders quick actions when callbacks provided", () => {
+    const onPathTrace = vi.fn();
+    const onBlastRadius = vi.fn();
+    render(
+      <NodeDetailPanel
+        nodeDetail={mockNodeDetail}
+        onPathTrace={onPathTrace}
+        onBlastRadius={onBlastRadius}
+      />,
+    );
+    expect(screen.getByText(/Quick Actions/)).toBeDefined();
+    expect(screen.getByText(/Path to Internet/)).toBeDefined();
+    expect(screen.getByText(/Blast Radius/)).toBeDefined();
+  });
+
+  it("calls path trace callback when button clicked", () => {
+    const onPathTrace = vi.fn();
+    render(<NodeDetailPanel nodeDetail={mockNodeDetail} onPathTrace={onPathTrace} />);
+    const btn = screen.getByText(/Path to Internet/);
+    btn.click();
+    expect(onPathTrace).toHaveBeenCalled();
+  });
 });

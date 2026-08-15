@@ -8,6 +8,7 @@ import { AGGREGATED_VIEW_THRESHOLD, HEALTH_STATUS_META, CATEGORY_META } from "@/
 import { aggregateByCategory, getDeviceCategory } from "@/lib/topology-utils";
 import { TypeClusterNode, CLUSTER_NODE_WIDTH, CLUSTER_NODE_HEIGHT } from "./type-cluster-node";
 import { DeviceBrowser } from "./device-browser";
+import { ClusterTopologyView } from "./cluster-topology-view";
 import { ContextGraph } from "./context-graph";
 import { AlertTriangle, CheckCircle, HelpCircle, Search, X, List, Expand } from "lucide-react";
 
@@ -309,10 +310,11 @@ export function AggregatedView({ data, onContextSelect, onFlatView }: Aggregated
           )}
         </div>
 
-        {/* Device browser panel */}
+        {/* Cluster topology panel */}
         {selectedCategory && selectedCluster && (
-          <DeviceBrowser
-            nodes={nonSiteNodes.filter((n) => getDeviceCategory(n) === selectedCategory)}
+          <ClusterTopologyView
+            allNodes={nonSiteNodes}
+            allEdges={data.edges}
             cluster={selectedCluster}
             onSelect={handleDeviceSelect}
             onClose={handleBack}

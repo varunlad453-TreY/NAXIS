@@ -52,7 +52,7 @@ export interface TopologySummaryResponse {
 /**
  * Device type categories for visual styling
  */
-export type DeviceCategory = "infrastructure" | "leaf" | "edge" | "wireless";
+export type DeviceCategory = "core_network" | "edge_security" | "wireless" | "leaf";
 
 export interface BlastRadiusResponse {
   nodes: TopologyNode[];
@@ -114,9 +114,9 @@ export const HEALTH_STATUS_META: Record<string, { color: string; bgColor: string
 };
 
 export const CATEGORY_META: Record<DeviceCategory, { label: string; icon: string; color: string }> = {
-  infrastructure: { label: "Infrastructure", icon: "server", color: "#3b82f6" },
+  core_network: { label: "Core Network", icon: "server", color: "#3b82f6" },
+  edge_security: { label: "Edge / Security", icon: "shield", color: "#ef4444" },
   wireless: { label: "Wireless", icon: "wifi", color: "#10b981" },
-  edge: { label: "Edge", icon: "globe", color: "#8b5cf6" },
   leaf: { label: "Leaf", icon: "endpoint", color: "#6b7280" },
 };
 
@@ -128,6 +128,8 @@ export interface DeviceCategoryCluster {
   healthDistribution: SiteHealthCounts;
   aggregatedHealth: HealthStatus;
   deviceTypes: { type: string; label: string; count: number }[];
+  /** Highest-severity device in the cluster (critical first), if any alerting. */
+  worstDevice?: { node_id: string; name: string; health_status: string };
 }
 
 export interface TopologyMode {
@@ -142,16 +144,16 @@ export const NODE_TYPE_META: Record<
   string,
   { label: string; category: DeviceCategory; color: string }
 > = {
-  site: { label: "Site", category: "infrastructure", color: "#6366f1" },
-  switch: { label: "Switch", category: "infrastructure", color: "#3b82f6" },
-  core_switch: { label: "Core Switch", category: "infrastructure", color: "#1d4ed8" },
-  distribution_switch: { label: "Dist Switch", category: "infrastructure", color: "#2563eb" },
-  access_switch: { label: "Access Switch", category: "infrastructure", color: "#60a5fa" },
-  router: { label: "Router", category: "infrastructure", color: "#8b5cf6" },
-  wan_edge: { label: "WAN Edge", category: "edge", color: "#7c3aed" },
-  gateway: { label: "Gateway", category: "edge", color: "#a78bfa" },
-  firewall: { label: "Firewall", category: "infrastructure", color: "#ef4444" },
-  controller: { label: "Controller", category: "infrastructure", color: "#f59e0b" },
+  site: { label: "Site", category: "core_network", color: "#6366f1" },
+  switch: { label: "Switch", category: "core_network", color: "#3b82f6" },
+  core_switch: { label: "Core Switch", category: "core_network", color: "#1d4ed8" },
+  distribution_switch: { label: "Dist Switch", category: "core_network", color: "#2563eb" },
+  access_switch: { label: "Access Switch", category: "core_network", color: "#60a5fa" },
+  router: { label: "Router", category: "core_network", color: "#8b5cf6" },
+  wan_edge: { label: "WAN Edge", category: "edge_security", color: "#7c3aed" },
+  gateway: { label: "Gateway", category: "edge_security", color: "#a78bfa" },
+  firewall: { label: "Firewall", category: "edge_security", color: "#ef4444" },
+  controller: { label: "Controller", category: "core_network", color: "#f59e0b" },
   ap: { label: "AP", category: "wireless", color: "#10b981" },
   access_point: { label: "Access Point", category: "wireless", color: "#34d399" },
   client: { label: "Client", category: "leaf", color: "#6b7280" },

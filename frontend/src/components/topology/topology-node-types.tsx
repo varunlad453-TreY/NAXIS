@@ -25,6 +25,7 @@ import {
 
 import { HEALTH_STATUS_META, NODE_TYPE_META } from "@/types/topology";
 import type { GraphNodeData } from "./topology-graph-model";
+import { CollapsedGroupNode } from "./collapsed-group-node";
 
 // Lucide icon component type
 type IconComponent = React.ComponentType<{ className?: string; style?: React.CSSProperties; strokeWidth?: string | number }>;
@@ -297,79 +298,37 @@ const HUB_WIDTH = 320;
 const HUB_HEIGHT = 110;
 
 function RegionalHubNodeComponent({ data, selected }: NodeProps<GraphNodeData>) {
-  const {
-    label,
-    healthStatus,
-    childCount,
-    isSelected,
-  } = data;
-
+  const { label, healthStatus, childCount, isSelected } = data;
   const topoNode = data.topoNode as any;
   const criticalCount = topoNode?.critical_count ?? 0;
   const warningCount = topoNode?.warning_count ?? 0;
-  const deviceCount = topoNode?.device_count ?? (childCount ? childCount * 12 : 0);
-
+  const deviceCount = topoNode?.device_count ?? 0;
   const hColor = getHealthDotColor(healthStatus);
-  const isHealthy = criticalCount === 0 && warningCount === 0;
+  const degraded = criticalCount + warningCount;
 
   return (
     <div
       className={[
-        "relative cursor-pointer transition-all overflow-hidden",
-        "rounded-xl border-2 bg-gradient-to-br from-indigo-950/40 via-surface/95 to-surface",
-        selected || isSelected ? "ring-2 ring-primary/60 border-primary" : "border-indigo-500/40 hover:border-indigo-400/70",
-        "hover:shadow-lg hover:shadow-indigo-950/30",
+        "relative cursor-pointer overflow-hidden rounded-sm border bg-slate-900",
+        selected || isSelected ? "border-indigo-400" : "border-slate-700 hover:border-slate-500",
       ].join(" ")}
-      style={{
-        width: HUB_WIDTH,
-        height: HUB_HEIGHT,
-      }}
+      style={{ width: HUB_WIDTH, height: HUB_HEIGHT }}
     >
-      <Handle type="target" position={Position.Top} className="!w-2.5 !h-2.5 !border-indigo-500 !bg-indigo-900" />
-      <Handle type="source" position={Position.Bottom} className="!w-2.5 !h-2.5 !border-indigo-500 !bg-indigo-900" />
+      <Handle type="target" position={Position.Top} className="!w-2 !h-2 !border-slate-600 !bg-slate-800" />
+      <Handle type="source" position={Position.Bottom} className="!w-2 !h-2 !border-slate-600 !bg-slate-800" />
 
-      <div className="flex flex-col justify-between h-full p-3.5">
-        {/* Header */}
-        <div className="flex items-center justify-between gap-2">
-          <div className="flex items-center gap-2.5 min-w-0">
-            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-indigo-500/20 text-indigo-400 border border-indigo-500/30">
-              <Globe className="h-5 w-5" strokeWidth={2} />
-            </div>
-            <div className="min-w-0 flex-1">
-              <div className="truncate text-[13px] font-bold tracking-tight text-foreground">
-                {label}
-              </div>
-              <div className="text-[10px] font-medium text-foreground-subtle">
-                Regional Network Hub
-              </div>
-            </div>
+      <div className="flex flex-col justify-between h-full p-3">
+        <div className="flex items-center gap-2 min-w-0">
+          <Globe className="h-4 w-4 shrink-0 text-slate-500" />
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-xs font-bold text-white">{label}</div>
+            <div className="text-[10px] text-slate-500">{childCount ?? 0} sites · {deviceCount} devices</div>
           </div>
-
-          <span
-            className={[
-              "flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold shrink-0 border",
-              isHealthy
-                ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/30"
-                : "bg-rose-500/10 text-rose-400 border-rose-500/30 animate-pulse",
-            ].join(" ")}
-          >
-            <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: hColor }} />
-            {isHealthy ? "Healthy" : `${criticalCount + warningCount} Degraded`}
-          </span>
+          <span className="h-2 w-2 rounded-full shrink-0" style={{ backgroundColor: hColor }} />
         </div>
-
-        {/* Footer stats */}
-        <div className="flex items-center justify-between border-t border-indigo-500/20 pt-2 text-[11px]">
-          <div className="flex items-center gap-3 text-foreground-muted">
-            <span className="font-semibold text-foreground">{childCount ?? 0} <span className="font-normal text-foreground-subtle">Sites</span></span>
-            <span className="text-border">•</span>
-            <span className="font-semibold text-foreground">{deviceCount} <span className="font-normal text-foreground-subtle">Devices</span></span>
-          </div>
-
-          <span className="text-[10px] font-medium text-indigo-400 flex items-center gap-0.5 hover:text-indigo-300">
-            Explore →
-          </span>
-        </div>
+        {degraded > 0 && (
+          <div className="text-[10px] text-rose-400">{degraded} degraded</div>
+        )}
       </div>
     </div>
   );
@@ -384,33 +343,18 @@ const BANNER_HEIGHT = 130;
 
 function StatusBannerNodeComponent({ data }: NodeProps<GraphNodeData>) {
   const topoNode = data.topoNode as any;
-
   return (
     <div
-      className="relative cursor-default rounded-xl border-2 border-emerald-500/50 bg-gradient-to-br from-emerald-950/40 via-surface/95 to-surface p-4 shadow-xl shadow-emerald-950/30"
+      className="relative cursor-default rounded-sm border border-emerald-800 bg-slate-900 p-3"
       style={{ width: BANNER_WIDTH, height: BANNER_HEIGHT }}
     >
-      <div className="flex items-start gap-4">
-        <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/40">
-          <Shield className="h-7 w-7" strokeWidth={2} />
-        </div>
-        <div className="space-y-1.5">
-          <div className="flex items-center gap-2">
-            <h3 className="text-sm font-bold text-emerald-300">
-              {topoNode?.name || "All 153 Sites Operating Normally"}
-            </h3>
-            <span className="rounded-full bg-emerald-500/20 px-2 py-0.5 text-[10px] font-bold text-emerald-400 border border-emerald-500/30">
-              100% Operational
-            </span>
-          </div>
-          <p className="text-xs text-foreground-muted leading-relaxed">
-            0 Active Network Outages · 0 Hardware Degradations · 1,880 APs Healthy.
-          </p>
-          <div className="pt-1 text-[11px] font-medium text-foreground-subtle">
-            Switch to <span className="text-indigo-400 font-semibold">Regional Hubs</span> or <span className="text-foreground font-semibold">All Sites</span> to explore layout.
-          </div>
-        </div>
+      <div className="flex items-center gap-2">
+        <Shield className="h-4 w-4 text-emerald-500" />
+        <span className="text-xs font-bold text-emerald-400">{topoNode?.name || "All sites operational"}</span>
       </div>
+      <p className="mt-1 text-[10px] text-slate-500">
+        {topoNode?.health_label || "Zero active alerts"}
+      </p>
     </div>
   );
 }
@@ -425,6 +369,7 @@ export const topologyNodeTypes = {
   siteGroup: memo(SiteGroupNode),
   regionalHub: memo(RegionalHubNodeComponent),
   statusBanner: memo(StatusBannerNodeComponent),
+  collapsedGroup: CollapsedGroupNode,
 };
 
 export { TopologyNodeComponent, LeafNodeComponent, SiteGroupNode, RegionalHubNodeComponent, StatusBannerNodeComponent };

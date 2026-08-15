@@ -328,7 +328,31 @@ In order of precedence:
 
 ## Layout Performance
 
-**Dagre is only used for single-site internal graphs**, where it processes ~20-50 nodes with real edges via a Web Worker (~10ms). The All Sites table has zero layout cost (native table). Regional Hubs use fixed grid layout (no dagre).
+**Dagre is only used for single-site internal graphs**, where it processes ~20-50 nodes with real edges via a Web Worker (~10ms). The All Sites table has zero layout cost (native table). Regional Hubs use fixed grid layout (no dagre). For large sites (≥50 devices, `AGGREGATED_VIEW_THRESHOLD`), the default view is the Host Map — a CSS grid with no layout cost at all.
+
+## Large-Site Readability (≥50 devices)
+
+A flat 155-node graph carries no information density — edges become noise. Large sites get an impact-first system instead, driven by pure logic in `frontend/src/lib/large-site-utils.ts`:
+
+### View modes (switcher above the graph)
+
+| Mode | What it renders | When to use |
+|------|-----------------|-------------|
+| **Impact map** (default) | `host-map-view.tsx` — tile grid grouped by category, tiles colored by health, sorted critical-first. No edges. Health filter chips (Alerting / Critical / Warning / All) + text filter. Default filter: **Alerting**. | Instant severity readout |
+| **Clusters** | `aggregated-view.tsx` — category cluster cards. Cards are ordered pain-first (most critical devices lead) and headline the **critical count**, not the total, plus a "worst: `<device>`" line. | Category-level triage |
+| **Device graph** | Layered dagre graph, but never all 155 nodes. Default scope is **Alerting** — alerting devices plus their upstream ancestors (`computeAlertScope`), so ~35 alerting nodes render as ~40 readable nodes with context. | Investigating where pain sits |
+
+### Worst offenders strip
+
+`worst-offenders-strip.tsx` sits above the graph on every single-site view: top 8 alerting devices ranked critical-first, then by downstream blast radius (`computeDownstreamCounts` — BFS over child edges, seed excluded). Each card shows `→ N affected` and opens the device's context graph on click.
+
+### Collapse-by-parent (Device graph · All scope)
+
+`collapseLeafSiblings` bundles leaf siblings (rank ≥ 5: APs, clients, endpoints) under a shared parent into a `collapsedGroup` badge node when ≥4 share a parent: "▸ 24 APs · 3 crit · worst: AP-FC06". Clicking the badge expands just that branch (per-group `expandedGroups` state). Edges are remapped/deduped via `remapEdgesForCollapsedGroups`; group nodes inherit the leaf rank so rank-toggle chips still work. A healthy large site in Alerting scope falls through to this collapsed full view automatically.
+
+### Edge direction convention
+
+`edge.src_id` = child/downstream, `edge.dst_id` = parent/upstream — the convention all of the above (ancestors, blast counts, collapsing) relies on.
 
 ## Device Type Color Scheme
 

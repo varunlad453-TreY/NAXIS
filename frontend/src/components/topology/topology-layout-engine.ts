@@ -131,63 +131,7 @@ export function buildHierarchicalLayout(
   }
 
   // Build GraphEdges
-  const graphEdges: GraphEdge[] = [];
-  for (const edge of topologyEdges) {
-    if (!nodeMap.has(edge.src_id) || !nodeMap.has(edge.dst_id)) continue;
-
-    // Conservative health from endpoints
-    const srcNode = nodeMap.get(edge.src_id)!;
-    const dstNode = nodeMap.get(edge.dst_id)!;
-    let linkStatus: "healthy" | "degraded" | "down" | "unknown" = "unknown";
-    if (srcNode.health_status === "critical" || dstNode.health_status === "critical") {
-      linkStatus = "down";
-    } else if (srcNode.health_status === "warning" || dstNode.health_status === "warning") {
-      linkStatus = "degraded";
-    } else if (srcNode.health_status === "healthy" && dstNode.health_status === "healthy") {
-      linkStatus = "healthy";
-    }
-
-    const isHighlighted = highlightSet.has(edge.src_id) && highlightSet.has(edge.dst_id);
-
-    graphEdges.push({
-      id: `${edge.src_id}->${edge.dst_id}`,
-      source: edge.dst_id, // visual direction: parent → child (top to bottom)
-      target: edge.src_id,
-      type: "topologyEdge",
-      data: {
-        topoEdge: edge,
-        edgeType: edge.edge_type,
-        linkStatus,
-        isHighlighted,
-        isDimmed: false,
-        isPathTrace: false,
-      },
-      markerEnd: {
-        type: MarkerType.ArrowClosed,
-        color: linkStatus === "down" ? "#ef4444" : linkStatus === "degraded" ? "#eab308" : "#9ca3af",
-        width: 8,
-        height: 8,
-      },
-      style: {
-        stroke:
-          linkStatus === "down"
-            ? "#ef4444"
-            : linkStatus === "degraded"
-            ? "#eab308"
-            : isHighlighted
-            ? "#3b82f6"
-            : "#9ca3af",
-        strokeWidth: isHighlighted ? 2.5 : linkStatus === "down" ? 2 : 1.5,
-        strokeDasharray:
-          edge.edge_type === "logical" || edge.edge_type === "wan_link" || linkStatus === "unknown"
-            ? "4 4"
-            : linkStatus === "down"
-            ? "6 3"
-            : undefined,
-        opacity: 1,
-      },
-    });
-  }
+  const graphEdges: GraphEdge[] = buildGraphEdges(topologyEdges, nodeMap, highlightSet);
 
   return { nodes: graphNodes, edges: graphEdges };
 }
@@ -241,14 +185,18 @@ export function buildReadableHierarchicalLayout(
   options: {
     rankdir?: "TB" | "LR";
     highlightSet?: Set<string>;
+    collapsedRanks?: Set<number>;
   } = {}
 ): { nodes: GraphNode[]; edges: GraphEdge[] } {
-  const { rankdir = "TB", highlightSet = new Set() } = options;
-  const nodeMap = new Map(topologyNodes.map((n) => [n.node_id, n]));
+  const { rankdir = "TB", highlightSet = new Set(), collapsedRanks = new Set() } = options;
 
-  if (topologyNodes.length === 0) return { nodes: [], edges: [] };
+  // Filter out collapsed-rank nodes
+  const visibleNodes = topologyNodes.filter((n) => !collapsedRanks.has(getNodeRank(n.node_type)));
+  const nodeMap = new Map(visibleNodes.map((n) => [n.node_id, n]));
 
-  const rankGroups = groupNodesByRank(topologyNodes);
+  if (visibleNodes.length === 0) return { nodes: [], edges: [] };
+
+  const rankGroups = groupNodesByRank(visibleNodes);
   const sortedRanks = Array.from(rankGroups.keys()).sort((a, b) => a - b);
 
   // Build adjacency: edges where current node is source (child → parent in data model)
@@ -265,13 +213,25 @@ export function buildReadableHierarchicalLayout(
   const marginX = SITE_MARGINX;
   const marginY = SITE_MARGINY;
 
+  // Adaptive density: wrap into sub-rows if a rank is too wide for the viewport
+  const MAX_RANK_PX = 1400;
+  const crossMargin = isHorizontal ? marginY * 2 : marginX * 2;
+  const maxNodesPerSubRow = Math.max(6, Math.floor((MAX_RANK_PX - crossMargin) / nodeSep));
+
   const graphNodes: GraphNode[] = [];
   const positionMap = new Map<string, { x: number; y: number }>();
+
+  let currentMain = isHorizontal ? marginX : marginY;
+  const mainStart = currentMain;
+  const crossStart = isHorizontal ? marginY : marginX;
+  const baseNodeMain = isHorizontal ? INFRA_NODE_WIDTH : INFRA_NODE_HEIGHT;
+  const subRowGap = 24;
 
   // Place nodes rank by rank
   for (let rIndex = 0; rIndex < sortedRanks.length; rIndex++) {
     const rank = sortedRanks[rIndex];
     let rankNodes = rankGroups.get(rank)!;
+    if (!rankNodes || rankNodes.length === 0) continue;
 
     // Order nodes to minimize edge crossings with previous rank
     if (rIndex > 0) {
@@ -282,137 +242,80 @@ export function buildReadableHierarchicalLayout(
       rankNodes = orderNodesInRank(rankNodes, outgoingEdges, prevPositions);
     }
 
-    const maxInRank = Math.max(
-      ...Array.from(rankGroups.values()).map((arr) => arr.length)
-    );
-    const rankWidth = maxInRank * nodeSep + marginX * 2;
+    // Wrap into sub-rows if rank is too wide
+    const subRows: TopologyNode[][] = [];
+    for (let i = 0; i < rankNodes.length; i += maxNodesPerSubRow) {
+      subRows.push(rankNodes.slice(i, i + maxNodesPerSubRow));
+    }
 
-    for (let i = 0; i < rankNodes.length; i++) {
-      const node = rankNodes[i];
-      const isSite = node.node_type === "site";
-      const isLeaf = ["client", "endpoint", "sensor", "camera", "iot", "ap", "access_point"].includes(node.node_type);
-      const width = isSite ? SITE_GROUP_WIDTH : isLeaf ? LEAF_NODE_WIDTH : INFRA_NODE_WIDTH;
-      const height = isSite ? SITE_GROUP_HEIGHT : isLeaf ? LEAF_NODE_HEIGHT : INFRA_NODE_HEIGHT;
+    // Compute cross-axis size for centering (based on widest sub-row)
+    const maxSubRowNodes = Math.max(...subRows.map((r) => r.length), 1);
+    const rankCrossSpan = maxSubRowNodes * nodeSep;
+    const rankCrossSize = rankCrossSpan + crossMargin;
 
-      // Spread evenly within the rank, centered
-      const span = rankNodes.length * nodeSep;
-      const offset = (rankWidth - span) / 2 + i * nodeSep + nodeSep / 2;
+    // Place each sub-row
+    for (let sr = 0; sr < subRows.length; sr++) {
+      const row = subRows[sr];
+      const span = row.length * nodeSep;
+      const offset = (rankCrossSize - span) / 2 + nodeSep / 2;
 
-      let x: number;
-      let y: number;
-      if (isHorizontal) {
-        x = marginX + rIndex * rankSep;
-        y = marginY + offset;
-      } else {
-        x = marginX + offset;
-        y = marginY + rIndex * rankSep;
+      for (let i = 0; i < row.length; i++) {
+        const node = row[i];
+        const isSite = node.node_type === "site";
+        const isLeaf = ["client", "endpoint", "sensor", "camera", "iot", "ap", "access_point"].includes(node.node_type);
+        const width = isSite ? SITE_GROUP_WIDTH : isLeaf ? LEAF_NODE_WIDTH : INFRA_NODE_WIDTH;
+        const height = isSite ? SITE_GROUP_HEIGHT : isLeaf ? LEAF_NODE_HEIGHT : INFRA_NODE_HEIGHT;
+        const nodeMain = isHorizontal ? width : height;
+
+        const crossPos = crossStart + offset + i * nodeSep;
+        const mainPos = currentMain + sr * (nodeMain + subRowGap);
+
+        const x = isHorizontal ? mainPos : crossPos;
+        const y = isHorizontal ? crossPos : mainPos;
+
+        positionMap.set(node.node_id, { x, y });
+
+        graphNodes.push({
+          id: node.node_id,
+          type: isSite ? "siteGroup" : isLeaf ? "leafNode" : "topologyNode",
+          position: { x: x - width / 2, y: y - height / 2 },
+          data: {
+            topoNode: node,
+            label: node.name || node.node_id,
+            nodeType: node.node_type,
+            healthStatus: (node.health_status as any) || "unknown",
+            healthColor: "",
+            deviceColor: "",
+            deviceLabel: "",
+            rank: getNodeRank(node.node_type),
+            isHighlighted: highlightSet.has(node.node_id),
+            isDimmed: false,
+            isRootCause: false,
+            isSymptom: false,
+            isSelected: false,
+            isSiteGroup: isSite,
+            childCount: (node as any).device_count ?? 0,
+            crossSiteEdgeCount: 0,
+          },
+          width,
+          height,
+        });
       }
-
-      positionMap.set(node.node_id, { x, y });
-
-      graphNodes.push({
-        id: node.node_id,
-        type: isSite ? "siteGroup" : isLeaf ? "leafNode" : "topologyNode",
-        position: { x: x - width / 2, y: y - height / 2 },
-        data: {
-          topoNode: node,
-          label: node.name || node.node_id,
-          nodeType: node.node_type,
-          healthStatus: (node.health_status as any) || "unknown",
-          healthColor: "",
-          deviceColor: "",
-          deviceLabel: "",
-          rank: getNodeRank(node.node_type),
-          isHighlighted: highlightSet.has(node.node_id),
-          isDimmed: false,
-          isRootCause: false,
-          isSymptom: false,
-          isSelected: false,
-          isSiteGroup: isSite,
-          childCount: (node as any).device_count ?? 0,
-          crossSiteEdgeCount: 0,
-        },
-        width,
-        height,
-      });
-    }
-  }
-
-  // Build edges
-  const graphEdges: GraphEdge[] = [];
-  for (const edge of topologyEdges) {
-    if (!nodeMap.has(edge.src_id) || !nodeMap.has(edge.dst_id)) continue;
-
-    const srcNode = nodeMap.get(edge.src_id)!;
-    const dstNode = nodeMap.get(edge.dst_id)!;
-    let linkStatus: "healthy" | "degraded" | "down" | "unknown" = "unknown";
-    if (srcNode.health_status === "critical" || dstNode.health_status === "critical") {
-      linkStatus = "down";
-    } else if (srcNode.health_status === "warning" || dstNode.health_status === "warning") {
-      linkStatus = "degraded";
-    } else if (srcNode.health_status === "healthy" && dstNode.health_status === "healthy") {
-      linkStatus = "healthy";
     }
 
-    const isHighlighted = highlightSet.has(edge.src_id) && highlightSet.has(edge.dst_id);
-
-    graphEdges.push({
-      id: `${edge.src_id}->${edge.dst_id}`,
-      source: edge.dst_id, // visual direction: parent → child
-      target: edge.src_id,
-      type: "topologyEdge",
-      data: {
-        topoEdge: edge,
-        edgeType: edge.edge_type,
-        linkStatus,
-        isHighlighted,
-        isDimmed: false,
-        isPathTrace: false,
-      },
-      markerEnd: {
-        type: MarkerType.ArrowClosed,
-        color: linkStatus === "down" ? "#ef4444" : linkStatus === "degraded" ? "#eab308" : "#9ca3af",
-        width: 8,
-        height: 8,
-      },
-      style: {
-        stroke:
-          linkStatus === "down"
-            ? "#ef4444"
-            : linkStatus === "degraded"
-            ? "#eab308"
-            : isHighlighted
-            ? "#3b82f6"
-            : "#9ca3af",
-        strokeWidth: isHighlighted ? 2.5 : linkStatus === "down" ? 2 : 1.5,
-        strokeDasharray:
-          edge.edge_type === "logical" || edge.edge_type === "wan_link" || linkStatus === "unknown"
-            ? "4 4"
-            : linkStatus === "down"
-            ? "6 3"
-            : undefined,
-        opacity: 1,
-      },
-    });
+    // Advance main position by this rank's depth + separation
+    const rankDepth = subRows.length * baseNodeMain + (subRows.length - 1) * subRowGap;
+    currentMain += rankDepth + rankSep;
   }
+
+  // Build edges (only between visible nodes)
+  const graphEdges: GraphEdge[] = buildGraphEdges(topologyEdges, nodeMap, highlightSet);
 
   return { nodes: graphNodes, edges: graphEdges };
 }
 
-/**
- * Build a flat layout without role-based ranking (used for small graphs or
- * when hierarchy is not meaningful).
- */
-export function buildFlatLayout(
-  topologyNodes: TopologyNode[],
-  topologyEdges: TopologyEdge[],
-  highlightSet?: Set<string>
-): { nodes: GraphNode[]; edges: GraphEdge[] } {
-  return buildHierarchicalLayout(topologyNodes, topologyEdges, {
-    rankdir: "TB",
-    highlightSet,
-  });
-}
+// buildFlatLayout was a wrapper around buildHierarchicalLayout — deleted per ponytail.
+// Callers should use buildHierarchicalLayout directly with rankdir="TB".
 
 export interface RegionGroup {
   id: string;
@@ -420,47 +323,41 @@ export interface RegionGroup {
   sites: TopologyNode[];
 }
 
-export function groupSitesIntoRegions(siteNodes: TopologyNode[]): RegionGroup[] {
-  const regions: Record<string, { id: string; name: string; sites: TopologyNode[] }> = {
-    "delhi-ncr": { id: "delhi-ncr", name: "Delhi NCR Hub", sites: [] },
-    "mumbai-region": { id: "mumbai-region", name: "Mumbai & West Coast Hub", sites: [] },
-    "bengaluru-region": { id: "bengaluru-region", name: "Bengaluru Tech Region", sites: [] },
-    "pune-region": { id: "pune-region", name: "Pune & Pimpri Belt", sites: [] },
-    "north-region": { id: "north-region", name: "North India Zone", sites: [] },
-    "south-region": { id: "south-region", name: "South India Zone", sites: [] },
-    "east-region": { id: "east-region", name: "East & North East Zone", sites: [] },
-    "central-region": { id: "central-region", name: "Central India Zone", sites: [] },
-    "industrial-hub": { id: "industrial-hub", name: "Plant & Warehouse Facilities", sites: [] },
-    "other": { id: "other", name: "Regional Facilities", sites: [] },
-  };
+const REGION_RULES: { keywords: string[]; id: string; name: string }[] = [
+  { keywords: ["delhi", "gurugram", "palwal", "noida"], id: "delhi-ncr", name: "Delhi NCR Hub" },
+  { keywords: ["mumbai", "patalganga", "bhiwandi", "thane"], id: "mumbai-region", name: "Mumbai & West Coast Hub" },
+  { keywords: ["bengaluru", "bangalore"], id: "bengaluru-region", name: "Bengaluru Tech Region" },
+  { keywords: ["pune", "pimpri", "chinchwad"], id: "pune-region", name: "Pune & Pimpri Belt" },
+  { keywords: ["jaipur", "ludhiana", "chandigarh", "lucknow"], id: "north-region", name: "North India Zone" },
+  { keywords: ["chennai", "hyderabad", "vijayawada", "kochi"], id: "south-region", name: "South India Zone" },
+  { keywords: ["kolkata", "patna", "guwahati", "siliguri", "jamshedpur"], id: "east-region", name: "East & North East Zone" },
+  { keywords: ["bhopal", "indore", "raipur", "jabalpur", "nagpur"], id: "central-region", name: "Central India Zone" },
+  { keywords: ["cvbu", "pvbu", "plant", "warehouse"], id: "industrial-hub", name: "Plant & Warehouse Facilities" },
+];
 
+export function groupSitesIntoRegions(siteNodes: TopologyNode[]): RegionGroup[] {
+  const buckets = new Map<string, TopologyNode[]>();
   for (const site of siteNodes) {
     const name = (site.name || "").toLowerCase();
-
-    if (name.includes("delhi") || name.includes("gurugram") || name.includes("palwal") || name.includes("noida")) {
-      regions["delhi-ncr"].sites.push(site);
-    } else if (name.includes("mumbai") || name.includes("patalganga") || name.includes("bhiwandi") || name.includes("thane")) {
-      regions["mumbai-region"].sites.push(site);
-    } else if (name.includes("bengaluru") || name.includes("bangalore")) {
-      regions["bengaluru-region"].sites.push(site);
-    } else if (name.includes("pune") || name.includes("pimpri") || name.includes("chinchwad")) {
-      regions["pune-region"].sites.push(site);
-    } else if (name.includes("jaipur") || name.includes("ludhiana") || name.includes("chandigarh") || name.includes("lucknow")) {
-      regions["north-region"].sites.push(site);
-    } else if (name.includes("chennai") || name.includes("hyderabad") || name.includes("vijayawada") || name.includes("kochi")) {
-      regions["south-region"].sites.push(site);
-    } else if (name.includes("kolkata") || name.includes("patna") || name.includes("guwahati") || name.includes("siliguri") || name.includes("jamshedpur")) {
-      regions["east-region"].sites.push(site);
-    } else if (name.includes("bhopal") || name.includes("indore") || name.includes("raipur") || name.includes("jabalpur") || name.includes("nagpur")) {
-      regions["central-region"].sites.push(site);
-    } else if (name.includes("cvbu") || name.includes("pvbu") || name.includes("plant") || name.includes("warehouse")) {
-      regions["industrial-hub"].sites.push(site);
-    } else {
-      regions["other"].sites.push(site);
+    let matched = false;
+    for (const rule of REGION_RULES) {
+      if (rule.keywords.some((k) => name.includes(k))) {
+        const list = buckets.get(rule.id) ?? [];
+        list.push(site);
+        buckets.set(rule.id, list);
+        matched = true;
+        break;
+      }
+    }
+    if (!matched) {
+      const list = buckets.get("other") ?? [];
+      list.push(site);
+      buckets.set("other", list);
     }
   }
-
-  return Object.values(regions).filter((r) => r.sites.length > 0);
+  return REGION_RULES.filter((r) => buckets.has(r.id))
+    .map((r) => ({ id: r.id, name: r.name, sites: buckets.get(r.id)! }))
+    .concat(buckets.has("other") ? [{ id: "other", name: "Regional Facilities", sites: buckets.get("other")! }] : []);
 }
 
 /**
@@ -627,8 +524,6 @@ export function buildBackboneLayout(
   return { nodes, edges };
 }
 
-
-
 /**
  * Grouped site layout: wraps devices inside site containers.
  * Used when showing multiple sites with their internal devices collapsed/expanded.
@@ -766,4 +661,70 @@ export function buildSiteGroupedLayout(
   );
 
   return { nodes: resultNodes, edges: resultEdges };
+}
+
+// ---------------------------------------------------------------------------
+// Shared helpers
+// ---------------------------------------------------------------------------
+
+/** Build GraphEdges from topology edges with health-derived styling. */
+function buildGraphEdges(
+  topologyEdges: TopologyEdge[],
+  nodeMap: Map<string, TopologyNode>,
+  highlightSet: Set<string>,
+): GraphEdge[] {
+  const out: GraphEdge[] = [];
+  for (const edge of topologyEdges) {
+    if (!nodeMap.has(edge.src_id) || !nodeMap.has(edge.dst_id)) continue;
+    const srcNode = nodeMap.get(edge.src_id)!;
+    const dstNode = nodeMap.get(edge.dst_id)!;
+    let linkStatus: "healthy" | "degraded" | "down" | "unknown" = "unknown";
+    if (srcNode.health_status === "critical" || dstNode.health_status === "critical") {
+      linkStatus = "down";
+    } else if (srcNode.health_status === "warning" || dstNode.health_status === "warning") {
+      linkStatus = "degraded";
+    } else if (srcNode.health_status === "healthy" && dstNode.health_status === "healthy") {
+      linkStatus = "healthy";
+    }
+    const isHighlighted = highlightSet.has(edge.src_id) && highlightSet.has(edge.dst_id);
+    out.push({
+      id: `${edge.src_id}->${edge.dst_id}`,
+      source: edge.dst_id,
+      target: edge.src_id,
+      type: "topologyEdge",
+      data: {
+        topoEdge: edge,
+        edgeType: edge.edge_type,
+        linkStatus,
+        isHighlighted,
+        isDimmed: false,
+        isPathTrace: false,
+      },
+      markerEnd: {
+        type: MarkerType.ArrowClosed,
+        color: linkStatus === "down" ? "#ef4444" : linkStatus === "degraded" ? "#eab308" : "#9ca3af",
+        width: 8,
+        height: 8,
+      },
+      style: {
+        stroke:
+          linkStatus === "down"
+            ? "#ef4444"
+            : linkStatus === "degraded"
+            ? "#eab308"
+            : isHighlighted
+            ? "#3b82f6"
+            : "#9ca3af",
+        strokeWidth: isHighlighted ? 2.5 : linkStatus === "down" ? 2 : 1.5,
+        strokeDasharray:
+          edge.edge_type === "logical" || edge.edge_type === "wan_link" || linkStatus === "unknown"
+            ? "4 4"
+            : linkStatus === "down"
+            ? "6 3"
+            : undefined,
+        opacity: 1,
+      },
+    });
+  }
+  return out;
 }

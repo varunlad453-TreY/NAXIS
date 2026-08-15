@@ -7,7 +7,7 @@ import type {
 } from "@/types/topology";
 import { NODE_TYPE_META, CATEGORY_META } from "@/types/topology";
 
-export const CATEGORY_ORDER: DeviceCategory[] = ["infrastructure", "wireless", "edge", "leaf"];
+export const CATEGORY_ORDER: DeviceCategory[] = ["core_network", "edge_security", "wireless", "leaf"];
 
 export function getDeviceCategory(node: TopologyNode): DeviceCategory {
   return NODE_TYPE_META[node.node_type]?.category ?? "leaf";
@@ -48,6 +48,13 @@ export function aggregateByCategory(nodes: TopologyNode[]): DeviceCategoryCluste
     for (const n of catNodes) {
       typeCounts.set(n.node_type, (typeCounts.get(n.node_type) || 0) + 1);
     }
+    // Worst device: critical beats warning, then alphabetical for stability
+    const alerting = catNodes
+      .filter((n) => n.health_status === "critical" || n.health_status === "warning")
+      .sort((a, b) => {
+        if (a.health_status !== b.health_status) return a.health_status === "critical" ? -1 : 1;
+        return (a.name || a.node_id).localeCompare(b.name || b.node_id);
+      });
     clusters.push({
       category: cat,
       label: meta.label,
@@ -62,12 +69,21 @@ export function aggregateByCategory(nodes: TopologyNode[]): DeviceCategoryCluste
           count,
         }))
         .sort((a, b) => b.count - a.count),
+      worstDevice: alerting[0]
+        ? { node_id: alerting[0].node_id, name: alerting[0].name || alerting[0].node_id, health_status: alerting[0].health_status }
+        : undefined,
     });
   }
 
-  return clusters.sort(
-    (a, b) => CATEGORY_ORDER.indexOf(a.category) - CATEGORY_ORDER.indexOf(b.category),
-  );
+  // Pain-first ordering: most critical devices first, then most warnings,
+  // then architectural category order as the tiebreak.
+  return clusters.sort((a, b) => {
+    const crit = b.healthDistribution.critical_count - a.healthDistribution.critical_count;
+    if (crit !== 0) return crit;
+    const warn = b.healthDistribution.warning_count - a.healthDistribution.warning_count;
+    if (warn !== 0) return warn;
+    return CATEGORY_ORDER.indexOf(a.category) - CATEGORY_ORDER.indexOf(b.category);
+  });
 }
 
 export function deriveAggregatedHealth(node: TopologyNode): {

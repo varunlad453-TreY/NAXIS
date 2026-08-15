@@ -16,7 +16,7 @@ import {
 import "reactflow/dist/style.css";
 
 import type { TopologyGraphResponse, TopologyNode } from "@/types/topology";
-import { NODE_TYPE_META } from "@/types/topology";
+import { NODE_TYPE_META, AGGREGATED_VIEW_THRESHOLD } from "@/types/topology";
 import { api } from "@/lib/api";
 import { TopologySidePanel, type PanelMode } from "./topology-side-panel";
 import { topologyNodeTypes } from "./topology-node-types";
@@ -24,15 +24,22 @@ import { topologyEdgeTypes } from "./topology-edge-types";
 import { TopologyToolbar } from "./topology-toolbar";
 import { TopologyLegend } from "./topology-legend";
 import { AllSitesGrid, regionFromSite, healthColor } from "./all-sites-grid";
+import { AggregatedView } from "./aggregated-view";
+import { ContextGraph } from "./context-graph";
+import { SiteContextBanner } from "./site-context-banner";
+import { HostMapView } from "./host-map-view";
+import { WorstOffendersStrip } from "./worst-offenders-strip";
+import { computeAlertScope, collapseLeafSiblings, remapEdgesForCollapsedGroups, isAlerting } from "@/lib/large-site-utils";
 import {
   normalizeTopology,
   tracePath,
   getDownstreamImpact,
+  getNodeRank,
 } from "./topology-graph-model";
 import {
   buildHierarchicalLayout,
   buildReadableHierarchicalLayout,
-  buildFlatLayout,
+
   buildBackboneLayout,
   buildSiteGroupedLayout,
   buildRegionClustersLayout,
@@ -54,11 +61,11 @@ interface TopologyGraphV2Props {
 
 function TopologySkeleton() {
   return (
-    <div className="flex h-[640px] items-center justify-center border border-border/40 bg-surface/30">
+    <div className="flex h-[640px] items-center justify-center border border-slate-800/60 bg-slate-900/30">
       <div className="space-y-4 text-center">
-        <div className="mx-auto h-12 w-12 animate-pulse rounded-full bg-surface-elevated" />
-        <div className="mx-auto h-4 w-48 animate-pulse bg-surface-elevated" />
-        <div className="mx-auto h-3 w-32 animate-pulse bg-surface-elevated" />
+        <div className="mx-auto h-12 w-12 animate-pulse rounded-full bg-slate-800" />
+        <div className="mx-auto h-4 w-48 animate-pulse bg-slate-800" />
+        <div className="mx-auto h-3 w-32 animate-pulse bg-slate-800" />
       </div>
     </div>
   );
@@ -66,12 +73,12 @@ function TopologySkeleton() {
 
 function TopologyEmptyState({ isBackbone }: { isBackbone?: boolean }) {
   return (
-    <div className="flex h-[640px] items-center justify-center border border-dashed border-border/40">
+    <div className="flex h-[640px] items-center justify-center border border-dashed border-slate-800/60">
       <div className="max-w-md space-y-4 text-center">
-        <h3 className="text-lg font-semibold text-foreground">
+        <h3 className="text-lg font-bold text-white">
           {isBackbone ? "No sites discovered" : "No topology data available"}
         </h3>
-        <p className="text-sm text-foreground-muted">
+        <p className="text-sm text-slate-500">
           {isBackbone
             ? "Site topology will appear once the network discovery sync completes."
             : "Topology nodes and edges will appear here once the worker starts collecting network topology from Mist, VeloCloud, or SNMP pollers."}
@@ -83,10 +90,10 @@ function TopologyEmptyState({ isBackbone }: { isBackbone?: boolean }) {
 
 function TopologyErrorState({ error }: { error: Error }) {
   return (
-    <div className="flex h-[640px] items-center justify-center border border-critical/20 bg-critical/5">
+    <div className="flex h-[640px] items-center justify-center border border-rose-500/20 bg-rose-500/5">
       <div className="max-w-md space-y-3 text-center">
-        <h3 className="font-semibold text-foreground">Failed to load topology</h3>
-        <p className="text-sm text-foreground-muted">{error.message}</p>
+        <h3 className="font-bold text-white">Failed to load topology</h3>
+        <p className="text-sm text-slate-500">{error.message}</p>
       </div>
     </div>
   );
@@ -123,6 +130,57 @@ export function TopologyGraphV2({
     deviceCount: number;
   } | null>(null);
   const firstFitDone = useRef(false);
+
+  // Collapsible ranks — smart default: hide noisy leaf layers on crowded sites
+  const [collapsedRanks, setCollapsedRanks] = useState<Set<number>>(new Set());
+
+  // Large-site view mode (hostmap vs aggregated vs readable device graph)
+  const [siteViewMode, setSiteViewMode] = useState<"auto" | "hostmap" | "aggregated" | "readable">("auto");
+  const [contextNode, setContextNode] = useState<{ id: string; name: string } | null>(null);
+  // Large-site health scope: show only alerting devices + their ancestors by default
+  const [healthScope, setHealthScope] = useState<"alerting" | "all">("alerting");
+  // Collapsed leaf groups the user has expanded (per-parent leaf collapsing)
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+
+  // Reset view mode & context when navigating between sites or backbone
+  useEffect(() => {
+    setSiteViewMode("auto");
+    setContextNode(null);
+    setCollapsedRanks(new Set());
+    setHealthScope("alerting");
+    setExpandedGroups(new Set());
+  }, [activeSiteId, isBackbone]);
+
+  // Large-site detection for single-site view
+  const isLargeSite = useMemo(() => {
+    if (!activeSiteId || isBackbone) return false;
+    const nonSiteCount = data.nodes.filter((n) => n.node_type !== "site").length;
+    return nonSiteCount >= AGGREGATED_VIEW_THRESHOLD;
+  }, [data.nodes, activeSiteId, isBackbone]);
+
+  // Compute smart defaults for collapsed ranks whenever site data changes
+  useEffect(() => {
+    if (!activeSiteId || isBackbone) return;
+    const siteNodes = data.nodes.filter((n) => n.node_type !== "site");
+    const counts = new Map<number, number>();
+    for (const n of siteNodes) {
+      const rank = getNodeRank(n.node_type);
+      counts.set(rank, (counts.get(rank) ?? 0) + 1);
+    }
+    const collapsed = new Set<number>();
+    // Large sites: per-parent leaf groups handle density — never auto-collapse
+    // ranks there, or the group badges (typed as their children) get hidden.
+    if (!isLargeSite) {
+      // Always collapse noisy leaf layers so the backbone is visible first
+      if ((counts.get(6) ?? 0) > 0) collapsed.add(6); // endpoints
+      // Wireless: collapse only when very dense — but never in alerting scope,
+      // where the alerting APs ARE the content the user came for
+      if ((counts.get(5) ?? 0) > 30 && healthScope !== "alerting") {
+        collapsed.add(5);
+      }
+    }
+    setCollapsedRanks(collapsed);
+  }, [data.nodes, activeSiteId, isBackbone, isLargeSite, healthScope]);
 
   // Incident detail query
   const { data: incidentDetail, isLoading: incidentLoading } = useQuery({
@@ -170,6 +228,14 @@ export function TopologyGraphV2({
 
   const [backboneViewMode, setBackboneViewMode] = useState<"regions" | "degraded" | "all">("regions");
   const [hubRegionFilter, setHubRegionFilter] = useState<string | undefined>(undefined);
+
+  const resolvedSiteMode = useMemo(() => {
+    if (contextNode) return "context";
+    if (siteViewMode !== "auto") return siteViewMode;
+    // Large sites default to the host map — instantly readable at 155+ devices.
+    // Small sites keep the architecture graph.
+    return isLargeSite ? "hostmap" : "readable";
+  }, [siteViewMode, isLargeSite, contextNode]);
 
   // Compute graph nodes and edges using the layout engine
   const { graphNodes, graphEdges } = useMemo(() => {
@@ -267,22 +333,87 @@ export function TopologyGraphV2({
       }
     }
 
-    // Standard hierarchical or flat layout
+    // Standard hierarchical or flat layout (single site)
+    // Large sites: scope to alerting devices + ancestors, or collapse dense
+    // leaf siblings under their parent into expandable group badges.
+    let layoutNodesInput = filteredNodes;
+    let layoutEdgesInput = data.edges;
+    const collapsedGroupMap = new Map<string, import("@/lib/large-site-utils").CollapsedLeafGroup>();
+
+    if (activeSiteId && isLargeSite) {
+      let effectiveScope = healthScope;
+      if (effectiveScope === "alerting") {
+        const scope = computeAlertScope(filteredNodes, data.edges);
+        const scoped = filteredNodes.filter((n) => scope.has(n.node_id));
+        if (scoped.some((n) => n.node_type !== "site")) {
+          layoutNodesInput = scoped;
+        } else {
+          // Nothing alerting — a healthy site falls through to the collapsed full view
+          effectiveScope = "all";
+        }
+      }
+
+      if (effectiveScope === "all") {
+        const collapse = collapseLeafSiblings(filteredNodes, data.edges, {
+          minGroupSize: 4,
+          expandedGroups,
+          getRank: getNodeRank,
+        });
+        if (collapse.groups.length > 0) {
+          const parentSite = new Map(filteredNodes.map((n) => [n.node_id, n.site_id]));
+          for (const g of collapse.groups) {
+            collapsedGroupMap.set(g.id, g);
+          }
+          const pseudoNodes: TopologyNode[] = collapse.groups.map((g) => ({
+            node_id: g.id,
+            node_type: g.children[0]?.node_type ?? "ap",
+            name: `${g.children.length} devices`,
+            ip_address: "",
+            vendor: "",
+            model: "",
+            site_id: parentSite.get(g.parentId) ?? "",
+            site_name: null,
+            health_status:
+              g.health.critical_count > 0 ? "critical"
+              : g.health.warning_count > 0 ? "warning"
+              : g.health.healthy_count > 0 ? "healthy"
+              : "unknown",
+            health_label: "",
+          }));
+          layoutNodesInput = [...collapse.keptNodes, ...pseudoNodes];
+          layoutEdgesInput = remapEdgesForCollapsedGroups(
+            data.edges,
+            collapse.hiddenToGroup,
+            new Set(collapse.keptNodes.map((n) => n.node_id)),
+          );
+        }
+      }
+    }
+
+    let result: ReturnType<typeof buildHierarchicalLayout>;
     if (layoutMode === "hierarchical") {
-      const result = buildHierarchicalLayout(filteredNodes, data.edges, { highlightSet });
-      return { graphNodes: result.nodes, graphEdges: result.edges };
+      result = buildHierarchicalLayout(layoutNodesInput, layoutEdgesInput, { highlightSet });
+    } else if (layoutMode === "readable") {
+      result = buildReadableHierarchicalLayout(layoutNodesInput, layoutEdgesInput, { rankdir: "TB", highlightSet, collapsedRanks });
+    } else if (layoutMode === "readable-lr") {
+      result = buildReadableHierarchicalLayout(layoutNodesInput, layoutEdgesInput, { rankdir: "LR", highlightSet, collapsedRanks });
+    } else {
+      result = buildHierarchicalLayout(layoutNodesInput, layoutEdgesInput, { rankdir: "TB", highlightSet });
     }
-    if (layoutMode === "readable") {
-      const result = buildReadableHierarchicalLayout(filteredNodes, data.edges, { rankdir: "TB", highlightSet });
-      return { graphNodes: result.nodes, graphEdges: result.edges };
+
+    // Swap synthetic group placeholders for the collapsed-group node renderer
+    if (collapsedGroupMap.size > 0) {
+      result = {
+        nodes: result.nodes.map((n) =>
+          collapsedGroupMap.has(n.id)
+            ? { ...n, type: "collapsedGroup", data: { ...n.data, collapsedGroup: collapsedGroupMap.get(n.id) } }
+            : n,
+        ),
+        edges: result.edges,
+      };
     }
-    if (layoutMode === "readable-lr") {
-      const result = buildReadableHierarchicalLayout(filteredNodes, data.edges, { rankdir: "LR", highlightSet });
-      return { graphNodes: result.nodes, graphEdges: result.edges };
-    }
-    const result = buildFlatLayout(filteredNodes, data.edges, highlightSet);
     return { graphNodes: result.nodes, graphEdges: result.edges };
-  }, [filteredNodes, data.edges, highlightedNodeIds, isBackbone, layoutMode, activeFilters, activeSiteId, backboneViewMode]);
+  }, [filteredNodes, data.edges, data.nodes, highlightedNodeIds, isBackbone, layoutMode, activeFilters, activeSiteId, backboneViewMode, collapsedRanks, isLargeSite, healthScope, expandedGroups]);
 
 
   // Apply blast radius root cause / symptom highlighting
@@ -395,6 +526,12 @@ export function TopologyGraphV2({
 
   const handleNodeClick = useCallback(
     (_event: React.MouseEvent, node: Node) => {
+      // Collapsed leaf group → expand just that branch
+      if (node.type === "collapsedGroup") {
+        setExpandedGroups((prev) => new Set(prev).add(node.id));
+        return;
+      }
+
       // Regional hub → open hub detail panel showing all sites in the region
       if (node.type === "regionalHub") {
         const sites = node.data?.regionSites as TopologyNode[] | undefined;
@@ -460,6 +597,27 @@ export function TopologyGraphV2({
     setSelectedRegionHub(null);
   }, []);
 
+  const handleNodePathTrace = useCallback(() => {
+    setPathTraceMode(true);
+    setPathTraceStart(selectedNodeId);
+    setPathTraceEnd(null);
+  }, [selectedNodeId]);
+
+  const handleNodeBlastRadius = useCallback(() => {
+    // Trigger blast radius for the selected node by treating it as a simulated incident
+    if (selectedNodeId && rfInstance) {
+      rfInstance.fitView({ padding: 0.2, nodes: [{ id: selectedNodeId }], duration: 300 });
+    }
+  }, [selectedNodeId, rfInstance]);
+
+  const handleContextSelect = useCallback((nodeId: string, nodeName: string) => {
+    setContextNode({ id: nodeId, name: nodeName });
+  }, []);
+
+  const handleContextBack = useCallback(() => {
+    setContextNode(null);
+  }, []);
+
   const handleZoomIn = useCallback(() => {
     rfInstance?.zoomIn({ duration: 200 });
   }, [rfInstance]);
@@ -490,6 +648,15 @@ export function TopologyGraphV2({
       const next = new Set(prev);
       if (next.has(type)) next.delete(type);
       else next.add(type);
+      return next;
+    });
+  }, []);
+
+  const handleToggleRank = useCallback((rank: number) => {
+    setCollapsedRanks((prev) => {
+      const next = new Set(prev);
+      if (next.has(rank)) next.delete(rank);
+      else next.add(rank);
       return next;
     });
   }, []);
@@ -553,25 +720,134 @@ export function TopologyGraphV2({
         onBackboneViewModeChange={setBackboneViewMode}
       />
 
+      {/* Large-site view switcher + health scope */}
+      {isLargeSite && resolvedSiteMode !== "context" && (
+        <div className="flex flex-wrap items-center gap-3 text-xs border-b border-slate-800/60 pb-3">
+          <span className="text-slate-500 font-mono">
+            {data.nodes.filter((n) => n.node_type !== "site").length} devices
+          </span>
+          <div className="flex items-center gap-1">
+            {(
+              [
+                { key: "hostmap", label: "Impact map" },
+                { key: "aggregated", label: "Clusters" },
+                { key: "readable", label: "Device graph" },
+              ] as const
+            ).map((mode) => (
+              <button
+                key={mode.key}
+                onClick={() => setSiteViewMode(mode.key)}
+                className={[
+                  "px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider transition-colors border-b-2",
+                  resolvedSiteMode === mode.key
+                    ? "text-indigo-400 border-indigo-500"
+                    : "text-slate-400 hover:text-slate-200 border-transparent",
+                ].join(" ")}
+              >
+                {mode.label}
+              </button>
+            ))}
+          </div>
+
+          {resolvedSiteMode === "readable" && (
+            <div className="flex items-center gap-1 ml-2">
+              {(
+                [
+                  { key: "alerting", label: "Alerting", count: data.nodes.filter((n) => n.node_type !== "site" && isAlerting(n)).length },
+                  { key: "all", label: "All", count: data.nodes.filter((n) => n.node_type !== "site").length },
+                ] as const
+              ).map((scope) => (
+                <button
+                  key={scope.key}
+                  onClick={() => setHealthScope(scope.key)}
+                  className={[
+                    "px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider transition-colors border-b-2",
+                    healthScope === scope.key
+                      ? "text-rose-400 border-rose-500"
+                      : "text-slate-400 hover:text-slate-200 border-transparent",
+                  ].join(" ")}
+                >
+                  {scope.label}
+                  <span className="ml-1 text-[10px] opacity-70">{scope.count}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Site context banner */}
+      {!isBackbone && activeSiteId && (
+        <SiteContextBanner
+          siteName={siteName}
+          nodes={data.nodes}
+          totalDevices={data.nodes.filter((n) => n.node_type !== "site").length}
+        />
+      )}
 
       {/* Path trace instructions */}
       {pathTraceMode && (
-        <div className="flex items-center gap-3 rounded-md border border-primary/30 bg-primary/5 px-3 py-2 text-xs text-primary">
-          <span className="font-medium">Path Trace:</span>
+        <div className="flex items-center gap-2 text-xs text-indigo-400">
+          <span className="font-bold">Path trace:</span>
           {!pathTraceStart ? (
-            <span>Click a source device</span>
+            <span className="text-slate-500">Click a source device</span>
           ) : !pathTraceEnd ? (
-            <span>Click a destination device</span>
+            <span className="text-slate-500">Click a destination device</span>
           ) : (
-            <span>Tracing path… Click any device to reset</span>
+            <span className="text-slate-500">Tracing path… click any device to reset</span>
           )}
           <button
             onClick={() => { setPathTraceMode(false); setPathTraceStart(null); setPathTraceEnd(null); }}
-            className="ml-auto rounded p-1 hover:bg-primary/10"
+            className="ml-auto text-[10px] text-slate-500 hover:text-slate-300"
           >
-            <span className="text-[10px] font-medium">Cancel</span>
+            Cancel
           </button>
         </div>
+      )}
+
+      {/* Rank toggle chips for site internal readable view */}
+      {!isBackbone && activeSiteId && resolvedSiteMode === "readable" && (
+        <div className="flex flex-wrap items-center gap-3 text-xs">
+          {[
+            { rank: 0, label: "Internet" },
+            { rank: 1, label: "Edge" },
+            { rank: 2, label: "Core" },
+            { rank: 3, label: "Distribution" },
+            { rank: 4, label: "Access" },
+            { rank: 5, label: "Wireless" },
+            { rank: 6, label: "Endpoints" },
+          ].map(({ rank, label }) => {
+            const count = data.nodes.filter((n) => getNodeRank(n.node_type) === rank && n.node_type !== "site").length;
+            if (count === 0) return null;
+            const collapsed = collapsedRanks.has(rank);
+            return (
+              <button
+                key={rank}
+                onClick={() => handleToggleRank(rank)}
+                className={[
+                  "inline-flex items-center gap-1 text-[11px] transition-colors",
+                  collapsed
+                    ? "text-slate-700 line-through"
+                    : "text-slate-400 hover:text-slate-200",
+                ].join(" ")}
+                title={collapsed ? `Show ${label}` : `Hide ${label}`}
+              >
+                <span className={collapsed ? "opacity-50" : ""}>{label}</span>
+                <span className="text-[10px] text-slate-600 font-mono">{count}</span>
+                {collapsed && <span className="text-[10px] text-slate-600">▶</span>}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Worst offenders — instant actionable readout for any single site */}
+      {!isBackbone && activeSiteId && resolvedSiteMode !== "context" && (
+        <WorstOffendersStrip
+          nodes={data.nodes}
+          edges={data.edges}
+          onSelect={handleContextSelect}
+        />
       )}
 
       {/* All-Sites grid view — replaces canvas when mode is "all" */}
@@ -580,6 +856,25 @@ export function TopologyGraphV2({
           sites={data.nodes.filter((n) => n.node_type === "site")}
           onSiteClick={onSiteSelect}
           defaultRegion={hubRegionFilter}
+        />
+      ) : resolvedSiteMode === "hostmap" ? (
+        <HostMapView
+          data={data}
+          onContextSelect={handleContextSelect}
+        />
+      ) : resolvedSiteMode === "aggregated" ? (
+        <AggregatedView
+          data={data}
+          onContextSelect={handleContextSelect}
+          onFlatView={() => { setSiteViewMode("readable"); setHealthScope("all"); }}
+        />
+      ) : resolvedSiteMode === "context" && contextNode ? (
+        <ContextGraph
+          nodeId={contextNode.id}
+          nodeName={contextNode.name}
+          onBack={handleContextBack}
+          onNodeClick={handleContextSelect}
+          allNodeIds={data.nodes.map((n) => n.node_id)}
         />
       ) : (
         /* Graph canvas */
@@ -596,23 +891,23 @@ export function TopologyGraphV2({
             onlyRenderVisibleElements
             attributionPosition="bottom-left"
             connectionLineType={ConnectionLineType.SmoothStep}
-            minZoom={0.05}
+            minZoom={activeSiteId ? 0.25 : 0.05}
             maxZoom={4}
             deleteKeyCode={null}
             multiSelectionKeyCode={["Shift", "Control"]}
-            className="border border-border/40 bg-surface/20 rounded-lg"
+            className="bg-slate-950"
             defaultEdgeOptions={{
               type: "topologyEdge",
               style: { stroke: "#9ca3af", strokeWidth: 1.5 },
             }}
           >
-            <Background color="hsl(var(--border) / 0.25)" gap={24} size={1} />
+            <Background color="rgba(51,65,85,0.2)" gap={24} size={1} />
             <Controls
-              className="!rounded-lg !border-border/60 !bg-surface !shadow-surface"
+              className="!bg-slate-900 !border-slate-800"
               showInteractive={false}
             />
             <MiniMap
-              className="!rounded-lg !border-border/60 !bg-surface"
+              className="!bg-slate-900 !border-slate-800"
               nodeColor={(node) => {
                 const color = (node.data as any)?.deviceColor ?? "#6b7280";
                 const health = (node.data as any)?.healthStatus;
@@ -621,7 +916,7 @@ export function TopologyGraphV2({
                 return color;
               }}
               maskColor="rgba(0,0,0,0.05)"
-              style={{ width: 160, height: 100 }}
+              style={{ width: 140, height: 90 }}
             />
             <Panel position="bottom-left" className="!mb-14 !ml-3 z-30 pointer-events-auto">
               <TopologyLegend visible={legendVisible} onClose={() => setLegendVisible(false)} />
@@ -637,11 +932,13 @@ export function TopologyGraphV2({
             onClose={handlePanelClose}
             incidentLoading={incidentLoading}
             nodeLoading={nodeLoading}
+            onNodePathTrace={handleNodePathTrace}
+            onNodeBlastRadius={handleNodeBlastRadius}
           />
 
           {/* Region Hub detail panel */}
           {selectedRegionHub && (
-            <div className="absolute right-0 top-0 h-full w-[380px] bg-slate-950 border-l border-slate-800/60 flex flex-col z-40 shadow-2xl">
+            <div className="absolute right-0 top-0 h-full w-[380px] bg-slate-950 border-l border-slate-800 flex flex-col z-40">
               {/* Header */}
               <div className="shrink-0 px-5 py-4 border-b border-slate-800/60">
                 <div className="flex items-start justify-between gap-3">
