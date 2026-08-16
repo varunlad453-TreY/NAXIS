@@ -43,8 +43,11 @@ describe("WorstOffendersStrip", () => {
 
     // sw1 is critical AND has 3 downstream → ranked first
     const first = screen.getByTestId("offender-sw1");
-    expect(first).toHaveTextContent("Core Switch");
+    expect(first).toHaveTextContent("Switch");
     expect(first).toHaveTextContent("→ 3 affected");
+
+    // Click expand button to view remaining offenders
+    fireEvent.click(screen.getByText(/\+2 more/));
 
     expect(screen.getByTestId("offender-ap1")).toBeInTheDocument();
     expect(screen.getByTestId("offender-ap2")).toBeInTheDocument();

@@ -688,9 +688,12 @@ export function TopologySiteShell({
         </div>
       )}
 
-      {/* Rank toggle chips — readable view only */}
+      {/* Rank toggle filters — cardless inline metadata with dot separators */}
       {resolvedSiteMode === "readable" && (
-        <div className="flex flex-wrap items-center gap-3 text-xs">
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-500 py-1">
+          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mr-1">
+            Filter Layers:
+          </span>
           {[
             { rank: 0, label: "Internet" },
             { rank: 1, label: "Edge" },
@@ -699,26 +702,27 @@ export function TopologySiteShell({
             { rank: 4, label: "Access" },
             { rank: 5, label: "Wireless" },
             { rank: 6, label: "Endpoints" },
-          ].map(({ rank, label }) => {
+          ].map(({ rank, label }, i) => {
             const count = data.nodes.filter(
               (n) => getNodeRank(n.node_type) === rank && n.node_type !== "site",
             ).length;
             if (count === 0) return null;
             const collapsed = collapsedRanks.has(rank);
             return (
-              <button
-                key={rank}
-                onClick={() => handleToggleRank(rank)}
-                className={[
-                  "inline-flex items-center gap-1 text-[11px] transition-colors",
-                  collapsed ? "text-slate-700 line-through" : "text-slate-400 hover:text-slate-200",
-                ].join(" ")}
-                title={collapsed ? `Show ${label}` : `Hide ${label}`}
-              >
-                <span className={collapsed ? "opacity-50" : ""}>{label}</span>
-                <span className="text-[10px] text-slate-600 font-mono">{count}</span>
-                {collapsed && <span className="text-[10px] text-slate-600">▶</span>}
-              </button>
+              <span key={rank} className="inline-flex items-center gap-1.5">
+                {i > 0 && <span className="text-slate-700">·</span>}
+                <button
+                  onClick={() => handleToggleRank(rank)}
+                  className={[
+                    "inline-flex items-center gap-1 text-[11px] transition-colors cursor-pointer",
+                    collapsed ? "text-slate-700 line-through" : "text-slate-300 hover:text-white font-medium",
+                  ].join(" ")}
+                  title={collapsed ? `Show ${label}` : `Hide ${label}`}
+                >
+                  <span className={collapsed ? "opacity-50" : ""}>{label}</span>
+                  <span className="text-[10px] text-slate-500 font-mono">({count})</span>
+                </button>
+              </span>
             );
           })}
         </div>

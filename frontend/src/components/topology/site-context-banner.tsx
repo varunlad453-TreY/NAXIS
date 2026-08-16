@@ -45,8 +45,10 @@ export function SiteContextBanner({ nodes }: SiteContextBannerProps) {
   if (!alertText) return null;
 
   return (
-    <div className="py-1">
-      <p className="text-xs font-semibold text-rose-400">{alertText}</p>
+    <div className="relative border-l-2 border-rose-500 pl-3 py-1 my-2" data-testid="site-context-banner">
+      <p className="text-xs font-semibold tracking-tight text-rose-400">
+        {alertText}
+      </p>
     </div>
   );
 }
