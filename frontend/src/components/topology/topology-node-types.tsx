@@ -96,8 +96,8 @@ function StandardNodeCard({ data, selected }: NodeProps<GraphNodeData>) {
   const hMeta = HEALTH_STATUS_META[healthStatus] ?? HEALTH_STATUS_META.unknown;
   const Icon = getDeviceIcon(nodeType);
 
-  const dimmed = isDimmed && !isHighlighted && !isSelected && !selected;
-  const isFocus = isHighlighted || isSelected || selected;
+  const dimmed = isDimmed && !isHighlighted && !isSelected;
+  const isFocus = isHighlighted || isSelected;
   const isAlerting = healthStatus === "critical" || healthStatus === "warning";
   const activeColor = isRootCause
     ? "#ef4444"

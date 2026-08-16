@@ -335,6 +335,15 @@ export function TopologySiteShell({
   }, [graphNodes, blastRadius]);
 
   const { finalNodes, finalEdges } = useMemo(() => {
+    const withSelectionNodes = blastRadiusNodes.map((n: any) => ({
+      ...n,
+      selected: n.id === selectedNodeId,
+      data: {
+        ...n.data,
+        isSelected: n.id === selectedNodeId,
+      },
+    }));
+
     if (activeBlastFocusId) {
       const normalized = normalizeTopology(filteredNodes, data.edges, {
         highlightedNodeIds: new Set(highlightedNodeIds ?? []),
@@ -344,7 +353,7 @@ export function TopologySiteShell({
       const edgeIds = impact.edgeIds;
 
       return {
-        finalNodes: blastRadiusNodes.map((n: any) => ({
+        finalNodes: withSelectionNodes.map((n: any) => ({
           ...n,
           data: {
             ...n.data,
@@ -367,7 +376,7 @@ export function TopologySiteShell({
     }
 
     if (!pathTraceMode || !pathTraceStart || !pathTraceEnd) {
-      return { finalNodes: blastRadiusNodes, finalEdges: graphEdges };
+      return { finalNodes: withSelectionNodes, finalEdges: graphEdges };
     }
 
     const normalized = normalizeTopology(filteredNodes, data.edges, {
@@ -380,7 +389,7 @@ export function TopologySiteShell({
       const nodeIds = impact.nodeIds;
       const edgeIds = impact.edgeIds;
       return {
-        finalNodes: blastRadiusNodes.map((n: any) => ({
+        finalNodes: withSelectionNodes.map((n: any) => ({
           ...n,
           data: { ...n.data, isHighlighted: nodeIds.has(n.id), isDimmed: !nodeIds.has(n.id) },
         })),
@@ -393,7 +402,7 @@ export function TopologySiteShell({
 
     const { nodeIds, edgeIds } = pathResult;
     return {
-      finalNodes: blastRadiusNodes.map((n: any) => ({
+      finalNodes: withSelectionNodes.map((n: any) => ({
         ...n,
         data: { ...n.data, isHighlighted: nodeIds.has(n.id), isDimmed: !nodeIds.has(n.id) },
       })),
@@ -402,7 +411,7 @@ export function TopologySiteShell({
         data: { ...e.data, isPathTrace: edgeIds.has(e.id), isHighlighted: edgeIds.has(e.id), isDimmed: !edgeIds.has(e.id) },
       })),
     };
-  }, [activeBlastFocusId, blastRadiusNodes, graphEdges, pathTraceMode, pathTraceStart, pathTraceEnd, filteredNodes, data.edges, highlightedNodeIds]);
+  }, [activeBlastFocusId, blastRadiusNodes, graphEdges, pathTraceMode, pathTraceStart, pathTraceEnd, filteredNodes, data.edges, highlightedNodeIds, selectedNodeId]);
 
   useEffect(() => {
     if (rfInstance && finalNodes.length > 0) {
