@@ -241,60 +241,6 @@ export function TopologyToolbar({
           )}
         </div>
 
-        {/* Filters */}
-        <div className="relative">
-          <button
-            onClick={() => setShowFilters((v) => !v)}
-            className={[
-              "inline-flex items-center gap-1 p-1 text-[11px] transition-colors",
-              activeFilters.size < allTypes.length
-                ? "text-indigo-400"
-                : "text-slate-500 hover:text-slate-300",
-            ].join(" ")}
-          >
-            <Filter className="h-3.5 w-3.5" />
-            {activeFilters.size < allTypes.length && (
-              <span className="text-[10px]">{activeFilters.size}</span>
-            )}
-          </button>
-          {showFilters && (
-            <div className="absolute right-0 top-full z-50 mt-1 w-52 overflow-hidden border border-slate-800 bg-slate-950">
-              <div className="border-b border-slate-800 px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-slate-600">
-                Device Types
-              </div>
-              <div className="max-h-64 overflow-y-auto p-2">
-                {allTypes.map((type) => {
-                  const meta = NODE_TYPE_META[type];
-                  const isActive = activeFilters.has(type);
-                  return (
-                    <button
-                      key={type}
-                      onClick={() => onToggleFilter(type)}
-                      className="flex w-full items-center gap-2 px-2 py-1.5 text-left text-xs transition-colors hover:bg-slate-900"
-                    >
-                      <span
-                        className={["h-2 w-2 shrink-0 rounded-full", isActive ? "" : "opacity-20"].join(" ")}
-                        style={{ backgroundColor: meta.color }}
-                      />
-                      <span className={isActive ? "text-slate-200" : "text-slate-600"}>
-                        {meta.label}
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-              <div className="border-t border-slate-800 px-3 py-2">
-                <button
-                  onClick={() => { allTypes.forEach(onToggleFilter); }}
-                  className="text-[10px] text-slate-500 hover:text-slate-300"
-                >
-                  Reset
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
-
         {/* Path trace */}
         <button
           onClick={onPathTrace}
