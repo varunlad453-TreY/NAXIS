@@ -174,11 +174,7 @@ function StandardNodeCard({ data, selected }: NodeProps<GraphNodeData>) {
               ← Impacted Device
             </div>
           )}
-          {isFocus && !isRootCause && !isSymptom && (
-            <div className="text-[9px] font-bold uppercase tracking-widest text-primary pt-0.5">
-              ← Focus Device
-            </div>
-          )}
+
         </div>
       </div>
       <Handle type="source" position={Position.Bottom} style={{ background: "hsl(var(--border))", border: "none" }} />
