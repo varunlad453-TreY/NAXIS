@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
 import type { TopologyNodeDetail, TopologyNode } from "@/types/topology";
 import { NODE_TYPE_META, HEALTH_STATUS_META } from "@/types/topology";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -142,7 +141,7 @@ export function NodeDetailPanel({
   onPathTrace,
   onBlastRadius,
 }: NodeDetailPanelProps) {
-  const router = useRouter();
+
 
   if (loading) {
     return (
@@ -202,14 +201,16 @@ export function NodeDetailPanel({
               )}
             </div>
           </div>
-          <button
-            onClick={() => router.push(`/topology/context/${encodeURIComponent(node.node_id)}`)}
+          <a
+            href={`/topology/context/${encodeURIComponent(node.node_id)}`}
+            target="_blank"
+            rel="noopener noreferrer"
             className="inline-flex items-center gap-1.5 rounded border border-border/60 bg-surface/80 px-2.5 py-1 text-xs font-medium text-foreground hover:bg-surface hover:border-primary/50 transition-colors cursor-pointer shrink-0"
-            title="Open Full Device Page"
+            title="Open Full Device Page in new tab"
           >
             <ExternalLink className="h-3.5 w-3.5 text-primary" />
             Full Page
-          </button>
+          </a>
         </div>
 
         {/* Health Status — clean typography, zero card box */}
