@@ -134,6 +134,10 @@ export function ClusterTopologyView({
                 attributionPosition="bottom-left"
                 minZoom={0.3}
                 maxZoom={3}
+                zoomOnScroll={false}
+                panOnScroll={false}
+                zoomOnPinch={true}
+                preventScrolling={false}
                 className="bg-surface/20"
               >
                 <Background color="hsl(var(--border) / 0.25)" gap={20} size={1} />

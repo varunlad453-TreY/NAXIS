@@ -72,222 +72,130 @@ function getHealthDotColor(status: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// Compact Infrastructure Node
+// ---------------------------------------------------------------------------
+// Context-Style Node Card (matches Screenshot 2 boxes)
 // ---------------------------------------------------------------------------
 
-const INFRA_WIDTH = 170;
-const INFRA_HEIGHT = 42;
+const CARD_WIDTH = 220;
 
-function TopologyNodeComponent({ data, selected }: NodeProps<GraphNodeData>) {
+function StandardNodeCard({ data, selected }: NodeProps<GraphNodeData>) {
   const {
     label,
     nodeType,
     healthStatus,
-    deviceColor,
-    deviceLabel,
     isHighlighted,
     isDimmed,
     isRootCause,
+    isSymptom,
     isSelected,
-  } = data;
-
-  const Icon = getDeviceIcon(nodeType);
-  const healthColor = getHealthDotColor(healthStatus);
-  const dimmed = isDimmed && !isHighlighted && !isSelected;
-
-  return (
-    <div
-      className={[
-        "group relative cursor-pointer transition-all",
-        "rounded-md border bg-surface",
-        isRootCause ? "animate-pulse" : "",
-        selected || isSelected ? "ring-2 ring-primary/50" : "",
-        "hover:shadow-md hover:border-primary/30",
-      ].join(" ")}
-      style={{
-        width: INFRA_WIDTH,
-        height: INFRA_HEIGHT,
-        borderColor: isHighlighted ? healthColor : "hsl(var(--border) / 0.5)",
-        opacity: dimmed ? 0.3 : 1,
-        boxShadow: isHighlighted
-          ? `0 0 0 2px ${healthColor}30, 0 2px 8px ${healthColor}20`
-          : undefined,
-      }}
-    >
-      <Handle type="target" position={Position.Top} className="!w-2 !h-2 !border-border !bg-border" />
-
-      <div className="flex h-full items-center gap-2 px-2.5">
-        {/* Device icon */}
-        <div
-          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-sm"
-          style={{ backgroundColor: deviceColor + "18", color: deviceColor }}
-        >
-          <Icon className="h-4 w-4" strokeWidth={2} />
-        </div>
-
-        {/* Labels */}
-        <div className="min-w-0 flex-1 overflow-hidden">
-          <div className="truncate text-[11px] font-semibold leading-tight text-foreground">
-            {label}
-          </div>
-          <div className="flex items-center gap-1.5 text-[9px] text-foreground-subtle leading-tight">
-            <span>{deviceLabel}</span>
-          </div>
-        </div>
-
-        {/* Health indicator */}
-        <div className="flex shrink-0 flex-col items-center gap-0.5">
-          <span
-            className="block h-2 w-2 rounded-full"
-            style={{
-              backgroundColor: healthColor,
-              boxShadow: healthStatus === "critical" || healthStatus === "warning"
-                ? `0 0 4px ${healthColor}`
-                : undefined,
-            }}
-            title={healthStatus}
-          />
-        </div>
-      </div>
-
-      <Handle type="source" position={Position.Bottom} className="!w-2 !h-2 !border-border !bg-border" />
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Compact Leaf Node (smaller, for clients/APs)
-// ---------------------------------------------------------------------------
-
-const LEAF_WIDTH = 150;
-const LEAF_HEIGHT = 34;
-
-function LeafNodeComponent({ data, selected }: NodeProps<GraphNodeData>) {
-  const {
-    label,
-    nodeType,
-    healthStatus,
-    deviceColor,
-    deviceLabel,
-    isHighlighted,
-    isDimmed,
-    isSelected,
-  } = data;
-
-  const Icon = getDeviceIcon(nodeType);
-  const healthColor = getHealthDotColor(healthStatus);
-  const dimmed = isDimmed && !isHighlighted && !isSelected;
-
-  return (
-    <div
-      className={[
-        "group relative cursor-pointer transition-all",
-        "rounded-md border bg-surface",
-        selected || isSelected ? "ring-2 ring-primary/50" : "",
-        "hover:shadow-md hover:border-primary/30",
-      ].join(" ")}
-      style={{
-        width: LEAF_WIDTH,
-        height: LEAF_HEIGHT,
-        borderColor: isHighlighted ? healthColor : "hsl(var(--border) / 0.4)",
-        opacity: dimmed ? 0.3 : 1,
-        boxShadow: isHighlighted
-          ? `0 0 0 2px ${healthColor}30`
-          : undefined,
-      }}
-    >
-      <Handle type="target" position={Position.Top} className="!w-1.5 !h-1.5 !border-border !bg-border" />
-
-      <div className="flex h-full items-center gap-1.5 px-2">
-        <Icon className="h-3.5 w-3.5 shrink-0" style={{ color: deviceColor }} strokeWidth={2} />
-        <div className="min-w-0 flex-1 overflow-hidden">
-          <div className="truncate text-[10px] font-medium leading-tight text-foreground">
-            {label}
-          </div>
-        </div>
-        <span
-          className="block h-1.5 w-1.5 rounded-full shrink-0"
-          style={{ backgroundColor: healthColor }}
-          title={healthStatus}
-        />
-      </div>
-
-      <Handle type="source" position={Position.Bottom} className="!w-1.5 !h-1.5 !border-border !bg-border" />
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Site Group Node
-// ---------------------------------------------------------------------------
-
-const SITE_WIDTH = 260;
-const SITE_HEIGHT = 52;
-
-function SiteGroupNode({ data, selected }: NodeProps<GraphNodeData>) {
-  const {
-    label,
-    healthStatus,
-    healthColor,
-    deviceColor,
     childCount,
-    isHighlighted,
-    isSelected,
   } = data;
 
-  const hColor = getHealthDotColor(healthStatus);
+  const topoNode = data.topoNode as any;
+  const meta = NODE_TYPE_META[nodeType] ?? { label: nodeType, color: "#6b7280" };
+  const hMeta = HEALTH_STATUS_META[healthStatus] ?? HEALTH_STATUS_META.unknown;
+  const Icon = getDeviceIcon(nodeType);
+
+  const dimmed = isDimmed && !isHighlighted && !isSelected && !selected;
+  const isFocus = isHighlighted || isSelected || selected;
+  const isAlerting = healthStatus === "critical" || healthStatus === "warning";
+  const activeColor = isRootCause
+    ? "#ef4444"
+    : isSymptom
+      ? "#f43f5e"
+      : isFocus || isAlerting
+        ? hMeta.color
+        : undefined;
+
+  const displayLabel = label || topoNode?.name || topoNode?.node_id || "Unknown";
+  const ipAddress = topoNode?.ip_address;
+  const vendorModel = [topoNode?.vendor, topoNode?.model].filter(Boolean).join(" · ");
 
   return (
-    <div
-      className={[
-        "relative cursor-pointer transition-all",
-        "rounded-lg border-2 bg-surface/60",
-        selected || isSelected ? "ring-2 ring-primary/50" : "",
-        "hover:border-primary/40",
-      ].join(" ")}
-      style={{
-        width: SITE_WIDTH,
-        height: SITE_HEIGHT,
-        borderColor: isHighlighted ? hColor : deviceColor + "40",
-        boxShadow: isHighlighted
-          ? `0 0 0 3px ${hColor}25`
-          : undefined,
-      }}
-    >
-      <Handle type="target" position={Position.Top} className="!w-2 !h-2 !border-border !bg-border" />
-      <Handle type="source" position={Position.Bottom} className="!w-2 !h-2 !border-border !bg-border" />
-
-      <div className="flex h-full items-center gap-2.5 px-3">
-        <div
-          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-white"
-          style={{ backgroundColor: deviceColor }}
-        >
-          <Server className="h-4 w-4" strokeWidth={2} />
-        </div>
-
-        <div className="min-w-0 flex-1 overflow-hidden">
-          <div className="truncate text-[12px] font-semibold leading-tight text-foreground">
-            {label}
+    <>
+      <Handle type="target" position={Position.Top} style={{ background: "hsl(var(--border))", border: "none" }} />
+      <div
+        style={{
+          width: CARD_WIDTH,
+          borderColor: activeColor ? activeColor : "hsl(var(--border) / 0.6)",
+          boxShadow: activeColor
+            ? `0 0 0 2px ${activeColor}40`
+            : "0 2px 8px rgba(0,0,0,0.3)",
+          borderWidth: activeColor ? 2 : 1,
+          opacity: dimmed ? 0.3 : 1,
+        }}
+        className={[
+          "rounded bg-surface p-3 border overflow-hidden transition-all hover:border-primary/50 cursor-pointer",
+          isRootCause ? "animate-pulse" : "",
+        ].join(" ")}
+      >
+        <div className="space-y-1.5">
+          {/* Type + health badge */}
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-1.5 min-w-0">
+              <Icon className="h-3.5 w-3.5 shrink-0" style={{ color: meta.color }} />
+              <span className="text-[10px] font-bold uppercase tracking-wider text-foreground-subtle truncate">
+                {meta.label}
+              </span>
+            </div>
+            <span
+              className="shrink-0 text-[10px] font-semibold"
+              style={{ color: isRootCause ? "#ef4444" : hMeta.color }}
+            >
+              {hMeta.label}
+            </span>
           </div>
-          <div className="flex items-center gap-1.5 text-[9px] text-foreground-subtle leading-tight">
-            <span>Site</span>
-            {childCount !== undefined && childCount > 0 && (
-              <>
-                <span>·</span>
-                <span>{childCount} devices</span>
-              </>
+
+          {/* Name */}
+          <div
+            className="text-xs font-bold text-foreground leading-tight truncate"
+            title={displayLabel}
+          >
+            {displayLabel}
+          </div>
+
+          {/* IP / Vendor / Model or child count */}
+          <div className="flex flex-wrap items-center gap-x-2 text-[10px] font-mono text-foreground-muted">
+            {ipAddress && <span>{ipAddress}</span>}
+            {vendorModel && <span>{vendorModel}</span>}
+            {!ipAddress && !vendorModel && childCount !== undefined && childCount > 0 && (
+              <span>{childCount} devices</span>
             )}
           </div>
-        </div>
 
-        <span
-          className="block h-2.5 w-2.5 rounded-full shrink-0"
-          style={{ backgroundColor: hColor }}
-          title={healthStatus}
-        />
+          {/* Status badge */}
+          {isRootCause && (
+            <div className="text-[9px] font-bold uppercase tracking-widest text-rose-500 pt-0.5">
+              ⚡ Root Cause
+            </div>
+          )}
+          {isSymptom && !isRootCause && (
+            <div className="text-[9px] font-bold uppercase tracking-widest text-rose-400 pt-0.5">
+              ← Impacted Device
+            </div>
+          )}
+          {isFocus && !isRootCause && !isSymptom && (
+            <div className="text-[9px] font-bold uppercase tracking-widest text-primary pt-0.5">
+              ← Focus Device
+            </div>
+          )}
+        </div>
       </div>
-    </div>
+      <Handle type="source" position={Position.Bottom} style={{ background: "hsl(var(--border))", border: "none" }} />
+    </>
   );
+}
+
+function TopologyNodeComponent(props: NodeProps<GraphNodeData>) {
+  return <StandardNodeCard {...props} />;
+}
+
+function LeafNodeComponent(props: NodeProps<GraphNodeData>) {
+  return <StandardNodeCard {...props} />;
+}
+
+function SiteGroupNode(props: NodeProps<GraphNodeData>) {
+  return <StandardNodeCard {...props} />;
 }
 
 // ---------------------------------------------------------------------------
@@ -359,92 +267,8 @@ function StatusBannerNodeComponent({ data }: NodeProps<GraphNodeData>) {
   );
 }
 
-// ---------------------------------------------------------------------------
-// Site View Node Cards — Bigger, readable, information-dense
-// Used in /topology/sites/[id] device graph. Not for backbone view.
-// ---------------------------------------------------------------------------
-
-const SITE_CARD_WIDTH = 220;
-const SITE_CARD_HEIGHT = 86;
-
-function SiteViewNodeCard({ data, selected }: NodeProps<GraphNodeData>) {
-  const {
-    label,
-    nodeType,
-    healthStatus,
-    isHighlighted,
-    isDimmed,
-    isRootCause,
-    isSelected,
-  } = data;
-
-  const topoNode = data.topoNode as any;
-  const Icon = getDeviceIcon(nodeType);
-  const meta = NODE_TYPE_META[nodeType] ?? { label: nodeType, color: "#6b7280" };
-  const hMeta = HEALTH_STATUS_META[healthStatus] ?? HEALTH_STATUS_META.unknown;
-  const dimmed = isDimmed && !isHighlighted && !isSelected;
-  const isAlerting = healthStatus === "critical" || healthStatus === "warning";
-
-  return (
-    <div
-      className={[
-        "group relative cursor-pointer transition-all",
-        "rounded-lg border bg-slate-900 overflow-hidden",
-        isRootCause ? "animate-pulse" : "",
-        selected || isSelected ? "ring-2 ring-indigo-400/50" : "",
-        "hover:shadow-lg hover:border-slate-600",
-      ].join(" ")}
-      style={{
-        width: SITE_CARD_WIDTH,
-        height: SITE_CARD_HEIGHT,
-        borderColor: isHighlighted ? hMeta.color : isAlerting ? hMeta.color : "rgba(51,65,85,0.6)",
-        opacity: dimmed ? 0.25 : 1,
-        boxShadow: isAlerting
-          ? `0 0 0 2px ${hMeta.color}30, 0 4px 16px ${hMeta.color}15`
-          : isHighlighted
-            ? `0 0 0 2px ${hMeta.color}25`
-            : undefined,
-      }}
-    >
-      <Handle type="target" position={Position.Top} style={{ background: "#334155", border: "1px solid #475569" }} />
-
-      {/* Health bar */}
-      <div className="h-[3px]" style={{ backgroundColor: hMeta.color }} />
-
-      <div className="px-2.5 py-2 space-y-1">
-        {/* Type + health badge row */}
-        <div className="flex items-center justify-between gap-2">
-          <div className="flex items-center gap-1.5 min-w-0">
-            <Icon className="h-3 w-3 shrink-0" style={{ color: meta.color }} />
-            <span className="text-[9px] font-bold uppercase tracking-wider text-slate-500 truncate">
-              {meta.label}
-            </span>
-          </div>
-          <span
-            className="shrink-0 text-[9px] font-semibold px-1 py-0.5 rounded-sm"
-            style={{ color: hMeta.color, backgroundColor: hMeta.bgColor }}
-          >
-            {hMeta.label}
-          </span>
-        </div>
-
-        {/* Name */}
-        <div
-          className="text-[11px] font-semibold text-white leading-tight truncate"
-          title={label}
-        >
-          {label}
-        </div>
-
-        {/* IP */}
-        {topoNode?.ip_address && (
-          <div className="font-mono text-[9px] text-slate-400">{topoNode.ip_address}</div>
-        )}
-      </div>
-
-      <Handle type="source" position={Position.Bottom} style={{ background: "#334155", border: "1px solid #475569" }} />
-    </div>
-  );
+function SiteViewNodeCard(props: NodeProps<GraphNodeData>) {
+  return <StandardNodeCard {...props} />;
 }
 
 // ---------------------------------------------------------------------------

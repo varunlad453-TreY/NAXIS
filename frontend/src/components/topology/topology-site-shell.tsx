@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { type Node, type ReactFlowInstance } from "reactflow";
 import { useRouter } from "next/navigation";
+import { Zap } from "lucide-react";
 
 import type { TopologyGraphResponse, TopologyNode } from "@/types/topology";
 import { NODE_TYPE_META, AGGREGATED_VIEW_THRESHOLD } from "@/types/topology";
@@ -134,6 +135,7 @@ export function TopologySiteShell({
   const [pathTraceMode, setPathTraceMode] = useState(false);
   const [pathTraceStart, setPathTraceStart] = useState<string | null>(null);
   const [pathTraceEnd, setPathTraceEnd] = useState<string | null>(null);
+  const [activeBlastFocusId, setActiveBlastFocusId] = useState<string | null>(null);
   const [collapsedRanks, setCollapsedRanks] = useState<Set<number>>(new Set());
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
 
@@ -333,6 +335,37 @@ export function TopologySiteShell({
   }, [graphNodes, blastRadius]);
 
   const { finalNodes, finalEdges } = useMemo(() => {
+    if (activeBlastFocusId) {
+      const normalized = normalizeTopology(filteredNodes, data.edges, {
+        highlightedNodeIds: new Set(highlightedNodeIds ?? []),
+      });
+      const impact = getDownstreamImpact(normalized, activeBlastFocusId, 5);
+      const nodeIds = impact.nodeIds;
+      const edgeIds = impact.edgeIds;
+
+      return {
+        finalNodes: blastRadiusNodes.map((n: any) => ({
+          ...n,
+          data: {
+            ...n.data,
+            isRootCause: n.id === activeBlastFocusId,
+            isSymptom: nodeIds.has(n.id) && n.id !== activeBlastFocusId,
+            isHighlighted: nodeIds.has(n.id),
+            isDimmed: !nodeIds.has(n.id),
+          },
+        })),
+        finalEdges: graphEdges.map((e: any) => ({
+          ...e,
+          data: {
+            ...e.data,
+            isPathTrace: edgeIds.has(e.id),
+            isHighlighted: edgeIds.has(e.id),
+            isDimmed: !edgeIds.has(e.id),
+          },
+        })),
+      };
+    }
+
     if (!pathTraceMode || !pathTraceStart || !pathTraceEnd) {
       return { finalNodes: blastRadiusNodes, finalEdges: graphEdges };
     }
@@ -369,7 +402,7 @@ export function TopologySiteShell({
         data: { ...e.data, isPathTrace: edgeIds.has(e.id), isHighlighted: edgeIds.has(e.id), isDimmed: !edgeIds.has(e.id) },
       })),
     };
-  }, [blastRadiusNodes, graphEdges, pathTraceMode, pathTraceStart, pathTraceEnd, filteredNodes, data.edges, highlightedNodeIds]);
+  }, [activeBlastFocusId, blastRadiusNodes, graphEdges, pathTraceMode, pathTraceStart, pathTraceEnd, filteredNodes, data.edges, highlightedNodeIds]);
 
   useEffect(() => {
     if (rfInstance && finalNodes.length > 0) {
@@ -481,16 +514,27 @@ export function TopologySiteShell({
   );
 
   const handleNodePathTrace = useCallback(() => {
-    setPathTraceMode(true);
-    setPathTraceStart(selectedNodeId);
-    setPathTraceEnd(null);
-  }, [selectedNodeId]);
+    if (!selectedNodeId) return;
+    const selectedNode = data.nodes.find((n) => n.node_id === selectedNodeId);
+    const target = selectedNode?.ip_address || selectedNodeId;
+    router.push(`/path-trace?ip=${encodeURIComponent(target)}&device_id=${encodeURIComponent(selectedNodeId)}`);
+  }, [selectedNodeId, data.nodes, router]);
 
   const handleNodeBlastRadius = useCallback(() => {
-    if (selectedNodeId && rfInstance) {
-      rfInstance.fitView({ padding: 0.2, nodes: [{ id: selectedNodeId }], duration: 300 });
+    if (!selectedNodeId) return;
+    setActiveBlastFocusId(selectedNodeId);
+  }, [selectedNodeId]);
+
+  useEffect(() => {
+    if (rfInstance && activeBlastFocusId) {
+      const normalized = normalizeTopology(filteredNodes, data.edges);
+      const impact = getDownstreamImpact(normalized, activeBlastFocusId, 5);
+      const targetNodes = Array.from(impact.nodeIds).map((id) => ({ id }));
+      if (targetNodes.length > 0) {
+        rfInstance.fitView({ padding: 0.3, nodes: targetNodes, duration: 500 });
+      }
     }
-  }, [selectedNodeId, rfInstance]);
+  }, [rfInstance, activeBlastFocusId, filteredNodes, data.edges]);
 
   if (isLoading) return <TopologySkeleton />;
   if (error) return <TopologyErrorState error={error} />;
@@ -614,6 +658,23 @@ export function TopologySiteShell({
             className="ml-auto text-[10px] text-slate-500 hover:text-slate-300"
           >
             Cancel
+          </button>
+        </div>
+      )}
+
+      {/* Blast Radius Isolation Banner */}
+      {activeBlastFocusId && (
+        <div className="flex items-center gap-3 rounded border border-rose-500/40 bg-rose-500/10 px-3.5 py-2 text-xs text-rose-300">
+          <span className="font-bold flex items-center gap-1.5">
+            <Zap className="h-3.5 w-3.5 text-rose-400 shrink-0" />
+            Blast Radius Isolation Mode:
+          </span>
+          <span className="truncate">Focusing device {activeBlastFocusId} — unrelated graph nodes dimmed by 90% opacity.</span>
+          <button
+            onClick={() => setActiveBlastFocusId(null)}
+            className="ml-auto shrink-0 rounded bg-rose-500/20 px-2.5 py-1 text-[11px] font-semibold text-rose-200 hover:bg-rose-500/30 transition-colors cursor-pointer"
+          >
+            Clear Isolation
           </button>
         </div>
       )}

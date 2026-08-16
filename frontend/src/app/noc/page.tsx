@@ -178,8 +178,8 @@ function NOCFloorplanContent() {
     try {
       const res = await fetch(`${API_BASE}/locations/aps/${ap.device_id}/optimize-rrm`, {
         method: "POST",
-      });
-      if (res.ok) {
+      }).catch(() => null);
+      if (res?.ok) {
         const data = await res.json();
         setRrmResultMsg(data.message || "RRM Channel Optimization executed successfully!");
         setRrmAuditProofsByDevice((prev) => ({

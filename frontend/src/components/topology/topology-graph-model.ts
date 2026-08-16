@@ -289,17 +289,17 @@ export function normalizeTopology(
           linkStatus === "down"
             ? "#ef4444"
             : linkStatus === "degraded"
-            ? "#eab308"
-            : isHighlighted
-            ? "#3b82f6"
-            : "#9ca3af",
+              ? "#eab308"
+              : isHighlighted
+                ? "#3b82f6"
+                : "#9ca3af",
         strokeWidth: isHighlighted ? 2.5 : linkStatus === "down" ? 2 : 1.5,
         strokeDasharray:
           te.edge_type === "logical" || te.edge_type === "wan_link" || linkStatus === "unknown"
             ? "4 4"
             : linkStatus === "down"
-            ? "6 3"
-            : undefined,
+              ? "6 3"
+              : undefined,
         opacity: isDimmed ? 0.25 : 1,
       },
     };

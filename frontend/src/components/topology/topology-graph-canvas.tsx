@@ -57,6 +57,10 @@ export function TopologyGraphCanvas({
         maxZoom={4}
         deleteKeyCode={null}
         multiSelectionKeyCode={["Shift", "Control"]}
+        zoomOnScroll={false}
+        panOnScroll={false}
+        zoomOnPinch={true}
+        preventScrolling={false}
         className="bg-slate-950"
         defaultEdgeOptions={{
           type: "topologyEdge",

@@ -10,7 +10,7 @@
  */
 
 import { useMemo, useState } from "react";
-import { ChevronDown, ChevronRight, Server, Wifi, Shield, Monitor, Search } from "lucide-react";
+import { ChevronDown, ChevronRight, Server, Wifi, Shield, Monitor, Search, CheckCircle2 } from "lucide-react";
 import type { TopologyGraphResponse, TopologyNode, DeviceCategory, HealthStatus } from "@/types/topology";
 import { HEALTH_STATUS_META, NODE_TYPE_META, CATEGORY_META } from "@/types/topology";
 import { aggregateByCategory } from "@/lib/topology-utils";
@@ -134,7 +134,7 @@ export function HostMapView({ data, onContextSelect }: HostMapViewProps) {
               data-testid={`hostmap-filter-${chip.key}`}
               onClick={() => setHealthFilter(chip.key)}
               className={[
-                "px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider transition-colors border-b-2",
+                "px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider transition-colors border-b-2 cursor-pointer",
                 healthFilter === chip.key
                   ? "text-indigo-400 border-indigo-500"
                   : "text-slate-400 hover:text-slate-200 border-transparent",
@@ -166,16 +166,38 @@ export function HostMapView({ data, onContextSelect }: HostMapViewProps) {
       {/* Category groups */}
       {clusters.map((cluster) => {
         const visible = visibleByCategory.get(cluster.category) ?? [];
-        if (visible.length === 0) return null;
-        const collapsed = collapsedCategories.has(cluster.category);
         const meta = CATEGORY_META[cluster.category];
         const hd = cluster.healthDistribution;
+        const totalCategoryNodes = cluster.nodeIds.length;
+
+        // If category has devices but none match current filter (e.g. switches are all healthy while filtering alerting)
+        if (visible.length === 0) {
+          if (totalCategoryNodes === 0) return null;
+          return (
+            <div key={cluster.category} className="py-2 border-t border-slate-800/40">
+              <button
+                onClick={() => setHealthFilter("all")}
+                className="flex items-center gap-2 text-xs text-slate-500 hover:text-slate-300 transition-colors cursor-pointer"
+              >
+                <span style={{ color: meta.color }}>{CATEGORY_ICONS[cluster.category]}</span>
+                <span className="font-semibold text-slate-400">{cluster.label}</span>
+                <span className="font-mono text-[11px]">({totalCategoryNodes} devices · {hd.healthy_count} Healthy)</span>
+                <span className="inline-flex items-center gap-1 text-[10px] text-indigo-400 underline ml-2">
+                  <CheckCircle2 className="h-3 w-3 text-emerald-500" />
+                  Show healthy infrastructure
+                </span>
+              </button>
+            </div>
+          );
+        }
+
+        const collapsed = collapsedCategories.has(cluster.category);
         return (
           <div key={cluster.category} data-testid={`hostmap-group-${cluster.category}`}>
             {/* Category header — no box, just a border-top separator */}
             <button
               onClick={() => toggleCategory(cluster.category)}
-              className="flex w-full items-center gap-2 py-2.5 text-left border-t border-slate-800/40 transition-colors hover:text-slate-300"
+              className="flex w-full items-center gap-2 py-2.5 text-left border-t border-slate-800/40 transition-colors hover:text-slate-300 cursor-pointer"
             >
               {collapsed ? (
                 <ChevronRight className="h-3.5 w-3.5 text-slate-600" />
@@ -220,20 +242,18 @@ export function HostMapView({ data, onContextSelect }: HostMapViewProps) {
                     return (
                       <tr
                         key={n.node_id}
-                        data-testid={`hostmap-tile-${n.node_id}`}
                         onClick={() => onContextSelect(n.node_id, n.name || n.node_id)}
-                        className="hover:bg-slate-900/50 cursor-pointer transition-colors group border-t border-slate-800/30"
+                        data-testid={`hostmap-row-${n.node_id}`}
+                        className="group border-b border-slate-800/20 hover:bg-slate-800/30 transition-colors cursor-pointer"
                       >
                         <td className="py-2 px-1">
                           <StatusCell status={n.health_status} />
                         </td>
-                        <td className="py-2 px-1">
-                          <span className="font-semibold text-slate-300 group-hover:text-white transition-colors">
-                            {n.name || n.node_id}
-                          </span>
+                        <td className="py-2 px-1 font-semibold text-slate-200 group-hover:text-white transition-colors">
+                          {n.name || n.node_id}
                         </td>
-                        <td className="py-2 px-1 text-slate-500">{typeLabel}</td>
-                        <td className="py-2 px-1 font-mono text-slate-500 text-[11px]">
+                        <td className="py-2 px-1 text-slate-400 font-mono text-[11px]">{typeLabel}</td>
+                        <td className="py-2 px-1 text-slate-400 font-mono text-[11px] select-all">
                           {n.ip_address || "—"}
                         </td>
                       </tr>
@@ -245,14 +265,6 @@ export function HostMapView({ data, onContextSelect }: HostMapViewProps) {
           </div>
         );
       })}
-
-      {totalVisible === 0 && (
-        <div className="py-8 text-center text-xs text-slate-600">
-          {healthFilter === "alerting"
-            ? "No alerting devices — site is healthy"
-            : "No devices match this filter"}
-        </div>
-      )}
     </div>
   );
 }

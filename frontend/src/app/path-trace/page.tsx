@@ -1,6 +1,7 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect, Suspense } from "react";
+import { useSearchParams } from "next/navigation";
 import {
   Activity,
   AlertTriangle,
@@ -17,7 +18,6 @@ import {
   Zap,
 } from "lucide-react";
 import { API_BASE } from "@/lib/api";
-
 
 interface PathHop {
   hop_index: number;
@@ -45,8 +45,20 @@ interface PathTraceData {
   traced_at: string;
 }
 
-export default function PathTracePage() {
-  const [searchMac, setSearchMac] = useState("00:11:22:33:44:55");
+function PathTraceFallback() {
+  return (
+    <div className="p-6 space-y-6 max-w-7xl mx-auto">
+      <div className="h-4 w-32 animate-pulse bg-surface/50 rounded" />
+      <div className="h-[500px] animate-pulse bg-surface/20 rounded" />
+    </div>
+  );
+}
+
+function PathTraceContent() {
+  const searchParams = useSearchParams();
+  const initialTarget = searchParams.get("ip") || searchParams.get("mac") || searchParams.get("device_id") || "00:11:22:33:44:55";
+
+  const [searchMac, setSearchMac] = useState(initialTarget);
   const [loading, setLoading] = useState(false);
   const [traceData, setTraceData] = useState<PathTraceData | null>(null);
   const [activeModalHop, setActiveModalHop] = useState<PathHop | null>(null);
@@ -74,9 +86,9 @@ export default function PathTracePage() {
     }
   };
 
-  React.useEffect(() => {
-    handleTrace("00:11:22:33:44:55");
-  }, []);
+  useEffect(() => {
+    handleTrace(initialTarget);
+  }, [initialTarget]);
 
   const runDiagnosticTest = async () => {
     if (!activeModalHop) return;
@@ -88,308 +100,262 @@ export default function PathTracePage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          target_device_id: activeModalHop.node_id,
-          test_type: diagnosticType,
-          destination_ip: activeModalHop.ip_address || "1.1.1.1",
-          interface: activeModalHop.interface_name,
+          node_id: activeModalHop.node_id,
+          target_ip: activeModalHop.ip_address || "10.0.0.1",
         }),
       }).catch(() => null);
+
       if (!res || !res.ok) {
-        const fallbackEndpoint = `http://127.0.0.1:8000/diagnostics/${diagnosticType}`;
-        res = await fetch(fallbackEndpoint, {
+        res = await fetch(`http://127.0.0.1:8000/diagnostics/${diagnosticType}`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            target_device_id: activeModalHop.node_id,
-            test_type: diagnosticType,
-            destination_ip: activeModalHop.ip_address || "1.1.1.1",
-            interface: activeModalHop.interface_name,
+            node_id: activeModalHop.node_id,
+            target_ip: activeModalHop.ip_address || "10.0.0.1",
           }),
         }).catch(() => null);
       }
 
-
       if (!res || !res.ok) {
-        const errData = res ? await res.json().catch(() => ({})) : {};
-        throw new Error(errData.detail || `Diagnostic failed (${res?.status || "network error"})`);
+        throw new Error("Diagnostic request failed");
       }
-
       const data = await res.json();
-
       setDiagOutput(data);
     } catch (err: any) {
-      setDiagOutput({ error: err.message || "Execution failed" });
+      setDiagOutput({
+        error: true,
+        message: err.message || "Execution error",
+      });
     } finally {
       setDiagRunning(false);
     }
   };
 
-  const getHopIcon = (type: string) => {
+  const renderHopIcon = (type: PathHop["node_type"]) => {
     switch (type) {
       case "client":
-        return <Laptop className="w-5 h-5 text-blue-400" />;
+        return <Laptop className="h-5 w-5 text-indigo-400" />;
       case "ap":
-        return <Wifi className="w-5 h-5 text-indigo-400" />;
+        return <Wifi className="h-5 w-5 text-emerald-400" />;
       case "switch":
-        return <Server className="w-5 h-5 text-emerald-400" />;
+        return <Server className="h-5 w-5 text-blue-400" />;
       case "sdwan":
-        return <Zap className="w-5 h-5 text-amber-400" />;
+        return <Activity className="h-5 w-5 text-violet-400" />;
       case "sase":
-        return <Shield className="w-5 h-5 text-purple-400" />;
+        return <Shield className="h-5 w-5 text-amber-400" />;
       case "internet":
-        return <Globe className="w-5 h-5 text-cyan-400" />;
+        return <Globe className="h-5 w-5 text-sky-400" />;
       default:
-        return <Activity className="w-5 h-5 text-slate-400" />;
-    }
-  };
-
-  const getHealthText = (status: string) => {
-    switch (status) {
-      case "healthy":
-        return (
-          <span className="inline-flex items-center gap-1.5 text-xs font-medium text-emerald-400">
-            <span className="w-2 h-2 rounded-full bg-emerald-400" /> Healthy
-          </span>
-        );
-      case "degraded":
-        return (
-          <span className="inline-flex items-center gap-1.5 text-xs font-medium text-amber-400">
-            <span className="w-2 h-2 rounded-full bg-amber-400" /> Degraded
-          </span>
-        );
-      case "critical":
-        return (
-          <span className="inline-flex items-center gap-1.5 text-xs font-medium text-red-400">
-            <span className="w-2 h-2 rounded-full bg-red-400" /> Critical
-          </span>
-        );
-      default:
-        return null;
+        return <Server className="h-5 w-5 text-slate-400" />;
     }
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 p-6 space-y-6">
-      {/* Top Header */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-800 pb-5">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight text-white flex items-center gap-2">
-            <Activity className="w-7 h-7 text-indigo-400" />
-            Client Path Trace & Live Diagnostics
-          </h1>
-          <p className="text-slate-400 text-sm mt-1">
-            End-to-end multi-vendor hop chain resolution from endpoint to cloud egress.
-          </p>
-        </div>
+    <div className="p-6 space-y-6 max-w-7xl mx-auto">
+      {/* Title */}
+      <div>
+        <h1 className="text-2xl font-bold tracking-tight text-foreground">Path Trace & Diagnostic Runner</h1>
+        <p className="mt-1 text-sm text-foreground-muted">
+          Real-time deterministic path tracing across LAN, WAN, and SASE per-hop network nodes.
+        </p>
+      </div>
 
-        {/* Search Bar */}
-        <div className="flex items-center gap-2">
-          <div className="relative">
-            <Search className="w-4 h-4 absolute left-3 top-3 text-slate-400" />
-            <input
-              type="text"
-              value={searchMac}
-              onChange={(e) => setSearchMac(e.target.value)}
-              placeholder="Enter Client MAC / IP / Username..."
-              className="bg-transparent border-b border-slate-800/60 pl-9 pr-4 py-2 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-indigo-500 w-72"
-            />
-          </div>
-          <button
-            onClick={() => handleTrace(searchMac)}
-            disabled={loading}
-            className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-sm font-medium text-sm transition-colors disabled:opacity-50"
-          >
-            {loading ? <RefreshCw className="w-4 h-4 animate-spin" /> : "Trace Path"}
-          </button>
+      {/* Input controls */}
+      <div className="flex flex-col sm:flex-row gap-3 items-stretch sm:items-center">
+        <div className="relative flex-1">
+          <Search className="absolute left-3 top-2.5 h-4 w-4 text-foreground-subtle" />
+          <input
+            type="text"
+            value={searchMac}
+            onChange={(e) => setSearchMac(e.target.value)}
+            placeholder="Enter Client MAC, IP Address, or Device ID..."
+            className="w-full rounded border border-border/60 bg-surface pl-9 pr-4 py-2 text-sm text-foreground placeholder:text-foreground-subtle focus:outline-none focus:border-primary"
+          />
         </div>
+        <button
+          onClick={() => handleTrace(searchMac)}
+          disabled={loading}
+          className="inline-flex items-center justify-center gap-2 rounded bg-primary px-4 py-2 text-sm font-semibold text-white transition-opacity hover:opacity-90 disabled:opacity-50 cursor-pointer"
+        >
+          {loading ? (
+            <RefreshCw className="h-4 w-4 animate-spin" />
+          ) : (
+            <Play className="h-4 w-4 fill-current" />
+          )}
+          Run Path Trace
+        </button>
       </div>
 
       {errorMessage && (
-        <div className="py-3 text-red-400 text-sm flex items-center gap-2 border-b border-red-500/20">
-          <AlertTriangle className="w-5 h-5 flex-shrink-0" />
+        <div className="rounded border border-rose-500/30 bg-rose-500/10 p-3 text-xs text-rose-400 flex items-center gap-2">
+          <AlertTriangle className="h-4 w-4 shrink-0" />
           {errorMessage}
         </div>
       )}
 
-      {/* Summary Bar */}
+      {/* Trace Visualization */}
       {traceData && (
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs border-b border-slate-800/60 pb-4">
-          <div className="flex items-center gap-2">
-            <span className="text-slate-500 uppercase font-bold tracking-wider">Client</span>
-            <span className="text-white font-semibold">{traceData.username}</span>
-            <span className="text-slate-400 font-mono">{traceData.client_mac}</span>
-            <span className="text-slate-400">{traceData.client_ip}</span>
-          </div>
-          <span className="text-slate-700">|</span>
-          <div className="flex items-center gap-2">
-            <span className="text-slate-500 uppercase font-bold tracking-wider">Site</span>
-            <span className="text-white font-semibold">{traceData.site_name}</span>
-            <span className="text-slate-400">{traceData.hops.length} hops</span>
-          </div>
-          <span className="text-slate-700">|</span>
-          <div className="flex items-center gap-2">
-            <span className="text-slate-500 uppercase font-bold tracking-wider">Status</span>
-            {traceData.first_unhealthy_hop ? (
-              <span className="inline-flex items-center gap-1.5 text-amber-400 font-semibold">
-                <span className="w-2 h-2 rounded-full bg-amber-400" /> Degraded
-              </span>
-            ) : (
-              <span className="inline-flex items-center gap-1.5 text-emerald-400 font-semibold">
-                <span className="w-2 h-2 rounded-full bg-emerald-400" /> Healthy
-              </span>
-            )}
-          </div>
-          <span className="text-slate-700">|</span>
-          <div className="flex items-center gap-2">
-            <span className="text-slate-500 uppercase font-bold tracking-wider">First Issue</span>
-            <span className="text-white font-semibold">
-              {traceData.first_unhealthy_hop ? traceData.first_unhealthy_hop.node_name : "None"}
-            </span>
-            <span className="text-slate-500 flex items-center gap-1">
-              <Clock className="w-3 h-3" /> {new Date(traceData.traced_at).toLocaleTimeString()}
-            </span>
-          </div>
-        </div>
-      )}
-
-      {/* Hop Chain Flow Diagram */}
-      {traceData && (
-        <div className="space-y-0">
-          <div className="flex items-center justify-between pb-3 border-b border-slate-800/60">
-            <h2 className="text-lg font-semibold text-white">End-to-End Network Topology Path</h2>
-            <span className="text-xs text-slate-400">Click any hop to launch live edge diagnostics</span>
+        <div className="space-y-6">
+          {/* Metadata Bar */}
+          <div className="flex flex-wrap items-center justify-between gap-4 rounded border border-border/40 bg-surface/50 p-4 text-xs">
+            <div className="flex flex-wrap items-center gap-4">
+              <div>
+                <span className="text-foreground-subtle">Target:</span>{" "}
+                <span className="font-mono font-semibold text-foreground">{traceData.client_ip || traceData.client_mac}</span>
+              </div>
+              <div>
+                <span className="text-foreground-subtle">Site:</span>{" "}
+                <span className="font-semibold text-foreground">{traceData.site_name}</span>
+              </div>
+              <div>
+                <span className="text-foreground-subtle">Hops Analyzed:</span>{" "}
+                <span className="font-semibold text-foreground">{traceData.hops.length}</span>
+              </div>
+            </div>
+            <div className="flex items-center gap-1.5 text-foreground-subtle">
+              <Clock className="h-3.5 w-3.5" />
+              <span>{new Date(traceData.traced_at).toLocaleTimeString()}</span>
+            </div>
           </div>
 
-          <div className="divide-y divide-slate-800/80">
-            {traceData.hops.map((hop) => (
-              <div
-                key={hop.node_id}
-                className="flex flex-col md:flex-row items-start md:items-center justify-between py-4 gap-4"
-              >
-                {/* Left Hop Info */}
-                <div className="flex items-center gap-4">
-                  <div className="w-8 h-8 flex items-center justify-center text-xs font-bold text-slate-400 border border-slate-800">
-                    {hop.hop_index}
-                  </div>
-                  <div className="p-1">
-                    {getHopIcon(hop.node_type)}
-                  </div>
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <span className="font-semibold text-white">{hop.node_name}</span>
-                      {hop.vendor && (
-                        <span className="text-[10px] uppercase tracking-wider font-semibold text-slate-400">
-                          {hop.vendor}
-                        </span>
-                      )}
-                    </div>
-                    <div className="text-xs text-slate-400 mt-0.5 flex flex-wrap items-center gap-3">
-                      {hop.ip_address && <span>IP: {hop.ip_address}</span>}
-                      {hop.interface_name && <span>Interface: {hop.interface_name}</span>}
-                    </div>
-                  </div>
+          {/* First Unhealthy Hop Alert */}
+          {traceData.first_unhealthy_hop && (
+            <div className="rounded border border-rose-500/40 bg-rose-500/10 p-4 text-xs text-rose-300 flex items-start gap-3">
+              <AlertTriangle className="h-5 w-5 shrink-0 text-rose-400 mt-0.5" />
+              <div>
+                <div className="font-bold text-rose-400 text-sm">
+                  First Impaired Hop Detected: {traceData.first_unhealthy_hop.node_name}
                 </div>
-
-                {/* Right Metrics & Test Trigger */}
-                <div className="flex items-center gap-6">
-                  <div className="text-right">
-                    <div className="text-xs text-slate-400">Latency / Loss</div>
-                    <div className="text-sm font-semibold text-slate-200 mt-0.5">
-                      {hop.latency_ms ? `${hop.latency_ms} ms` : "—"}{" "}
-                      {hop.packet_loss_pct !== undefined ? `(${hop.packet_loss_pct}% loss)` : ""}
-                    </div>
-                  </div>
-
-                  <div>{getHealthText(hop.health_status)}</div>
-
-                  {hop.node_type !== "client" && hop.node_type !== "internet" && (
-                    <button
-                      onClick={() => {
-                        setActiveModalHop(hop);
-                        setDiagOutput(null);
-                      }}
-                      className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/30 rounded-sm text-xs font-medium transition-colors"
-                    >
-                      <Play className="w-3.5 h-3.5" /> Run Test
-                    </button>
-                  )}
+                <div className="mt-1 text-rose-300/90">
+                  Latency: {traceData.first_unhealthy_hop.latency_ms}ms · Loss: {traceData.first_unhealthy_hop.packet_loss_pct}% · Interface: {traceData.first_unhealthy_hop.interface_name || "Trunk"}
                 </div>
               </div>
-            ))}
+            </div>
+          )}
+
+          {/* Hop Timeline Sequence */}
+          <div className="space-y-3">
+            <div className="text-xs font-semibold uppercase tracking-wider text-foreground-subtle">
+              Path Hops Sequence
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+              {traceData.hops.map((hop) => {
+                const isImpaired = hop.health_status !== "healthy";
+                return (
+                  <div
+                    key={hop.hop_index}
+                    onClick={() => setActiveModalHop(hop)}
+                    className={`group relative rounded border p-4 transition-all cursor-pointer ${
+                      isImpaired
+                        ? "border-rose-500/50 bg-rose-500/5 hover:border-rose-500"
+                        : "border-border/60 bg-surface/50 hover:border-primary/50 hover:bg-surface"
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex items-center gap-2.5">
+                        <div className="p-2 rounded bg-surface border border-border/40">
+                          {renderHopIcon(hop.node_type)}
+                        </div>
+                        <div>
+                          <div className="font-bold text-sm text-foreground group-hover:text-primary transition-colors">
+                            {hop.node_name}
+                          </div>
+                          <div className="text-xs text-foreground-muted font-mono">{hop.ip_address || "—"}</div>
+                        </div>
+                      </div>
+                      <span className="font-mono text-xs font-bold text-foreground-subtle">#{hop.hop_index}</span>
+                    </div>
+
+                    <div className="mt-3 flex items-center justify-between text-xs pt-2 border-t border-border/30">
+                      <div className="flex items-center gap-2">
+                        <span
+                          className={`h-2 w-2 rounded-full ${
+                            hop.health_status === "critical"
+                              ? "bg-rose-500"
+                              : hop.health_status === "degraded"
+                              ? "bg-amber-500"
+                              : "bg-emerald-500"
+                          }`}
+                        />
+                        <span className="capitalize text-foreground-muted">{hop.health_status}</span>
+                      </div>
+                      <div className="font-mono text-foreground-subtle">
+                        {hop.latency_ms !== undefined ? `${hop.latency_ms}ms` : "—"}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           </div>
         </div>
       )}
 
-      {/* Live Diagnostic Test Modal */}
+      {/* Hop Diagnostic Modal */}
       {activeModalHop && (
-        <div className="fixed inset-0 bg-black/70 flex items-center justify-center p-4 z-50">
-          <div className="bg-slate-950 border border-slate-800 max-w-2xl w-full p-6 space-y-5">
-            <div className="flex items-center justify-between border-b border-slate-800 pb-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4">
+          <div className="w-full max-w-md rounded-lg border border-border bg-surface p-6 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between border-b border-border/40 pb-3">
               <div>
-                <h3 className="text-lg font-bold text-white flex items-center gap-2">
-                  <Play className="w-5 h-5 text-indigo-400" />
-                  Execute Live Edge Diagnostic Test
-                </h3>
-                <p className="text-xs text-slate-400 mt-0.5">Target: {activeModalHop.node_name} ({activeModalHop.ip_address})</p>
+                <h3 className="font-bold text-base text-foreground">{activeModalHop.node_name}</h3>
+                <p className="text-xs text-foreground-muted font-mono">{activeModalHop.ip_address}</p>
               </div>
               <button
                 onClick={() => setActiveModalHop(null)}
-                className="text-slate-400 hover:text-white text-sm"
+                className="text-foreground-subtle hover:text-foreground text-sm font-semibold px-2 py-1"
               >
                 ✕
               </button>
             </div>
 
-            {/* Test Type Tabs */}
-            <div className="flex gap-4 border-b border-slate-800/60">
-              {(["ping", "traceroute", "port_stats"] as const).map((type) => (
-                <button
-                  key={type}
-                  onClick={() => setDiagnosticType(type)}
-                  className={`py-2 px-1 text-xs font-semibold uppercase tracking-wider transition-colors border-b-2 ${
-                    diagnosticType === type
-                      ? "text-indigo-400 border-indigo-500"
-                      : "text-slate-400 hover:text-slate-200 border-transparent"
-                  }`}
-                >
-                  {type.replace("_", " ")}
-                </button>
-              ))}
-            </div>
+            <div className="space-y-3">
+              <label className="text-xs font-semibold uppercase tracking-wider text-foreground-subtle block">
+                Select Diagnostic Tool
+              </label>
+              <div className="flex gap-2">
+                {(["ping", "traceroute", "port_stats"] as const).map((t) => (
+                  <button
+                    key={t}
+                    onClick={() => setDiagnosticType(t)}
+                    className={`flex-1 rounded px-3 py-1.5 text-xs font-medium capitalize transition-colors ${
+                      diagnosticType === t
+                        ? "bg-primary text-white"
+                        : "bg-surface-hover text-foreground-muted hover:text-foreground"
+                    }`}
+                  >
+                    {t.replace("_", " ")}
+                  </button>
+                ))}
+              </div>
 
-            {/* Trigger Button */}
-            <div className="flex justify-end">
               <button
                 onClick={runDiagnosticTest}
                 disabled={diagRunning}
-                className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-medium rounded-sm text-sm transition-colors disabled:opacity-50"
+                className="w-full inline-flex items-center justify-center gap-2 rounded bg-primary/90 px-4 py-2 text-xs font-semibold text-white transition-opacity hover:bg-primary disabled:opacity-50 cursor-pointer"
               >
-                {diagRunning ? <RefreshCw className="w-4 h-4 animate-spin" /> : "Run Diagnostic"}
+                {diagRunning ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
+                Run {diagnosticType.replace("_", " ").toUpperCase()} Test
               </button>
-            </div>
 
-            {/* Execution Console Output */}
-            {diagOutput && (
-              <div className="bg-slate-950 border border-slate-800 p-4 font-mono text-xs text-slate-300 overflow-x-auto max-h-60 space-y-2">
-                {diagOutput.error ? (
-                  <div className="text-red-400 flex items-center gap-2">
-                    <AlertTriangle className="w-4 h-4" /> {diagOutput.error}
-                  </div>
-                ) : (
-                  <>
-                    <div className="text-emerald-400">
-                      [SUCCESS] Diagnostic Run ID: {diagOutput.run_id} ({diagOutput.duration_ms} ms)
-                    </div>
-                    <pre className="text-slate-300">
-                      {diagOutput.results.raw_output || JSON.stringify(diagOutput.results, null, 2)}
-                    </pre>
-                  </>
-                )}
-              </div>
-            )}
+              {diagOutput && (
+                <div className="rounded border border-border/60 bg-background p-3 text-xs font-mono max-h-48 overflow-auto">
+                  <pre className="whitespace-pre-wrap text-foreground-muted">
+                    {JSON.stringify(diagOutput, null, 2)}
+                  </pre>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       )}
     </div>
+  );
+}
+
+export default function PathTracePage() {
+  return (
+    <Suspense fallback={<PathTraceFallback />}>
+      <PathTraceContent />
+    </Suspense>
   );
 }

@@ -28,7 +28,7 @@ interface ContextGraphProps {
 }
 
 // ---------------------------------------------------------------------------
-// Icon mapping (same as topology-node-types.tsx)
+// Icon mapping
 // ---------------------------------------------------------------------------
 type IconComp = React.ComponentType<{ className?: string; style?: React.CSSProperties }>;
 const TYPE_ICONS: Record<string, IconComp> = {
@@ -62,31 +62,28 @@ function ContextNodeCard({ data }: NodeProps<ContextNodeData>) {
 
   return (
     <>
-      <Handle type="target" position={Position.Top} style={{ background: "#334155", border: "1px solid #475569" }} />
+      <Handle type="target" position={Position.Top} style={{ background: "hsl(var(--border))", border: "none" }} />
       <div
         style={{
           width: 220,
-          borderColor: isFocus ? hMeta.color : meta.color,
-          boxShadow: isFocus ? `0 0 0 3px ${hMeta.color}30, 0 4px 20px ${hMeta.color}20` : "0 2px 8px rgba(0,0,0,0.4)",
+          borderColor: isFocus ? hMeta.color : "hsl(var(--border) / 0.6)",
+          boxShadow: isFocus ? `0 0 0 2px ${hMeta.color}40` : "0 2px 8px rgba(0,0,0,0.3)",
           borderWidth: isFocus ? 2 : 1,
         }}
-        className="rounded-lg bg-slate-900 border overflow-hidden"
+        className="rounded bg-surface p-3 border overflow-hidden transition-all hover:border-primary/50"
       >
-        {/* Health bar */}
-        <div className="h-[3px]" style={{ backgroundColor: hMeta.color }} />
-
-        <div className="px-3 py-2.5 space-y-1.5">
+        <div className="space-y-1.5">
           {/* Type + health badge */}
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-1.5 min-w-0">
-              <Icon className="h-3 w-3 shrink-0" style={{ color: meta.color }} />
-              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 truncate">
+              <Icon className="h-3.5 w-3.5 shrink-0" style={{ color: meta.color }} />
+              <span className="text-[10px] font-bold uppercase tracking-wider text-foreground-subtle truncate">
                 {meta.label}
               </span>
             </div>
             <span
-              className="shrink-0 text-[10px] font-semibold px-1.5 py-0.5 rounded-sm"
-              style={{ color: hMeta.color, backgroundColor: hMeta.bgColor }}
+              className="shrink-0 text-[10px] font-semibold"
+              style={{ color: hMeta.color }}
             >
               {hMeta.label}
             </span>
@@ -94,34 +91,29 @@ function ContextNodeCard({ data }: NodeProps<ContextNodeData>) {
 
           {/* Name */}
           <div
-            className="text-xs font-semibold text-white leading-tight"
-            style={{ wordBreak: "break-all" }}
+            className="text-xs font-bold text-foreground leading-tight truncate"
             title={topoNode.name || topoNode.node_id}
           >
             {topoNode.name || topoNode.node_id}
           </div>
 
-          {/* IP */}
-          {topoNode.ip_address && (
-            <div className="font-mono text-[10px] text-slate-400">{topoNode.ip_address}</div>
-          )}
-
-          {/* Vendor · Model */}
-          {(topoNode.vendor || topoNode.model) && (
-            <div className="text-[10px] text-slate-500 truncate">
-              {[topoNode.vendor, topoNode.model].filter(Boolean).join(" · ")}
-            </div>
-          )}
+          {/* IP / Vendor Model */}
+          <div className="flex flex-wrap items-center gap-x-2 text-[10px] font-mono text-foreground-muted">
+            {topoNode.ip_address && <span>{topoNode.ip_address}</span>}
+            {(topoNode.vendor || topoNode.model) && (
+              <span>{[topoNode.vendor, topoNode.model].filter(Boolean).join(" · ")}</span>
+            )}
+          </div>
 
           {/* Focus badge */}
           {isFocus && (
-            <div className="text-[9px] font-bold uppercase tracking-widest text-indigo-400 mt-0.5">
-              ← Focus device
+            <div className="text-[9px] font-bold uppercase tracking-widest text-primary pt-0.5">
+              ← Focus Device
             </div>
           )}
         </div>
       </div>
-      <Handle type="source" position={Position.Bottom} style={{ background: "#334155", border: "1px solid #475569" }} />
+      <Handle type="source" position={Position.Bottom} style={{ background: "hsl(var(--border))", border: "none" }} />
     </>
   );
 }
@@ -132,7 +124,7 @@ const CONTEXT_NODE_TYPES = { contextNode: ContextNodeCard };
 // Layout builder
 // ---------------------------------------------------------------------------
 const NODE_W = 220;
-const NODE_H = 110; // approximate rendered height
+const NODE_H = 110;
 const GAP_X = 40;
 const GAP_Y = 100;
 
@@ -164,11 +156,11 @@ function buildContextLayout(
       source: p.node_id,
       target: focusNode.node_id,
       type: "smoothstep",
-      style: { stroke: "#6366f1", strokeWidth: 1.5, strokeDasharray: "4 2" },
-      markerEnd: { type: MarkerType.ArrowClosed, color: "#6366f1", width: 12, height: 12 },
+      style: { stroke: "hsl(var(--primary))", strokeWidth: 1.5, strokeDasharray: "4 2" },
+      markerEnd: { type: MarkerType.ArrowClosed, color: "hsl(var(--primary))", width: 12, height: 12 },
       label: "upstream",
-      labelStyle: { fill: "#6366f1", fontSize: 9, fontWeight: 600 },
-      labelBgStyle: { fill: "#0f172a", fillOpacity: 0.8 },
+      labelStyle: { fill: "hsl(var(--primary))", fontSize: 9, fontWeight: 600 },
+      labelBgStyle: { fill: "hsl(var(--surface))", fillOpacity: 0.9 },
     });
   }
 
@@ -196,8 +188,8 @@ function buildContextLayout(
       source: focusNode.node_id,
       target: c.node_id,
       type: "smoothstep",
-      style: { stroke: "#475569", strokeWidth: 1.5 },
-      markerEnd: { type: MarkerType.ArrowClosed, color: "#475569", width: 12, height: 12 },
+      style: { stroke: "hsl(var(--border) / 0.8)", strokeWidth: 1.5 },
+      markerEnd: { type: MarkerType.ArrowClosed, color: "hsl(var(--border))", width: 12, height: 12 },
     });
   }
 
@@ -242,43 +234,43 @@ export function ContextGraph({ nodeId, onNodeClick, allNodeIds }: ContextGraphPr
 
   if (isLoading) {
     return (
-      <div className="flex h-[500px] items-center justify-center rounded-xl border border-slate-800/60 bg-slate-900/30">
-        <div className="h-10 w-10 animate-pulse rounded-full bg-slate-800" />
+      <div className="flex h-[520px] items-center justify-center rounded-lg border border-border/40 bg-surface/30">
+        <div className="h-10 w-10 animate-pulse rounded-full bg-surface" />
       </div>
     );
   }
 
   if (!detail || nodes.length === 0) {
     return (
-      <div className="flex h-[500px] items-center justify-center rounded-xl border border-dashed border-slate-800/60">
-        <p className="text-sm text-slate-500">No topology connections found for this device</p>
+      <div className="flex h-[520px] items-center justify-center rounded-lg border border-dashed border-border/40">
+        <p className="text-xs text-foreground-subtle">No topology connections found for this device</p>
       </div>
     );
   }
 
   return (
-    <div className="space-y-2">
+    <div className="space-y-3">
       {/* Layer legend */}
-      <div className="flex items-center gap-4 text-[10px] text-slate-500">
+      <div className="flex items-center gap-4 text-[10px] text-foreground-subtle font-medium uppercase tracking-wider">
         {detail.parents.length > 0 && (
-          <span className="flex items-center gap-1">
-            <span className="inline-block h-px w-4 border-t border-dashed border-indigo-500" />
+          <span className="flex items-center gap-1.5">
+            <span className="inline-block h-px w-4 border-t border-dashed border-primary" />
             Upstream ({detail.parents.length})
           </span>
         )}
-        <span className="flex items-center gap-1">
-          <span className="inline-block h-2 w-2 rounded-sm bg-indigo-500/40 ring-1 ring-indigo-500" />
-          Focus device
+        <span className="flex items-center gap-1.5">
+          <span className="inline-block h-2 w-2 rounded-sm bg-primary/40 ring-1 ring-primary" />
+          Focus Device
         </span>
         {detail.children.length > 0 && (
-          <span className="flex items-center gap-1">
-            <span className="inline-block h-px w-4 border-t border-slate-500" />
+          <span className="flex items-center gap-1.5">
+            <span className="inline-block h-px w-4 border-t border-border" />
             Downstream ({detail.children.length})
           </span>
         )}
       </div>
 
-      <div className="h-[500px] rounded-xl border border-slate-800/60 overflow-hidden">
+      <div className="h-[520px] rounded-lg border border-border/40 overflow-hidden bg-background">
         <ReactFlow
           nodes={nodes}
           edges={edges}
@@ -292,15 +284,17 @@ export function ContextGraph({ nodeId, onNodeClick, allNodeIds }: ContextGraphPr
           minZoom={0.3}
           maxZoom={3}
           nodesDraggable
-          className="bg-slate-950"
+          zoomOnScroll={false}
+          panOnScroll={false}
+          zoomOnPinch={true}
+          preventScrolling={false}
+          className="bg-background"
           defaultEdgeOptions={{ type: "smoothstep" }}
         >
-          <Background color="rgba(51,65,85,0.15)" gap={20} size={1} />
-          <Controls className="!bg-slate-900 !border-slate-800" showInteractive={false} />
+          <Background color="hsl(var(--border) / 0.25)" gap={20} size={1} />
+          <Controls className="!bg-surface !border-border/60" showInteractive={false} />
         </ReactFlow>
       </div>
     </div>
   );
 }
-
-

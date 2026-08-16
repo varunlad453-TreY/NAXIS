@@ -1,7 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
+import { Zap } from "lucide-react";
 import {
   ReactFlow,
   Background,
@@ -111,6 +113,7 @@ export function TopologyGraphV2({
   onSiteSelect,
   onBackToBackbone,
 }: TopologyGraphV2Props) {
+  const router = useRouter();
   const reactFlowWrapper = useRef<HTMLDivElement>(null);
   const [rfInstance, setRfInstance] = useState<ReactFlowInstance | null>(null);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
@@ -122,6 +125,7 @@ export function TopologyGraphV2({
   const [pathTraceMode, setPathTraceMode] = useState(false);
   const [pathTraceStart, setPathTraceStart] = useState<string | null>(null);
   const [pathTraceEnd, setPathTraceEnd] = useState<string | null>(null);
+  const [activeBlastFocusId, setActiveBlastFocusId] = useState<string | null>(null);
   const [selectedRegionHub, setSelectedRegionHub] = useState<{
     name: string;
     sites: TopologyNode[];
@@ -375,9 +379,9 @@ export function TopologyGraphV2({
             site_name: null,
             health_status:
               g.health.critical_count > 0 ? "critical"
-              : g.health.warning_count > 0 ? "warning"
-              : g.health.healthy_count > 0 ? "healthy"
-              : "unknown",
+                : g.health.warning_count > 0 ? "warning"
+                  : g.health.healthy_count > 0 ? "healthy"
+                    : "unknown",
             health_label: "",
           }));
           layoutNodesInput = [...collapse.keptNodes, ...pseudoNodes];
@@ -431,8 +435,40 @@ export function TopologyGraphV2({
     }));
   }, [graphNodes, blastRadius]);
 
-  // Path trace highlighting
+  // Path trace & Blast Radius Isolation highlighting
   const { finalNodes, finalEdges } = useMemo(() => {
+    if (activeBlastFocusId) {
+      const normalized = normalizeTopology(
+        filteredNodes,
+        data.edges,
+        { highlightedNodeIds: new Set(highlightedNodeIds ?? []) }
+      );
+      const impact = getDownstreamImpact(normalized, activeBlastFocusId, 5);
+      const nodeIds = impact.nodeIds;
+      const edgeIds = impact.edgeIds;
+
+      const nodes = blastRadiusNodes.map((n: any) => ({
+        ...n,
+        data: {
+          ...n.data,
+          isRootCause: n.id === activeBlastFocusId,
+          isSymptom: nodeIds.has(n.id) && n.id !== activeBlastFocusId,
+          isHighlighted: nodeIds.has(n.id),
+          isDimmed: !nodeIds.has(n.id),
+        },
+      }));
+      const edges = graphEdges.map((e: any) => ({
+        ...e,
+        data: {
+          ...e.data,
+          isPathTrace: edgeIds.has(e.id),
+          isHighlighted: edgeIds.has(e.id),
+          isDimmed: !edgeIds.has(e.id),
+        },
+      }));
+      return { finalNodes: nodes, finalEdges: edges };
+    }
+
     if (!pathTraceMode || !pathTraceStart || !pathTraceEnd) {
       return { finalNodes: blastRadiusNodes, finalEdges: graphEdges };
     }
@@ -445,7 +481,6 @@ export function TopologyGraphV2({
 
     const pathResult = tracePath(normalized, pathTraceStart, pathTraceEnd);
     if (!pathResult) {
-      // Show impact downstream from start if no path to end
       const impact = getDownstreamImpact(normalized, pathTraceStart, 5);
       const nodeIds = impact.nodeIds;
       const edgeIds = impact.edgeIds;
@@ -489,7 +524,7 @@ export function TopologyGraphV2({
       },
     }));
     return { finalNodes: nodes, finalEdges: edges };
-  }, [blastRadiusNodes, graphEdges, pathTraceMode, pathTraceStart, pathTraceEnd, filteredNodes, data.edges, highlightedNodeIds]);
+  }, [activeBlastFocusId, blastRadiusNodes, graphEdges, pathTraceMode, pathTraceStart, pathTraceEnd, filteredNodes, data.edges, highlightedNodeIds]);
 
 
   // Fit view whenever nodes load or layout mode changes
@@ -598,17 +633,27 @@ export function TopologyGraphV2({
   }, []);
 
   const handleNodePathTrace = useCallback(() => {
-    setPathTraceMode(true);
-    setPathTraceStart(selectedNodeId);
-    setPathTraceEnd(null);
-  }, [selectedNodeId]);
+    if (!selectedNodeId) return;
+    const selectedNode = data.nodes.find((n) => n.node_id === selectedNodeId);
+    const target = selectedNode?.ip_address || selectedNodeId;
+    router.push(`/path-trace?ip=${encodeURIComponent(target)}&device_id=${encodeURIComponent(selectedNodeId)}`);
+  }, [selectedNodeId, data.nodes, router]);
 
   const handleNodeBlastRadius = useCallback(() => {
-    // Trigger blast radius for the selected node by treating it as a simulated incident
-    if (selectedNodeId && rfInstance) {
-      rfInstance.fitView({ padding: 0.2, nodes: [{ id: selectedNodeId }], duration: 300 });
+    if (!selectedNodeId) return;
+    setActiveBlastFocusId(selectedNodeId);
+  }, [selectedNodeId]);
+
+  useEffect(() => {
+    if (rfInstance && activeBlastFocusId) {
+      const normalized = normalizeTopology(filteredNodes, data.edges);
+      const impact = getDownstreamImpact(normalized, activeBlastFocusId, 5);
+      const targetNodes = Array.from(impact.nodeIds).map((id) => ({ id }));
+      if (targetNodes.length > 0) {
+        rfInstance.fitView({ padding: 0.3, nodes: targetNodes, duration: 500 });
+      }
     }
-  }, [selectedNodeId, rfInstance]);
+  }, [rfInstance, activeBlastFocusId, filteredNodes, data.edges]);
 
   const handleContextSelect = useCallback((nodeId: string, nodeName: string) => {
     setContextNode({ id: nodeId, name: nodeName });
@@ -841,6 +886,23 @@ export function TopologyGraphV2({
         </div>
       )}
 
+      {/* Blast Radius Isolation Banner */}
+      {activeBlastFocusId && (
+        <div className="flex items-center gap-3 rounded border border-rose-500/40 bg-rose-500/10 px-3.5 py-2 text-xs text-rose-300">
+          <span className="font-bold flex items-center gap-1.5">
+            <Zap className="h-3.5 w-3.5 text-rose-400 shrink-0" />
+            Blast Radius Isolation Mode:
+          </span>
+          <span className="truncate">Focusing device {activeBlastFocusId} — unrelated graph nodes dimmed by 90% opacity.</span>
+          <button
+            onClick={() => setActiveBlastFocusId(null)}
+            className="ml-auto shrink-0 rounded bg-rose-500/20 px-2.5 py-1 text-[11px] font-semibold text-rose-200 hover:bg-rose-500/30 transition-colors cursor-pointer"
+          >
+            Clear Isolation
+          </button>
+        </div>
+      )}
+
       {/* Worst offenders — instant actionable readout for any single site */}
       {!isBackbone && activeSiteId && resolvedSiteMode !== "context" && (
         <WorstOffendersStrip
@@ -895,6 +957,10 @@ export function TopologyGraphV2({
             maxZoom={4}
             deleteKeyCode={null}
             multiSelectionKeyCode={["Shift", "Control"]}
+            zoomOnScroll={false}
+            panOnScroll={false}
+            zoomOnPinch={true}
+            preventScrolling={false}
             className="bg-slate-950"
             defaultEdgeOptions={{
               type: "topologyEdge",

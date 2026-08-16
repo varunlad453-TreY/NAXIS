@@ -806,6 +806,10 @@ const onExportPng = useCallback(async () => {
             minZoom={0.1}
             maxZoom={4}
             deleteKeyCode={null}
+            zoomOnScroll={false}
+            panOnScroll={false}
+            zoomOnPinch={true}
+            preventScrolling={false}
             className="border border-border/40 bg-surface/20"
           >
             <Background color="hsl(var(--border) / 0.3)" gap={20} size={1} />

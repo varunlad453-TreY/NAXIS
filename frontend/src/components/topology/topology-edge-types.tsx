@@ -47,21 +47,21 @@ function TopologyEdgeComponent({
         markerEnd={markerEnd}
         style={{
           ...style,
-          strokeWidth: isPathTrace ? 3 : selected ? 2.5 : (style?.strokeWidth as number) || 1.5,
-          stroke: isPathTrace ? "#3b82f6" : selected ? "#3b82f6" : strokeColor,
+          strokeWidth: isPathTrace ? 2.5 : isHighlighted ? 2 : selected ? 2 : (style?.strokeWidth as number) || 1.5,
+          stroke: isPathTrace ? "#ef4444" : isHighlighted ? "#3b82f6" : selected ? "#3b82f6" : strokeColor,
           opacity: isDimmed ? 0.15 : 1,
         }}
       />
 
-      {/* Path trace glow */}
-      {isPathTrace && (
+      {/* Path trace / blast radius glow line */}
+      {(isPathTrace || isHighlighted) && (
         <BaseEdge
           id={`${id}-glow`}
           path={edgePath}
           style={{
-            stroke: "#3b82f6",
-            strokeWidth: 8,
-            opacity: 0.12,
+            stroke: isPathTrace ? "#ef4444" : "#3b82f6",
+            strokeWidth: 6,
+            opacity: 0.15,
             fill: "none",
           }}
         />

@@ -11,16 +11,16 @@ import type { TopologyNode, TopologyEdge } from "@/types/topology";
 import { getNodeRank } from "./topology-graph-model";
 import type { GraphNode, GraphEdge } from "./topology-graph-model";
 
-export const INFRA_NODE_WIDTH = 170;
-export const INFRA_NODE_HEIGHT = 42;
-export const LEAF_NODE_WIDTH = 150;
-export const LEAF_NODE_HEIGHT = 34;
-export const SITE_GROUP_WIDTH = 260;
-export const SITE_GROUP_HEIGHT = 52;
+export const INFRA_NODE_WIDTH = 220;
+export const INFRA_NODE_HEIGHT = 90;
+export const LEAF_NODE_WIDTH = 220;
+export const LEAF_NODE_HEIGHT = 90;
+export const SITE_GROUP_WIDTH = 220;
+export const SITE_GROUP_HEIGHT = 90;
 
-// Site view uses bigger cards for readability
+// Site view uses standard 220x90 context cards
 export const SITE_VIEW_NODE_WIDTH = 220;
-export const SITE_VIEW_NODE_HEIGHT = 86;
+export const SITE_VIEW_NODE_HEIGHT = 90;
 
 const RANKSEP = 90;
 const NODESEP = 50;

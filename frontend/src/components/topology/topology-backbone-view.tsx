@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { type Node, type ReactFlowInstance } from "reactflow";
 
@@ -82,6 +83,7 @@ export function TopologyBackboneView({
   backboneViewMode,
   onBackboneViewModeChange,
 }: TopologyBackboneViewProps) {
+  const router = useRouter();
   const [rfInstance, setRfInstance] = useState<ReactFlowInstance | null>(null);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [panelMode, setPanelMode] = useState<PanelMode>(incidentId ? "incident" : null);
@@ -109,6 +111,21 @@ export function TopologyBackboneView({
     queryFn: () => api.getTopologyNode(selectedNodeId!),
     enabled: panelMode === "node" && !!selectedNodeId,
   });
+
+  const handleNodePathTrace = useCallback(() => {
+    if (!selectedNodeId) return;
+    const selectedNode = nodeDetail?.node;
+    const target = selectedNode?.ip_address || selectedNodeId;
+    router.push(`/path-trace?ip=${encodeURIComponent(target)}&device_id=${encodeURIComponent(selectedNodeId)}`);
+  }, [selectedNodeId, nodeDetail, router]);
+
+  const handleNodeBlastRadius = useCallback(() => {
+    if (!selectedNodeId) return;
+    const siteId = nodeDetail?.node?.site_id || selectedNodeId;
+    if (onSiteSelect && siteId) {
+      onSiteSelect(siteId);
+    }
+  }, [selectedNodeId, nodeDetail, onSiteSelect]);
 
   useEffect(() => {
     if (backboneViewMode !== "all") setHubRegionFilter(undefined);
@@ -368,8 +385,8 @@ export function TopologyBackboneView({
             onClose={handlePanelClose}
             incidentLoading={incidentLoading}
             nodeLoading={nodeLoading}
-            onNodePathTrace={() => {}}
-            onNodeBlastRadius={() => {}}
+            onNodePathTrace={handleNodePathTrace}
+            onNodeBlastRadius={handleNodeBlastRadius}
           />
 
           {selectedRegionHub && (

@@ -112,7 +112,7 @@ export function HealthHistoryChart({ nodeId }: HealthHistoryChartProps) {
 
   if (error || !data) {
     return (
-      <div className="rounded-lg border border-border/40 bg-surface/50 p-4 text-sm text-foreground-muted">
+      <div className="py-2 text-xs text-foreground-subtle">
         Failed to load health history
       </div>
     );
@@ -120,7 +120,7 @@ export function HealthHistoryChart({ nodeId }: HealthHistoryChartProps) {
 
   if (!chartData.length) {
     return (
-      <div className="rounded-lg border border-dashed border-border/40 bg-surface/50 p-4 text-center text-sm text-foreground-muted">
+      <div className="py-2 text-xs text-foreground-subtle">
         No health history data available yet
       </div>
     );
