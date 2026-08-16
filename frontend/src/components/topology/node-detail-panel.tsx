@@ -6,6 +6,7 @@ import { NODE_TYPE_META, HEALTH_STATUS_META } from "@/types/topology";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Server, ArrowUp, ArrowDown, Network, Building, Cable, Zap, Route, ExternalLink } from "lucide-react";
 import { HealthHistoryChart } from "./health-history-chart";
+import { getHumanReadableDeviceRole, getHumanReadableDiagnosticIssue } from "@/lib/large-site-utils";
 
 interface NodeDetailPanelProps {
   nodeDetail?: TopologyNodeDetail | null;
@@ -213,17 +214,24 @@ export function NodeDetailPanel({
           </a>
         </div>
 
-        {/* Health Status — clean typography, zero card box */}
-        <div className="flex items-center gap-2 pt-1">
-          <span
-            className="inline-flex h-2.5 w-2.5 shrink-0 rounded-full animate-pulse"
-            style={{ backgroundColor: hMeta.color }}
-          />
-          <span className="text-sm font-semibold" style={{ color: hMeta.color }}>
-            {hMeta.label}
-          </span>
-          <span className="text-xs text-foreground-subtle">·</span>
-          <span className="text-xs text-foreground-muted">Current health status</span>
+        {/* Health Status — clean typography */}
+        <div className="space-y-1 pt-1">
+          <div className="flex items-center gap-2">
+            <span
+              className="inline-flex h-2.5 w-2.5 shrink-0 rounded-full animate-pulse"
+              style={{ backgroundColor: hMeta.color }}
+            />
+            <span className="text-sm font-semibold" style={{ color: hMeta.color }}>
+              {hMeta.label}
+            </span>
+            <span className="text-xs text-foreground-subtle">·</span>
+            <span className="text-xs font-medium text-foreground-muted">{getHumanReadableDeviceRole(node.node_type)}</span>
+          </div>
+          {node.health_status !== "healthy" && (
+            <p className="text-xs font-medium text-rose-400">
+              {getHumanReadableDiagnosticIssue(node)}
+            </p>
+          )}
         </div>
       </div>
 

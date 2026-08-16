@@ -152,13 +152,13 @@ describe("NodeDetailPanel", () => {
   it("renders node name and type", () => {
     render(<NodeDetailPanel nodeDetail={mockNodeDetail} />);
     expect(screen.getByText("naxis-core-01")).toBeDefined();
-    expect(screen.getByText("Switch")).toBeDefined();
+    expect(screen.getAllByText("Switch").length).toBeGreaterThan(0);
   });
 
   it("renders health status", () => {
     render(<NodeDetailPanel nodeDetail={mockNodeDetail} />);
     expect(screen.getByText("Critical")).toBeDefined();
-    expect(screen.getByText("Current health status")).toBeDefined();
+    expect(screen.getByText(/Critical Uplink CRC & Frame Drop Threshold Breached/)).toBeDefined();
   });
 
   it("renders node detail fields", () => {

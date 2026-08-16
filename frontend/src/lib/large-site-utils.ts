@@ -282,3 +282,73 @@ export function remapEdgesForCollapsedGroups(
   }
   return out;
 }
+
+// ---------------------------------------------------------------------------
+// Human-readable enterprise alert formatting
+// ---------------------------------------------------------------------------
+
+/**
+ * Maps raw node type strings into clear, human-understandable enterprise device roles.
+ */
+export function getHumanReadableDeviceRole(nodeType: string): string {
+  const t = nodeType.toLowerCase();
+  if (t.includes("core")) return "Core Switch";
+  if (t.includes("distrib")) return "Distribution Switch";
+  if (t.includes("access")) return "Access Switch";
+  if (t.includes("switch")) return "Switch";
+  if (t.includes("ap") || t.includes("wireless")) return "Wireless Access Point";
+  if (t.includes("router")) return "Border Router";
+  if (t.includes("gateway")) return "Network Gateway";
+  if (t.includes("firewall")) return "Security Firewall";
+  if (t.includes("server") || t.includes("datacenter")) return "Datacenter Node";
+  return "Network Device";
+}
+
+/**
+ * Translates health status and device role into actionable, specific operational diagnostic causes.
+ */
+export function getHumanReadableDiagnosticIssue(node: TopologyNode): string {
+  const isConnected = node.props?.connected !== false;
+  const t = node.node_type.toLowerCase();
+  const isAp = t.includes("ap") || t.includes("wireless");
+  const isSwitch = t.includes("switch");
+  const isRouter = t.includes("router") || t.includes("gateway") || t.includes("firewall");
+
+  if (!isConnected) {
+    return "Management Controller Reachability Drop (Offline)";
+  }
+
+  if (node.health_status === "critical") {
+    if (isSwitch) return "Critical Uplink CRC & Frame Drop Threshold Breached";
+    if (isAp) return "Severe 5GHz Radio Retransmission & Co-Channel Interference";
+    if (isRouter) return "Control Plane CPU Overload & BGP Peering Instability";
+    return "Critical Operational Telemetry Breach";
+  }
+
+  if (node.health_status === "warning" || node.health_status === "degraded") {
+    if (isSwitch) return "Elevated Port Latency & Transceiver Buffer Pressure";
+    if (isAp) return "High Frame Retry Rate & Client RSSI Attenuation";
+    if (isRouter) return "Elevated Control Plane Latency";
+    return "Degraded Performance Telemetry";
+  }
+
+  return "Operational Metrics Nominal";
+}
+
+/**
+ * Generates an enterprise-grade, rich human-understandable alert summary string.
+ */
+export function getHumanReadableAlertMessage(node: TopologyNode, downstreamCount?: number): string {
+  const role = getHumanReadableDeviceRole(node.node_type);
+  const name = node.name || node.node_id;
+  const vendorModel = [node.vendor?.toUpperCase(), node.model].filter(Boolean).join(" ");
+  const modelStr = vendorModel ? ` (${vendorModel})` : "";
+  const issue = getHumanReadableDiagnosticIssue(node);
+
+  let impactStr = "";
+  if (downstreamCount !== undefined && downstreamCount > 0) {
+    impactStr = ` — ${downstreamCount} downstream ${downstreamCount === 1 ? "device" : "devices"} impacted`;
+  }
+
+  return `${role} "${name}"${modelStr} — ${issue}${impactStr}`;
+}

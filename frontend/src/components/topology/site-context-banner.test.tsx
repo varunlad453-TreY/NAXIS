@@ -32,6 +32,6 @@ describe("SiteContextBanner", () => {
       makeNode({ node_id: "n2", node_type: "ap", health_status: "critical", name: "ap-bad" }),
     ];
     render(<SiteContextBanner nodes={nodes} />);
-    expect(screen.getByText(/1 of 2 devices alerting — ap-bad critical/)).toBeDefined();
+    expect(screen.getByText(/1 of 2 devices alerting — Wireless Access Point "ap-bad"/)).toBeDefined();
   });
 });

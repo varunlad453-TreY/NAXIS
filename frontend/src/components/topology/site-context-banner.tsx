@@ -3,6 +3,7 @@
 import { useMemo } from "react";
 import type { TopologyNode, SiteHealthCounts } from "@/types/topology";
 import { getNodeRank } from "./topology-graph-model";
+import { getHumanReadableAlertMessage } from "@/lib/large-site-utils";
 
 interface SiteContextBannerProps {
   siteName?: string;
@@ -33,8 +34,10 @@ function topAlertSentence(nodes: TopologyNode[]): string | null {
   allAlerts.sort((a, b) => getNodeRank(a.node_type) - getNodeRank(b.node_type));
   const top = allAlerts[0];
   const alertCount = critical.length + warning.length;
-  const label = top.health_status === "critical" ? "critical" : "degraded";
-  return `${alertCount} of ${nodes.filter((n) => n.node_type !== "site").length} devices alerting — ${top.name || top.node_id} ${label}`;
+  const nonSiteNodes = nodes.filter((n) => n.node_type !== "site");
+
+  const alertDetail = getHumanReadableAlertMessage(top);
+  return `${alertCount} of ${nonSiteNodes.length} devices alerting — ${alertDetail}`;
 }
 
 export function SiteContextBanner({ nodes }: SiteContextBannerProps) {
