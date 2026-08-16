@@ -93,6 +93,7 @@ function SitePageContent() {
   const typeStats = useMemo(() => {
     const counts: Record<string, number> = {};
     for (const node of nodes) {
+      if (node.node_type === "site") continue;
       counts[node.node_type] = (counts[node.node_type] || 0) + 1;
     }
     return Object.entries(counts)

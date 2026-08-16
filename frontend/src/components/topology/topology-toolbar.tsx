@@ -124,11 +124,13 @@ export function TopologyToolbar({
         )}
         <span className="text-slate-600">
           {totalNodes}{" "}
-          {isBackbone && backboneViewMode === "regions"
-            ? "hubs"
-            : isBackbone && backboneViewMode === "degraded"
-              ? "problem sites"
-              : "sites"}
+          {isBackbone
+            ? backboneViewMode === "regions"
+              ? "hubs"
+              : backboneViewMode === "degraded"
+                ? "problem sites"
+                : "sites"
+            : "devices"}
           {" · "}{totalEdges} links
         </span>
       </div>
