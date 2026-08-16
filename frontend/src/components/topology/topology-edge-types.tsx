@@ -35,6 +35,7 @@ function TopologyEdgeComponent({
   const isHighlighted = edgeData?.isHighlighted ?? false;
   const isDimmed = edgeData?.isDimmed ?? false;
   const linkSpeed = edgeData?.linkSpeed;
+  const bundleCount = edgeData?.bundleCount;
 
   const strokeColor = (style?.stroke as string) || "#9ca3af";
 
@@ -66,8 +67,26 @@ function TopologyEdgeComponent({
         />
       )}
 
+      {/* Bundle count badge — shows ×N when multiple parallel links are collapsed */}
+      {bundleCount && bundleCount > 1 && (
+        <EdgeLabelRenderer>
+          <div
+            className="pointer-events-none rounded-sm px-1 py-0.5 text-[9px] font-bold border"
+            style={{
+              position: "absolute",
+              transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)`,
+              background: "#0f172a",
+              borderColor: strokeColor + "60",
+              color: strokeColor,
+            }}
+          >
+            ×{bundleCount}
+          </div>
+        </EdgeLabelRenderer>
+      )}
+
       {/* Link speed / interface label */}
-      {linkSpeed && (
+      {linkSpeed && !bundleCount && (
         <EdgeLabelRenderer>
           <div
             className="pointer-events-none rounded-sm bg-surface px-1 py-0.5 text-[9px] font-medium text-foreground-subtle border border-border/40"

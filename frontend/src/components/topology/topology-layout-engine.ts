@@ -18,16 +18,20 @@ export const LEAF_NODE_HEIGHT = 34;
 export const SITE_GROUP_WIDTH = 260;
 export const SITE_GROUP_HEIGHT = 52;
 
+// Site view uses bigger cards for readability
+export const SITE_VIEW_NODE_WIDTH = 220;
+export const SITE_VIEW_NODE_HEIGHT = 86;
+
 const RANKSEP = 90;
 const NODESEP = 50;
 const MARGINX = 60;
 const MARGINY = 60;
 
-// ponytail: generous spacing for readable site topology — increase if still cramped
-const SITE_RANKSEP = 140;
-const SITE_NODESEP = 80;
-const SITE_MARGINX = 80;
-const SITE_MARGINY = 60;
+// Generous spacing for readable site topology — must match bigger cards
+const SITE_RANKSEP = 180;
+const SITE_NODESEP = 100;
+const SITE_MARGINX = 100;
+const SITE_MARGINY = 80;
 
 /**
  * Build a hierarchical layout for infrastructure topology.
@@ -131,7 +135,7 @@ export function buildHierarchicalLayout(
   }
 
   // Build GraphEdges
-  const graphEdges: GraphEdge[] = buildGraphEdges(topologyEdges, nodeMap, highlightSet);
+  const graphEdges: GraphEdge[] = buildGraphEdges(topologyEdges, nodeMap, highlightSet, {});
 
   return { nodes: graphNodes, edges: graphEdges };
 }
@@ -186,9 +190,11 @@ export function buildReadableHierarchicalLayout(
     rankdir?: "TB" | "LR";
     highlightSet?: Set<string>;
     collapsedRanks?: Set<number>;
+    siteView?: boolean;
+    adjacentRanksOnly?: boolean;
   } = {}
 ): { nodes: GraphNode[]; edges: GraphEdge[] } {
-  const { rankdir = "TB", highlightSet = new Set(), collapsedRanks = new Set() } = options;
+  const { rankdir = "TB", highlightSet = new Set(), collapsedRanks = new Set(), siteView = false, adjacentRanksOnly = false } = options;
 
   // Filter out collapsed-rank nodes
   const visibleNodes = topologyNodes.filter((n) => !collapsedRanks.has(getNodeRank(n.node_type)));
@@ -213,10 +219,10 @@ export function buildReadableHierarchicalLayout(
   const marginX = SITE_MARGINX;
   const marginY = SITE_MARGINY;
 
-  // Adaptive density: wrap into sub-rows if a rank is too wide for the viewport
-  const MAX_RANK_PX = 1400;
+  // Adaptive density: site-view uses bigger cards so fewer nodes per row
+  const MAX_RANK_PX = siteView ? 2200 : 1400;
   const crossMargin = isHorizontal ? marginY * 2 : marginX * 2;
-  const maxNodesPerSubRow = Math.max(6, Math.floor((MAX_RANK_PX - crossMargin) / nodeSep));
+  const maxNodesPerSubRow = Math.max(4, Math.floor((MAX_RANK_PX - crossMargin) / nodeSep));
 
   const graphNodes: GraphNode[] = [];
   const positionMap = new Map<string, { x: number; y: number }>();
@@ -224,7 +230,9 @@ export function buildReadableHierarchicalLayout(
   let currentMain = isHorizontal ? marginX : marginY;
   const mainStart = currentMain;
   const crossStart = isHorizontal ? marginY : marginX;
-  const baseNodeMain = isHorizontal ? INFRA_NODE_WIDTH : INFRA_NODE_HEIGHT;
+  const baseNodeMain = isHorizontal
+    ? (siteView ? SITE_VIEW_NODE_WIDTH : INFRA_NODE_WIDTH)
+    : (siteView ? SITE_VIEW_NODE_HEIGHT : INFRA_NODE_HEIGHT);
   const subRowGap = 24;
 
   // Place nodes rank by rank
@@ -263,8 +271,22 @@ export function buildReadableHierarchicalLayout(
         const node = row[i];
         const isSite = node.node_type === "site";
         const isLeaf = ["client", "endpoint", "sensor", "camera", "iot", "ap", "access_point"].includes(node.node_type);
-        const width = isSite ? SITE_GROUP_WIDTH : isLeaf ? LEAF_NODE_WIDTH : INFRA_NODE_WIDTH;
-        const height = isSite ? SITE_GROUP_HEIGHT : isLeaf ? LEAF_NODE_HEIGHT : INFRA_NODE_HEIGHT;
+
+        // Site view uses bigger, unified cards for readability
+        const width = siteView
+          ? SITE_VIEW_NODE_WIDTH
+          : isSite
+            ? SITE_GROUP_WIDTH
+            : isLeaf
+              ? LEAF_NODE_WIDTH
+              : INFRA_NODE_WIDTH;
+        const height = siteView
+          ? SITE_VIEW_NODE_HEIGHT
+          : isSite
+            ? SITE_GROUP_HEIGHT
+            : isLeaf
+              ? LEAF_NODE_HEIGHT
+              : INFRA_NODE_HEIGHT;
         const nodeMain = isHorizontal ? width : height;
 
         const crossPos = crossStart + offset + i * nodeSep;
@@ -275,9 +297,17 @@ export function buildReadableHierarchicalLayout(
 
         positionMap.set(node.node_id, { x, y });
 
+        const nodeType = siteView
+          ? "siteViewNode"
+          : isSite
+            ? "siteGroup"
+            : isLeaf
+              ? "leafNode"
+              : "topologyNode";
+
         graphNodes.push({
           id: node.node_id,
-          type: isSite ? "siteGroup" : isLeaf ? "leafNode" : "topologyNode",
+          type: nodeType,
           position: { x: x - width / 2, y: y - height / 2 },
           data: {
             topoNode: node,
@@ -308,8 +338,11 @@ export function buildReadableHierarchicalLayout(
     currentMain += rankDepth + rankSep;
   }
 
-  // Build edges (only between visible nodes)
-  const graphEdges: GraphEdge[] = buildGraphEdges(topologyEdges, nodeMap, highlightSet);
+  // Build edges (only between visible nodes, optionally adjacent ranks only)
+  const graphEdges: GraphEdge[] = buildGraphEdges(topologyEdges, nodeMap, highlightSet, {
+    adjacentRanksOnly,
+    rankFn: getNodeRank,
+  });
 
   return { nodes: graphNodes, edges: graphEdges };
 }
@@ -668,63 +701,115 @@ export function buildSiteGroupedLayout(
 // ---------------------------------------------------------------------------
 
 /** Build GraphEdges from topology edges with health-derived styling. */
+interface BuildGraphEdgeOptions {
+  adjacentRanksOnly?: boolean;
+  rankFn?: (nodeType: string) => number;
+}
+
 function buildGraphEdges(
   topologyEdges: TopologyEdge[],
   nodeMap: Map<string, TopologyNode>,
   highlightSet: Set<string>,
+  options: BuildGraphEdgeOptions = {},
 ): GraphEdge[] {
-  const out: GraphEdge[] = [];
-  for (const edge of topologyEdges) {
-    if (!nodeMap.has(edge.src_id) || !nodeMap.has(edge.dst_id)) continue;
+  const { adjacentRanksOnly = false, rankFn } = options;
+
+  // Filter to visible nodes first
+  const visibleEdges = topologyEdges.filter(
+    (e) => nodeMap.has(e.src_id) && nodeMap.has(e.dst_id),
+  );
+
+  // Adjacent-rank filter: only keep edges between neighboring layers
+  let edgesToRender = visibleEdges;
+  if (adjacentRanksOnly && rankFn) {
+    edgesToRender = visibleEdges.filter((e) => {
+      const srcRank = rankFn(nodeMap.get(e.src_id)!.node_type);
+      const dstRank = rankFn(nodeMap.get(e.dst_id)!.node_type);
+      return Math.abs(srcRank - dstRank) <= 1;
+    });
+  }
+
+  // Bundle parallel edges: group by (source, target) and merge
+  const bundleKey = (e: TopologyEdge) => `${e.dst_id}->${e.src_id}`;
+  const bundles = new Map<string, { edges: TopologyEdge[]; worstStatus: "down" | "degraded" | "healthy" | "unknown" }>();
+
+  for (const edge of edgesToRender) {
+    const key = bundleKey(edge);
     const srcNode = nodeMap.get(edge.src_id)!;
     const dstNode = nodeMap.get(edge.dst_id)!;
-    let linkStatus: "healthy" | "degraded" | "down" | "unknown" = "unknown";
+
+    let status: "down" | "degraded" | "healthy" | "unknown" = "unknown";
     if (srcNode.health_status === "critical" || dstNode.health_status === "critical") {
-      linkStatus = "down";
+      status = "down";
     } else if (srcNode.health_status === "warning" || dstNode.health_status === "warning") {
-      linkStatus = "degraded";
+      status = "degraded";
     } else if (srcNode.health_status === "healthy" && dstNode.health_status === "healthy") {
-      linkStatus = "healthy";
+      status = "healthy";
     }
-    const isHighlighted = highlightSet.has(edge.src_id) && highlightSet.has(edge.dst_id);
+
+    const existing = bundles.get(key);
+    if (!existing) {
+      bundles.set(key, { edges: [edge], worstStatus: status });
+    } else {
+      existing.edges.push(edge);
+      // Upgrade worst status: down > degraded > healthy > unknown
+      const order = { down: 3, degraded: 2, healthy: 1, unknown: 0 };
+      if (order[status] > order[existing.worstStatus]) {
+        existing.worstStatus = status;
+      }
+    }
+  }
+
+  const out: GraphEdge[] = [];
+  for (const [key, bundle] of bundles) {
+    const [dstId, srcId] = key.split("->");
+    const count = bundle.edges.length;
+    const isHighlighted = highlightSet.has(srcId) && highlightSet.has(dstId);
+    const linkStatus = bundle.worstStatus;
+
     out.push({
-      id: `${edge.src_id}->${edge.dst_id}`,
-      source: edge.dst_id,
-      target: edge.src_id,
+      id: key,
+      source: dstId,
+      target: srcId,
       type: "topologyEdge",
       data: {
-        topoEdge: edge,
-        edgeType: edge.edge_type,
+        topoEdge: bundle.edges[0],
+        edgeType: bundle.edges[0].edge_type,
         linkStatus,
         isHighlighted,
         isDimmed: false,
         isPathTrace: false,
+        bundleCount: count,
       },
       markerEnd: {
         type: MarkerType.ArrowClosed,
         color: linkStatus === "down" ? "#ef4444" : linkStatus === "degraded" ? "#eab308" : "#9ca3af",
-        width: 8,
-        height: 8,
+        width: count > 1 ? 12 : 8,
+        height: count > 1 ? 12 : 8,
       },
       style: {
         stroke:
           linkStatus === "down"
             ? "#ef4444"
             : linkStatus === "degraded"
-            ? "#eab308"
-            : isHighlighted
-            ? "#3b82f6"
-            : "#9ca3af",
-        strokeWidth: isHighlighted ? 2.5 : linkStatus === "down" ? 2 : 1.5,
+              ? "#eab308"
+              : isHighlighted
+                ? "#3b82f6"
+                : "#9ca3af",
+        strokeWidth: isHighlighted ? 3 : linkStatus === "down" ? 2.5 : count > 1 ? 2 : 1.5,
         strokeDasharray:
-          edge.edge_type === "logical" || edge.edge_type === "wan_link" || linkStatus === "unknown"
+          bundle.edges[0].edge_type === "logical" || bundle.edges[0].edge_type === "wan_link" || linkStatus === "unknown"
             ? "4 4"
             : linkStatus === "down"
-            ? "6 3"
-            : undefined,
+              ? "6 3"
+              : undefined,
         opacity: 1,
       },
+      label: count > 1 ? `×${count}` : undefined,
+      labelStyle: { fill: "#94a3b8", fontSize: 9, fontWeight: 700 },
+      labelBgStyle: { fill: "#0f172a", fillOpacity: 0.85 },
     });
   }
+
   return out;
 }

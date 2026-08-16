@@ -1,5 +1,10 @@
 export { TopologyGraph } from "./topology-graph";
 export { TopologyGraphV2 } from "./topology-graph-v2";
+export { TopologyGraphCanvas } from "./topology-graph-canvas";
+export { TopologyBackboneView } from "./topology-backbone-view";
+export { TopologySiteShell } from "./topology-site-shell";
+export type { TopologyBackboneViewProps } from "./topology-backbone-view";
+export type { TopologySiteShellProps, SiteViewParam, ScopeParam, LayoutParam } from "./topology-site-shell";
 export { buildLayout, buildGroupedLayout, NODE_WIDTH, NODE_HEIGHT } from "./layout";
 export type { LayoutResult, GroupedLayoutResult } from "./layout";
 export { useTopologyLayout } from "./use-topology-layout";

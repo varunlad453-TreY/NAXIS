@@ -360,6 +360,94 @@ function StatusBannerNodeComponent({ data }: NodeProps<GraphNodeData>) {
 }
 
 // ---------------------------------------------------------------------------
+// Site View Node Cards — Bigger, readable, information-dense
+// Used in /topology/sites/[id] device graph. Not for backbone view.
+// ---------------------------------------------------------------------------
+
+const SITE_CARD_WIDTH = 220;
+const SITE_CARD_HEIGHT = 86;
+
+function SiteViewNodeCard({ data, selected }: NodeProps<GraphNodeData>) {
+  const {
+    label,
+    nodeType,
+    healthStatus,
+    isHighlighted,
+    isDimmed,
+    isRootCause,
+    isSelected,
+  } = data;
+
+  const topoNode = data.topoNode as any;
+  const Icon = getDeviceIcon(nodeType);
+  const meta = NODE_TYPE_META[nodeType] ?? { label: nodeType, color: "#6b7280" };
+  const hMeta = HEALTH_STATUS_META[healthStatus] ?? HEALTH_STATUS_META.unknown;
+  const dimmed = isDimmed && !isHighlighted && !isSelected;
+  const isAlerting = healthStatus === "critical" || healthStatus === "warning";
+
+  return (
+    <div
+      className={[
+        "group relative cursor-pointer transition-all",
+        "rounded-lg border bg-slate-900 overflow-hidden",
+        isRootCause ? "animate-pulse" : "",
+        selected || isSelected ? "ring-2 ring-indigo-400/50" : "",
+        "hover:shadow-lg hover:border-slate-600",
+      ].join(" ")}
+      style={{
+        width: SITE_CARD_WIDTH,
+        height: SITE_CARD_HEIGHT,
+        borderColor: isHighlighted ? hMeta.color : isAlerting ? hMeta.color : "rgba(51,65,85,0.6)",
+        opacity: dimmed ? 0.25 : 1,
+        boxShadow: isAlerting
+          ? `0 0 0 2px ${hMeta.color}30, 0 4px 16px ${hMeta.color}15`
+          : isHighlighted
+            ? `0 0 0 2px ${hMeta.color}25`
+            : undefined,
+      }}
+    >
+      <Handle type="target" position={Position.Top} style={{ background: "#334155", border: "1px solid #475569" }} />
+
+      {/* Health bar */}
+      <div className="h-[3px]" style={{ backgroundColor: hMeta.color }} />
+
+      <div className="px-2.5 py-2 space-y-1">
+        {/* Type + health badge row */}
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-1.5 min-w-0">
+            <Icon className="h-3 w-3 shrink-0" style={{ color: meta.color }} />
+            <span className="text-[9px] font-bold uppercase tracking-wider text-slate-500 truncate">
+              {meta.label}
+            </span>
+          </div>
+          <span
+            className="shrink-0 text-[9px] font-semibold px-1 py-0.5 rounded-sm"
+            style={{ color: hMeta.color, backgroundColor: hMeta.bgColor }}
+          >
+            {hMeta.label}
+          </span>
+        </div>
+
+        {/* Name */}
+        <div
+          className="text-[11px] font-semibold text-white leading-tight truncate"
+          title={label}
+        >
+          {label}
+        </div>
+
+        {/* IP */}
+        {topoNode?.ip_address && (
+          <div className="font-mono text-[9px] text-slate-400">{topoNode.ip_address}</div>
+        )}
+      </div>
+
+      <Handle type="source" position={Position.Bottom} style={{ background: "#334155", border: "1px solid #475569" }} />
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // ReactFlow nodeTypes map
 // ---------------------------------------------------------------------------
 
@@ -370,6 +458,7 @@ export const topologyNodeTypes = {
   regionalHub: memo(RegionalHubNodeComponent),
   statusBanner: memo(StatusBannerNodeComponent),
   collapsedGroup: CollapsedGroupNode,
+  siteViewNode: memo(SiteViewNodeCard),
 };
 
 export { TopologyNodeComponent, LeafNodeComponent, SiteGroupNode, RegionalHubNodeComponent, StatusBannerNodeComponent };

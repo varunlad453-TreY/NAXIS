@@ -123,6 +123,7 @@ export interface GraphEdgeData {
   isHighlighted: boolean;
   isDimmed: boolean;
   isPathTrace: boolean;
+  bundleCount?: number;
 }
 
 // ---------------------------------------------------------------------------
