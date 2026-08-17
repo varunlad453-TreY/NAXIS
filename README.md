@@ -94,7 +94,7 @@ naxis/
 ├── frontend/              # Next.js 15 UI
 ├── schemas/               # PostgreSQL SQL files
 ├── config/                # .env
-└── docs/                  # All documentation
+└── docs/                  # (empty — being rewritten)
 ```
 
 ## Development
@@ -136,11 +136,7 @@ REDIS_ENABLED=false
 
 ## Documentation
 
-- **[docs/DEVELOPER_GUIDE.md](docs/DEVELOPER_GUIDE.md)** — Start here. Onboarding, architecture walkthrough, collector system, testing guide.
-- **[docs/TELEMETRY_ARCHITECTURE.md](docs/TELEMETRY_ARCHITECTURE.md)** — Collector → ledger → UI health architecture.
-- **[docs/CORRELATION_ARCHITECTURE.md](docs/CORRELATION_ARCHITECTURE.md)** — Correlation engine (Stage 1 + Stage 2) design.
-- **[docs/FRONTEND_ARCHITECTURE.md](docs/FRONTEND_ARCHITECTURE.md)** — Frontend structure and patterns.
-- **[docs/why/](docs/why/)** — Product rationale for major features.
+Being rewritten from scratch. Nothing here yet.
 
 ## License
 
