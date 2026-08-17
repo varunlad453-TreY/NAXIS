@@ -4,9 +4,6 @@ Open-source operational intelligence platform for network telemetry correlation,
 
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Python](https://img.shields.io/badge/python-3.11+-blue.svg)
-![Next.js](https://img.shields.io/badge/next.js-14+-black.svg)
-![License](https://img.shields.io/badge/license-MIT-blue.svg)
-![Python](https://img.shields.io/badge/python-3.11+-blue.svg)
 ![Next.js](https://img.shields.io/badge/next.js-15-black.svg)
 
 ## Overview
@@ -29,7 +26,7 @@ make up
 
 - API: `http://localhost:8000`
 - Frontend: `http://localhost:3000`
-- Full test suite: `pytest backend\tests -v` (300 tests, 0 failures)
+- Full test suite: `pytest backend\tests -v` (432+ backend tests, 0 failures) + `cd frontend && npx vitest run` (114+ frontend tests)
 
 ## Architecture
 
@@ -79,6 +76,7 @@ make up
 - ✅ **Cisco DNAC** — Devices, alarms, topology, clients, interfaces (registered)
 - ✅ **Arista SD-WAN (VeloCloud)** — Edge inventory, WAN links, tunnels, events, topology (live)
 - ⬜ **Arista WLC** — Clients, APs, radios, events (code exists, host/password not configured)
+- ⬜ **Aruba Central** — Cloud-managed Wi-Fi (code exists, not configured)
 
 ## Project Structure
 
@@ -86,15 +84,21 @@ make up
 naxis/
 ├── backend/
 │   ├── main.py            # FastAPI entrypoint
-│   ├── run_worker.py      # Worker daemon entrypoint
+│   ├── worker/            # Worker daemon, collectors, topology, pipeline
 │   ├── api/               # REST API routes + services
-│   ├── worker/            # Collectors, topology, pipeline
 │   ├── shared/            # Models, correlation engine, DB clients
-│   └── tests/             # 300 tests
+│   ├── scripts/           # One-off utilities (backfill, export, etc.)
+│   └── tests/             # 432+ tests
 ├── frontend/              # Next.js 15 UI
+│   └── src/
+│       ├── app/           # Routes
+│       ├── components/    # Domain + UI components
+│       ├── lib/           # API client, utils
+│       └── types/         # TypeScript types
 ├── schemas/               # PostgreSQL SQL files
+│   └── postgres/          # Migration scripts (NNN_*.sql)
 ├── config/                # .env
-└── docs/                  # (empty — being rewritten)
+└── docs/                  # strategy/ (architecture, roadmap, data policy) + handoff logs
 ```
 
 ## Development
@@ -136,7 +140,8 @@ REDIS_ENABLED=false
 
 ## Documentation
 
-Being rewritten from scratch. Nothing here yet.
+- **[docs/strategy/](docs/strategy/)** — Current strategic direction: `ARCHITECTURE.md` (target state), `ROADMAP.md` (phases), `DATA_POLICY.md` (what we store), `TECHNICAL_QA.md` (measured reality), `PLAN_GAP.md` (what exists vs what's missing + execution plan).
+- **[docs/handoff docs/](docs/handoff%20docs/)** — Per-session change logs (49 sessions).
 
 ## License
 

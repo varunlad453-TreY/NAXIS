@@ -6,11 +6,19 @@ MVP implementation uses simple site+time-window grouping, extended
 with Stage 2 infrastructure-aware topology cascading.
 """
 
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Protocol, Set
 
-from ..models.event import EventSeverity, UnifiedEvent
+from ..models.event import (
+    EventCategory,
+    EventSeverity,
+    EventType,
+    UnifiedEvent,
+)
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -33,7 +41,7 @@ class CorrelationConfig:
     topology_cascade_enabled: bool = True
 
     # When topology edges aren't available, fall back to device-type heuristics
-    topology_fallback_to_device_type: bool = True
+    topology_fallback_to_device_type: bool = False
 
     # Infrastructure device types (potential root causes)
     infrastructure_device_types: Set[str] = field(
@@ -196,26 +204,45 @@ def group_events_by_site_and_time(
     return groups
 
 
-def calculate_confidence_score(events: List[UnifiedEvent]) -> float:
+@dataclass
+class ConfidenceBreakdown:
+    """Individual factor scores that compose the overall confidence score.
+
+    Stored at correlation time so the breakdown is frozen when the incident
+    is created — not recomputed later from potentially-changed source data.
     """
-    Calculate confidence score for a correlated incident.
+    event_score: float       # Logarithmic scale from event count
+    avg_severity: float      # Weighted mean of event severities
+    device_score: float      # Normalized unique device count
+    total: float             # Weighted combination [0.0, 1.0]
+
+    def to_dict(self) -> dict:
+        return {
+            "event_score": round(self.event_score, 4),
+            "avg_severity": round(self.avg_severity, 4),
+            "device_score": round(self.device_score, 4),
+            "total": round(self.total, 4),
+        }
+
+
+def calculate_confidence_score(events: List[UnifiedEvent]) -> ConfidenceBreakdown:
+    """
+    Calculate confidence score + factor breakdown for a correlated incident.
 
     Factors:
-      - Event count (more events = higher confidence)
-      - Severity distribution (more CRITICAL = higher confidence)
-      - Device diversity (more devices = higher confidence)
+      - Event count (more events = higher confidence) — logarithmic scale
+      - Severity distribution (more CRITICAL = higher confidence) — weighted mean
+      - Device diversity (more devices = higher confidence) — normalized by 5
 
-    Returns: float in [0.0, 1.0]
+    Returns: ConfidenceBreakdown with sub-scores and total in [0.0, 1.0]
     """
     if not events:
-        return 0.0
+        return ConfidenceBreakdown(event_score=0.0, avg_severity=0.0, device_score=0.0, total=0.0)
 
-    # Base score from event count (logarithmic scale)
     import math
 
     event_score = min(1.0, math.log(len(events) + 1) / math.log(10))
 
-    # Severity score
     severity_weights = {
         EventSeverity.CRITICAL: 1.0,
         EventSeverity.MAJOR: 0.7,
@@ -228,53 +255,202 @@ def calculate_confidence_score(events: List[UnifiedEvent]) -> float:
         events
     )
 
-    # Device diversity score
     unique_devices = len(
         {e.device.device_id for e in events if e.device and e.device.device_id}
     )
-    device_score = min(1.0, unique_devices / 5.0)  # Normalize by 5 devices
+    device_score = min(1.0, unique_devices / 5.0)
 
-    # Weighted combination
-    confidence = (event_score * 0.4) + (avg_severity * 0.4) + (device_score * 0.2)
+    total = (event_score * 0.4) + (avg_severity * 0.4) + (device_score * 0.2)
+    total = min(1.0, max(0.0, total))
 
-    return min(1.0, max(0.0, confidence))
+    return ConfidenceBreakdown(
+        event_score=event_score,
+        avg_severity=avg_severity,
+        device_score=device_score,
+        total=total,
+    )
+
+
+_EVENT_TYPE_LABELS: Dict[EventType, str] = {
+    # Connectivity
+    EventType.LINK_DOWN: "link down",
+    EventType.LINK_UP: "back online",
+    EventType.INTERFACE_DOWN: "link down",
+    EventType.INTERFACE_UP: "back online",
+    EventType.BGP_DOWN: "link down",
+    EventType.BGP_UP: "back online",
+    EventType.OSPF_NEIGHBOR_DOWN: "link down",
+    EventType.OSPF_NEIGHBOR_UP: "back online",
+    EventType.TUNNEL_DOWN: "link down",
+    EventType.TUNNEL_UP: "back online",
+    # Performance
+    EventType.HIGH_CPU: "degraded",
+    EventType.HIGH_MEMORY: "degraded",
+    EventType.HIGH_BANDWIDTH: "degraded",
+    EventType.HIGH_LATENCY: "degraded",
+    EventType.PACKET_LOSS: "degraded",
+    EventType.JITTER: "degraded",
+    # Security
+    EventType.AUTH_FAILURE: "auth failures",
+    EventType.UNAUTHORIZED_ACCESS: "unauthorized access",
+    EventType.ROGUE_AP: "rogue AP",
+    EventType.DOS_ATTACK: "DOS attack",
+    EventType.SECURITY_VIOLATION: "security violation",
+    # Configuration
+    EventType.CONFIG_CHANGE: "configuration change",
+    EventType.FIRMWARE_UPGRADE: "firmware upgrade",
+    EventType.POLICY_CHANGE: "policy change",
+    # Hardware
+    EventType.POWER_SUPPLY_FAILURE: "power failure",
+    EventType.FAN_FAILURE: "fan failure",
+    EventType.TEMPERATURE_HIGH: "overheating",
+    EventType.HARDWARE_ERROR: "hardware fault",
+    # Application
+    EventType.APP_UNAVAILABLE: "app unavailable",
+    EventType.APP_SLOW: "degraded",
+    # Client
+    EventType.CLIENT_CONNECTED: "client reconnect",
+    EventType.CLIENT_DISCONNECTED: "client disconnect surge",
+    EventType.CLIENT_ROAM: "roaming issues",
+    EventType.CLIENT_AUTH_FAILED: "client auth failures",
+    # System
+    EventType.DEVICE_UNREACHABLE: "unreachable",
+    EventType.DEVICE_REACHABLE: "back online",
+    EventType.DEVICE_REBOOT: "rebooted",
+    EventType.SYSTEM_ERROR: "system error",
+}
+
+_CATEGORY_LABELS: Dict[EventCategory, str] = {
+    EventCategory.CONNECTIVITY: "connectivity issue",
+    EventCategory.PERFORMANCE: "degraded",
+    EventCategory.SECURITY: "security issue",
+    EventCategory.CONFIGURATION: "configuration issue",
+    EventCategory.HARDWARE: "hardware issue",
+    EventCategory.APPLICATION: "application issue",
+    EventCategory.CLIENT: "client issue",
+    EventCategory.SYSTEM: "system issue",
+}
+
+_EVENT_SEVERITY_RANK: Dict[EventSeverity, int] = {
+    EventSeverity.CRITICAL: 5,
+    EventSeverity.MAJOR: 4,
+    EventSeverity.MINOR: 3,
+    EventSeverity.WARNING: 2,
+    EventSeverity.INFO: 1,
+    EventSeverity.DEBUG: 0,
+}
+
+
+def _issue_label(event: UnifiedEvent) -> str:
+    """Plain-language issue phrase for an event (event type, else category)."""
+    label = _EVENT_TYPE_LABELS.get(event.event_type)
+    if label:
+        return label
+    return _CATEGORY_LABELS.get(event.category, "incident")
+
+
+def _primary_device_event(events: List[UnifiedEvent]) -> Optional[UnifiedEvent]:
+    """The highest-severity event that carries a device (first device wins ties)."""
+    best: Optional[UnifiedEvent] = None
+    for event in events:
+        if not (event.device and event.device.device_id):
+            continue
+        if best is None or _EVENT_SEVERITY_RANK.get(
+            event.severity, 0
+        ) > _EVENT_SEVERITY_RANK.get(best.severity, 0):
+            best = event
+    return best
+
+
+def _site_label(events: List[UnifiedEvent]) -> str:
+    """Real site name for the incident (falls back to the site ID)."""
+    for event in events:
+        if event.device and event.device.site_name:
+            return event.device.site_name
+    for event in events:
+        if event.device and event.device.site_id:
+            return event.device.site_id
+    return ""
+
+
+def _primary_device_label(events: List[UnifiedEvent]) -> str:
+    """Display name (hostname preferred over ID) of the primary device."""
+    primary = _primary_device_event(events)
+    if not primary:
+        return ""
+    return primary.device.device_name or primary.device.device_id
+
+
+def _primary_issue_label(events: List[UnifiedEvent]) -> str:
+    """
+    Plain-language issue label for the incident.
+
+    Prefers events on the primary (root-cause) device, then picks the most
+    common event-type label among them, tie-broken by severity.
+    """
+    from collections import Counter
+
+    primary = _primary_device_event(events)
+    candidates = events
+    if primary:
+        primary_events = [
+            e
+            for e in events
+            if e.device and e.device.device_id == primary.device.device_id
+        ]
+        if primary_events:
+            candidates = primary_events
+
+    label_counts = Counter(_issue_label(e) for e in candidates)
+    worst_severity: Dict[str, int] = {}
+    for event in candidates:
+        label = _issue_label(event)
+        rank = _EVENT_SEVERITY_RANK.get(event.severity, 0)
+        if rank > worst_severity.get(label, -1):
+            worst_severity[label] = rank
+
+    return max(
+        label_counts,
+        key=lambda label: (label_counts[label], worst_severity.get(label, 0)),
+    )
 
 
 def generate_incident_title(events: List[UnifiedEvent]) -> str:
     """
     Generate a human-readable incident title from events.
 
-    Format: "{Site/Device} - {Primary Issue Type} affecting {N} devices"
+    Format: "{Site Name} · {primary device} {issue} — {N} devices affected"
+
+    Uses the real site name, the root-cause device's hostname, and a
+    plain-language issue phrase instead of raw category codes:
+
+        "Pimpri Plant · AP32-02 unreachable — 5 devices affected"
+        "SFO-01 · naxis-core-01 link down"
+
+    The device count is omitted when only one device is involved.
     """
     if not events:
         return "Unknown incident"
 
-    # Get site/location
-    sites = {e.device.site_name for e in events if e.device and e.device.site_name}
-    site_ids = {e.device.site_id for e in events if e.device and e.device.site_id}
+    site = _site_label(events)
+    device = _primary_device_label(events)
+    issue = _primary_issue_label(events)
 
-    if sites:
-        location = f"Site {list(sites)[0]}"
-    elif site_ids:
-        location = f"Site {list(site_ids)[0]}"
+    if site and device:
+        head = f"{site} · {device} {issue}"
+    elif site:
+        head = f"{site} · {issue}"
+    elif device:
+        head = f"{device} {issue}"
     else:
-        location = "Multiple locations"
+        head = issue.capitalize()
 
-    # Get primary issue type (most common category)
-    from collections import Counter
-
-    categories = [e.category.value for e in events]
-    primary_category = Counter(categories).most_common(1)[0][0]
-
-    # Count affected devices
-    device_count = len(
-        {e.device.device_id for e in events if e.device and e.device.device_id}
-    )
-
-    if device_count > 1:
-        return f"{location} - {primary_category} issues affecting {device_count} devices"
-    else:
-        return f"{location} - {primary_category} issue"
+    affected_devices = {
+        e.device.device_id for e in events if e.device and e.device.device_id
+    }
+    if len(affected_devices) > 1:
+        return f"{head} — {len(affected_devices)} devices affected"
+    return head
 
 
 # ==============================================================================
@@ -400,18 +576,13 @@ class TopologyCascadeRule:
         if not infra_events:
             return []
 
-        # Try topology-aware mode first
+        # Topology-aware mode: only source of truth when provider is configured
         if self._provider:
-            cascade_groups = await self._evaluate_with_topology(
+            return await self._evaluate_with_topology(
                 infra_events, leaf_events, group_events
             )
-            if cascade_groups:
-                return cascade_groups
 
-        # Fallback: device-type heuristic
-        if self._config.topology_fallback_to_device_type:
-            return self._evaluate_by_device_type(infra_events, leaf_events)
-
+        # No provider configured — no cascade possible without data
         return []
 
     async def _evaluate_with_topology(
@@ -420,7 +591,13 @@ class TopologyCascadeRule:
         leaf_events: List[UnifiedEvent],
         all_group_events: List[UnifiedEvent],
     ) -> List[CascadeGroup]:
-        """Use the topology provider to find parent-child relationships."""
+        """Use the topology provider to find parent-child relationships.
+
+        Supports multi-hop cascading: if an infrastructure device has
+        descendants through intermediate nodes (e.g. switch -> downstream
+        switch -> AP), all leaf devices reachable via topology edges are
+        considered symptoms.
+        """
         if not self._provider:
             return []
 
@@ -452,13 +629,43 @@ class TopologyCascadeRule:
         cascade_groups: List[CascadeGroup] = []
         used_event_ids: Set[str] = set()
 
+        # Batch multi-hop descendants lookup
+        bulk_descendants: Dict[str, List[str]] = {}
+        infra_device_ids = set(infra_by_device.keys())
+        if hasattr(self._provider, "get_all_descendants_bulk"):
+            try:
+                bulk_descendants = await self._provider.get_all_descendants_bulk(
+                    infra_device_ids, max_depth=10
+                )
+            except Exception:
+                logger.warning("get_all_descendants_bulk failed", exc_info=True)
+
         for infra_dev_id, dev_events in infra_by_device.items():
-            child_device_ids = parent_child_map.get(infra_dev_id, [])
+            # Immediate children from topology edges
+            immediate_children = set(parent_child_map.get(infra_dev_id, []))
+
+            # Multi-hop descendants via recursive traversal
+            all_descendants: Set[str] = set()
+            if infra_dev_id in bulk_descendants:
+                all_descendants = set(bulk_descendants[infra_dev_id]) - {infra_dev_id}
+            elif hasattr(self._provider, "get_all_descendants"):
+                try:
+                    descendant_ids = await self._provider.get_all_descendants(
+                        infra_dev_id, max_depth=10
+                    )
+                    all_descendants = set(descendant_ids) - {infra_dev_id}
+                except Exception:
+                    logger.warning(
+                        "get_all_descendants failed for %s", infra_dev_id,
+                        exc_info=True
+                    )
+
+            child_device_ids = immediate_children | all_descendants
             if not child_device_ids:
                 continue
 
             # Build symptom events from leaf events whose device_id
-            # is a child of this infrastructure device
+            # is a child or descendant of this infrastructure device
             symptom_events = []
             for leaf_event in leaf_events:
                 leaf_dev_id = (
@@ -487,7 +694,6 @@ class TopologyCascadeRule:
                         root_device_id=infra_dev_id,
                     )
                 )
-                # Mark ALL events on this device as used
                 for e in dev_events:
                     used_event_ids.add(e.event_id)
 

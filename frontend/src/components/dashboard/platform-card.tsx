@@ -26,71 +26,44 @@ export function PlatformCard({
   active,
   accentRgb,
   tag,
-  delay,
 }: PlatformCardProps) {
   return (
     <Link
       href={href}
-      className="group flex flex-col gap-4 rounded-xl border border-border/60 bg-surface/40 p-5 transition-colors duration-200 hover:border-border hover:bg-surface"
+      className="group flex items-center gap-3 py-2 transition-colors"
       style={{
         opacity: active ? 1 : 0.4,
         pointerEvents: active ? "auto" : "none",
-        animation: `naxis-enter 0.6s ${delay}s both`,
+        borderLeft: active ? `2px solid rgb(${accentRgb})` : "2px solid transparent",
+        paddingLeft: active ? 10 : 12,
       }}
     >
-      <div className="flex items-start justify-between gap-2">
-        <div
-          className="flex h-10 w-10 items-center justify-center rounded-lg"
-          style={{
-            background: `rgba(${accentRgb},0.1)`,
-            color: `rgb(${accentRgb})`,
-          }}
-        >
-          {icon}
-        </div>
-        <div className="flex items-center gap-1.5">
-          <span
-            className="rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider"
-            style={{
-              color: `rgb(${accentRgb})`,
-              background: `rgba(${accentRgb},0.08)`,
-            }}
-          >
-            {tag}
+      <span style={{ color: `rgb(${accentRgb})` }}>
+        {icon}
+      </span>
+      <div className="flex min-w-0 flex-1 items-center gap-2">
+        <span className="text-sm font-medium text-foreground">{label}</span>
+        <span className="text-[10px] text-foreground-subtle">{sublabel}</span>
+        <span className="hidden text-[10px] text-foreground-muted sm:inline">·</span>
+        <span className="hidden truncate text-[10px] text-foreground-muted sm:inline">{description}</span>
+      </div>
+      <div className="flex items-center gap-3">
+        {stat && (
+          <span className="font-mono text-xs text-foreground-subtle">
+            <span className="text-foreground">{stat.value}</span> {stat.label}
           </span>
-          {!active && (
-            <span className="rounded-full border border-border/40 px-2 py-0.5 text-[10px] text-foreground-subtle">
-              Soon
-            </span>
-          )}
-        </div>
-      </div>
-
-      <div className="flex-1 space-y-1">
-        <p className="text-[9px] font-semibold uppercase tracking-[0.2em] text-foreground-subtle">
-          {sublabel}
-        </p>
-        <h3 className="text-sm font-semibold text-foreground transition-colors group-hover:text-primary">
-          {label}
-        </h3>
-        <p className="text-xs leading-relaxed text-foreground-muted">{description}</p>
-      </div>
-
-      <div className="flex items-center justify-between border-t border-border/40 pt-3">
-        {stat ? (
-          <div>
-            <span className="font-mono text-sm font-semibold" style={{ color: `rgb(${accentRgb})` }}>
-              {stat.value}
-            </span>
-            <span className="ml-1.5 text-[10px] text-foreground-subtle">{stat.label}</span>
-          </div>
-        ) : (
-          <span className="text-[10px] text-foreground-subtle">Awaiting credentials</span>
+        )}
+        <span
+          className="text-[10px] font-semibold uppercase tracking-wider"
+          style={{ color: `rgb(${accentRgb})` }}
+        >
+          {tag}
+        </span>
+        {!active && (
+          <span className="text-[10px] text-foreground-subtle">Soon</span>
         )}
         {active && (
-          <ChevronRight
-            className="h-4 w-4 text-foreground-subtle transition-transform duration-200 group-hover:translate-x-0.5 group-hover:text-foreground"
-          />
+          <ChevronRight className="h-3.5 w-3.5 text-foreground-subtle transition-colors group-hover:text-foreground" />
         )}
       </div>
     </Link>

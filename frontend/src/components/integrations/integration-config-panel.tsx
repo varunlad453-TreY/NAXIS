@@ -62,7 +62,7 @@ export function IntegrationConfigPanel({ item, isOpen, isTesting, onTest }: Inte
           )}
 
           {error && (
-            <div className="flex items-center gap-2 text-sm text-critical">
+            <div className="flex items-center gap-2 border-l-2 border-l-critical pl-3 py-1 text-sm text-critical">
               <AlertCircle className="h-4 w-4" />
               {(error as Error).message}
             </div>
@@ -71,9 +71,9 @@ export function IntegrationConfigPanel({ item, isOpen, isTesting, onTest }: Inte
           {data && (
             <div className="space-y-4">
               <div className="flex flex-wrap items-center gap-3 text-sm text-foreground-muted">
-                <span className={cn("rounded-full px-2.5 py-1 text-xs font-semibold uppercase tracking-[0.14em]", data.configured ? "bg-success/10 text-success" : "bg-border/50 text-foreground-muted")}>{data.configured ? "Configured" : "Not configured"}</span>
+                <span className={cn("text-xs font-semibold uppercase tracking-[0.14em]", data.configured ? "text-success" : "text-foreground-muted")}>{data.configured ? "Configured" : "Not configured"}</span>
                 {data.comingSoon && (
-                  <span className="rounded-full bg-info/10 px-2.5 py-1 text-xs font-semibold uppercase tracking-[0.14em] text-info">
+                  <span className="text-xs font-semibold uppercase tracking-[0.14em] text-info">
                     Coming soon
                   </span>
                 )}
@@ -88,7 +88,7 @@ export function IntegrationConfigPanel({ item, isOpen, isTesting, onTest }: Inte
                     </div>
                     <div className="grid gap-2 sm:grid-cols-2">
                       {group.items.map((itemField) => (
-                        <div key={`${group.title}-${itemField.label}`} className="rounded-2xl border border-border/60 bg-background/60 px-4 py-3">
+                        <div key={`${group.title}-${itemField.label}`} className="border-b border-border/40 px-1 py-2">
                           <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-foreground-subtle">
                             {itemField.label}
                           </div>
@@ -106,7 +106,7 @@ export function IntegrationConfigPanel({ item, isOpen, isTesting, onTest }: Inte
                 <button
                   onClick={handleTest}
                   disabled={isTesting || isFetching}
-                  className="inline-flex items-center gap-2 rounded-full bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-60"
+                  className="inline-flex items-center gap-2 bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {isTesting || isFetching ? <RefreshCw className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
                   {isTesting ? "Testing" : "Test connection"}
@@ -124,12 +124,12 @@ export function IntegrationConfigPanel({ item, isOpen, isTesting, onTest }: Inte
           <div className="space-y-2">
             {data?.recentErrors.length ? (
               data.recentErrors.map((message, index) => (
-                <div key={`${message}-${index}`} className="rounded-2xl border border-border/60 bg-background/60 px-4 py-3 text-sm text-foreground-muted">
+                <div key={`${message}-${index}`} className="border-b border-border/40 px-1 py-2 text-sm text-foreground-muted">
                   {message}
                 </div>
               ))
             ) : (
-              <div className="rounded-2xl border border-dashed border-border/60 px-4 py-3 text-sm text-foreground-subtle">
+              <div className="border-b border-dashed border-border/40 px-1 py-2 text-sm text-foreground-subtle">
                 No recent errors recorded.
               </div>
             )}
@@ -141,7 +141,7 @@ export function IntegrationConfigPanel({ item, isOpen, isTesting, onTest }: Inte
             </div>
             <div className="space-y-2">
               {data?.collectors.map((collector) => (
-                <div key={collector.id} className="rounded-2xl border border-border/60 bg-background/60 px-4 py-3">
+                <div key={collector.id} className="border-b border-border/40 px-1 py-2">
                   <div className="flex items-center justify-between gap-4">
                     <div>
                       <div className="text-sm font-medium text-foreground">{collector.label}</div>
@@ -153,7 +153,7 @@ export function IntegrationConfigPanel({ item, isOpen, isTesting, onTest }: Inte
                       {collector.healthScore === null ? "—" : `${collector.healthScore}%`}
                     </div>
                   </div>
-                  {collector.message && <div className="mt-2 text-xs text-foreground-subtle">{collector.message}</div>}
+                  {collector.message && <div className="mt-1 text-xs text-foreground-subtle">{collector.message}</div>}
                 </div>
               ))}
             </div>
@@ -165,5 +165,5 @@ export function IntegrationConfigPanel({ item, isOpen, isTesting, onTest }: Inte
 }
 
 function SettingsLabel() {
-  return <span className="inline-flex h-2 w-2 rounded-full bg-primary" aria-hidden />;
+  return <span className="inline-flex h-2 w-2 bg-primary" aria-hidden />;
 }

@@ -34,6 +34,7 @@ try:
         EventType,
         UnifiedEvent,
     )
+    from backend.shared.database.identity import IdentityResolver
 except ImportError:  # pragma: no cover - supports both entry-point styles
     from shared.models.collector_outcome import CollectorOutcome
     from shared.models.event import (
@@ -45,6 +46,7 @@ except ImportError:  # pragma: no cover - supports both entry-point styles
         EventType,
         UnifiedEvent,
     )
+    from shared.database.identity import IdentityResolver
 
 logger = logging.getLogger(__name__)
 
@@ -80,6 +82,7 @@ class MistCollector:
         self._org_id = settings.mist_org_id
         self._base_url = settings.mist_base_url.rstrip("/")
         self._enabled = settings.mist_enabled
+        self._resolver = IdentityResolver()
 
         self._headers = {
             "Authorization": f"Token {self._api_key}",
@@ -152,7 +155,7 @@ class MistCollector:
             events: List[UnifiedEvent] = []
             for raw in all_raw:
                 try:
-                    events.append(self._normalize(raw))
+                    events.append(await self._normalize(raw))
                 except Exception:
                     logger.exception("Failed to normalize Mist event: %s", raw.get("id", "?"))
 
@@ -245,7 +248,7 @@ class MistCollector:
     # Normalization
     # ------------------------------------------------------------------
 
-    def _normalize(self, raw: Dict[str, Any]) -> UnifiedEvent:
+    async def _normalize(self, raw: Dict[str, Any]) -> UnifiedEvent:
         """Normalize a raw Mist event/alarm dict to UnifiedEvent."""
         ts_raw = raw.get("timestamp") or raw.get("last_seen") or raw.get("created_time")
         if ts_raw:
@@ -262,8 +265,14 @@ class MistCollector:
         site_id = raw.get("site_id") or self._org_id
         site_name = raw.get("site_name") or f"site-{site_id[:8]}"
 
+        device_id = ap_id
+        if self._resolver and ap_id and ap_id != "unknown":
+            resolved = await self._resolver.find_device("mist", ap_id)
+            if resolved:
+                device_id = resolved
+
         device = DeviceInfo(
-            device_id=ap_id,
+            device_id=device_id,
             device_name=ap_name,
             device_type=raw.get("device_type", "ap"),
             site_id=site_id,

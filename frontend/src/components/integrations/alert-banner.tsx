@@ -94,8 +94,7 @@ export function AlertBanner({ alert, onDismiss }: AlertBannerProps) {
   return (
     <div
       className={cn(
-        "group relative flex items-start gap-3 rounded-2xl border px-4 py-3 transition-colors",
-        config.bg,
+        "group relative flex items-start gap-3 border-b px-4 py-3 transition-colors",
         config.border
       )}
     >
@@ -115,33 +114,21 @@ export function AlertBanner({ alert, onDismiss }: AlertBannerProps) {
           <span className={cn("text-xs font-semibold uppercase tracking-[0.12em]", config.text)}>
             {alertTypeLabels[alert.type] ?? alert.type}
           </span>
-          <span className="text-xs text-foreground-muted">•</span>
+          <span className="text-xs text-foreground-muted">·</span>
           <span className="text-xs font-medium text-foreground-subtle">{alert.sourceSystem}</span>
         </div>
         <p className="text-sm leading-5 text-foreground">{alert.message}</p>
       </div>
 
-      {/* Badge + Dismiss */}
+      {/* Severity label + Dismiss */}
       <div className="flex shrink-0 items-center gap-2">
-        <span
-          className={cn(
-            "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em]",
-            alert.severity === "critical"
-              ? "bg-critical/10 text-critical"
-              : "bg-minor/10 text-minor"
-          )}
-        >
-          {alert.severity === "critical" ? (
-            <AlertCircle className="h-3 w-3" />
-          ) : (
-            <AlertTriangle className="h-3 w-3" />
-          )}
+        <span className={cn("text-[10px] font-semibold uppercase tracking-[0.12em]", config.text)}>
           {severityConfig[alert.severity].label}
         </span>
         {onDismiss && (
           <button
             onClick={onDismiss}
-            className="rounded p-1 text-foreground-subtle opacity-0 transition-all hover:bg-surface-elevated hover:text-foreground group-hover:opacity-100"
+            className="p-1 text-foreground-subtle opacity-0 transition-all hover:text-foreground group-hover:opacity-100"
             title="Dismiss alert"
           >
             <X className="h-3.5 w-3.5" />
@@ -184,7 +171,7 @@ export function AlertBannerGroup({ alerts }: AlertBannerGroupProps) {
   const warningCount = visibleAlerts.filter((a) => a.severity === "warning").length;
 
   return (
-    <div className="rounded-2xl border border-border/40 bg-background/40 overflow-hidden">
+    <div className="border-b border-border/40">
       {/* Header */}
       <button
         onClick={() => setExpanded((prev) => !prev)}
@@ -205,25 +192,26 @@ export function AlertBannerGroup({ alerts }: AlertBannerGroupProps) {
             <span className="text-sm font-semibold text-foreground">
               Collector Health Alerts
             </span>
-            <span className="rounded-full bg-foreground/10 px-2 py-0.5 text-[10px] font-semibold tabular-nums">
+            <span className="text-[10px] font-semibold tabular-nums text-foreground-subtle">
               {alerts.length}
             </span>
           </div>
         </div>
 
         <div className="flex items-center gap-3">
-          {/* Summary badges */}            {criticalCount > 0 && (
-              <span className="inline-flex items-center gap-1 rounded-full bg-critical/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-critical">
-                <XCircle className="h-3 w-3" />
-                {criticalCount} critical
-              </span>
-            )}
-            {warningCount > 0 && (
-              <span className="inline-flex items-center gap-1 rounded-full bg-minor/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-minor">
-                <AlertTriangle className="h-3 w-3" />
-                {warningCount} warning
-              </span>
-            )}
+          {/* Summary */}
+          {criticalCount > 0 && (
+            <span className="inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-critical">
+              <XCircle className="h-3 w-3" />
+              {criticalCount} critical
+            </span>
+          )}
+          {warningCount > 0 && (
+            <span className="inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-minor">
+              <AlertTriangle className="h-3 w-3" />
+              {warningCount} warning
+            </span>
+          )}
 
           {expanded ? (
             <ChevronUp className="h-4 w-4 text-foreground-subtle" />
@@ -235,8 +223,8 @@ export function AlertBannerGroup({ alerts }: AlertBannerGroupProps) {
 
       {/* Alert list */}
       {expanded && (
-        <div className="space-y-2 border-t border-border/40 px-4 py-3">
-          <div className="flex items-center justify-end">
+        <div className="border-t border-border/40">
+          <div className="flex items-center justify-end px-4 py-2">
             <button
               onClick={handleDismissAll}
               className="text-xs text-foreground-subtle hover:text-foreground transition-colors"

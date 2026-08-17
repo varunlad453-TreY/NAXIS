@@ -17,6 +17,8 @@ interface TopologySidePanelProps {
   onClose: () => void;
   incidentLoading?: boolean;
   nodeLoading?: boolean;
+  onNodePathTrace?: () => void;
+  onNodeBlastRadius?: () => void;
 }
 
 export function TopologySidePanel({
@@ -27,6 +29,8 @@ export function TopologySidePanel({
   onClose,
   incidentLoading,
   nodeLoading,
+  onNodePathTrace,
+  onNodeBlastRadius,
 }: TopologySidePanelProps) {
   const panelRef = useRef<HTMLDivElement>(null);
 
@@ -80,6 +84,8 @@ export function TopologySidePanel({
             <NodeDetailPanel
               nodeDetail={nodeDetail}
               loading={nodeLoading}
+              onPathTrace={onNodePathTrace}
+              onBlastRadius={onNodeBlastRadius}
             />
           )}
         </div>

@@ -1,10 +1,11 @@
 import type { Metadata } from "next";
-import { Manrope } from "next/font/google";
+import { Inter, Manrope } from "next/font/google";
 import { QueryProvider } from "./providers";
 import { Header } from "@/components/layout/header";
 import { Sidebar } from "@/components/layout/sidebar";
 import "./globals.css";
 
+const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
 const manrope = Manrope({ subsets: ["latin"], variable: "--font-manrope" });
 
 export const metadata: Metadata = {
@@ -27,11 +28,11 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html lang="en" className="bg-slate-950" suppressHydrationWarning>
       <head>
         <script dangerouslySetInnerHTML={{ __html: themeScript }} />
       </head>
-      <body suppressHydrationWarning className={`${manrope.variable} font-sans antialiased bg-background text-foreground`}>
+      <body suppressHydrationWarning className={`${inter.variable} ${manrope.variable} font-sans antialiased bg-slate-950 text-foreground`}>
         <QueryProvider>
           {/* Global background */}
           <div aria-hidden className="pointer-events-none fixed inset-0 -z-10 overflow-hidden">

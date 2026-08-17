@@ -7,7 +7,7 @@ import type { TopologyGraphResponse, DeviceCategory, TopologyNode, HealthStatus 
 import { AGGREGATED_VIEW_THRESHOLD, HEALTH_STATUS_META, CATEGORY_META } from "@/types/topology";
 import { aggregateByCategory, getDeviceCategory } from "@/lib/topology-utils";
 import { TypeClusterNode, CLUSTER_NODE_WIDTH, CLUSTER_NODE_HEIGHT } from "./type-cluster-node";
-import { DeviceBrowser } from "./device-browser";
+import { ClusterTopologyView } from "./cluster-topology-view";
 import { ContextGraph } from "./context-graph";
 import { AlertTriangle, CheckCircle, HelpCircle, Search, X, List, Expand } from "lucide-react";
 
@@ -145,7 +145,7 @@ export function AggregatedView({ data, onContextSelect, onFlatView }: Aggregated
     }
   }, [layoutNodes.length]);
 
-  // Escape key to close DeviceBrowser
+  // Escape key to close the cluster panel
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.key === "Escape" && selectedCategory) {
@@ -207,7 +207,7 @@ export function AggregatedView({ data, onContextSelect, onFlatView }: Aggregated
   }, [globalSearch, nonSiteNodes]);
 
   const handleGlobalResultClick = useCallback((node: TopologyNode) => {
-    const cat = getDeviceCategory(node.node_type);
+    const cat = getDeviceCategory(node);
     setSelectedCategory(cat);
     setGlobalSearch("");
     // Search for the specific device name within the browser
@@ -253,7 +253,7 @@ export function AggregatedView({ data, onContextSelect, onFlatView }: Aggregated
           {globalResults.length > 0 && (
             <div className="absolute right-0 top-full z-50 mt-1 w-72 rounded-lg border border-border/40 bg-surface shadow-surface-lg">
               {globalResults.map((n) => {
-                const cat = getDeviceCategory(n.node_type);
+                const cat = getDeviceCategory(n);
                 const cMeta = CATEGORY_META[cat];
                 return (
                   <button
@@ -297,6 +297,10 @@ export function AggregatedView({ data, onContextSelect, onFlatView }: Aggregated
               attributionPosition="bottom-left"
               minZoom={0.3}
               maxZoom={3}
+              zoomOnScroll={false}
+              panOnScroll={false}
+              zoomOnPinch={true}
+              preventScrolling={false}
               className="rounded-xl border border-border/40 bg-surface/20"
             >
               <Background color="hsl(var(--border) / 0.3)" gap={20} size={1} />
@@ -309,10 +313,11 @@ export function AggregatedView({ data, onContextSelect, onFlatView }: Aggregated
           )}
         </div>
 
-        {/* Device browser panel */}
+        {/* Cluster topology panel */}
         {selectedCategory && selectedCluster && (
-          <DeviceBrowser
-            nodes={nonSiteNodes.filter((n) => getDeviceCategory(n.node_type) === selectedCategory)}
+          <ClusterTopologyView
+            allNodes={nonSiteNodes}
+            allEdges={data.edges}
             cluster={selectedCluster}
             onSelect={handleDeviceSelect}
             onClose={handleBack}

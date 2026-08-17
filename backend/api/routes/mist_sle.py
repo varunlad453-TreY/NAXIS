@@ -9,8 +9,13 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Response
 from fastapi.responses import StreamingResponse
+
+try:
+    from backend.shared.cache import cached_api_route
+except ImportError:
+    from shared.cache import cached_api_route
 
 from config.settings import get_settings
 
@@ -141,7 +146,9 @@ def _window(hours: int) -> Tuple[int, int]:
 
 
 @router.get("/anomalies")
+@cached_api_route(ttl_seconds=_CACHE_TTL_S, key_prefix="mist_sle_anomalies")
 async def get_sle_anomalies(
+    response: Response,
     window: int = Query(default=24, description="Look-back window in hours (1–168)"),
     limit: int = Query(default=20, ge=1, le=200),
     sle: Optional[str] = Query(default=None, description="Filter to one SLE key"),

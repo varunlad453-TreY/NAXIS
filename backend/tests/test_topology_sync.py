@@ -47,6 +47,7 @@ def _mock_inventory_row(overrides: dict = None) -> dict:
                     "state": "STABLE",
                     "score_tx": None,
                     "score_rx": None,
+                    "latency_ms_tx": None,
                     "upstream_mbps": 200,
                     "downstream_mbps": 500,
                 },
@@ -59,13 +60,37 @@ def _mock_inventory_row(overrides: dict = None) -> dict:
     return row
 
 
-def _make_topology_sync(mist_enabled=False, velo_enabled=True):
+class FakeIdentityResolver:
+    """Deterministic identity resolver for tests; avoids DB round-trips."""
+
+    async def resolve_site(self, vendor_site_id, site_name=None, vendor=None, parent_key=None):
+        return vendor_site_id
+
+    async def resolve_sites(self, specs):
+        return {(vendor, site_id): site_id for site_id, name, vendor, parent in specs}
+
+    async def resolve_device(self, vendor, vendor_device_id, **hints):
+        return vendor_device_id
+
+    async def resolve_devices(self, pairs):
+        return {(vendor, vendor_id): vendor_id for vendor, vendor_id, hints in pairs}
+
+    async def find_device(self, vendor, vendor_device_id):
+        return vendor_device_id
+
+
+def _make_topology_sync(mist_enabled=False, velo_enabled=True, dnac_enabled=False, arista_enabled=False, aruba_enabled=False):
     with patch("backend.worker.collectors.topology_sync.get_settings") as gs:
         settings = MagicMock()
         settings.mist_enabled = mist_enabled
         settings.velocloud_enabled = velo_enabled
+        settings.dnac_enabled = dnac_enabled
+        settings.arista_wlc_enabled = arista_enabled
+        settings.aruba_central_enabled = aruba_enabled
         gs.return_value = settings
-        return TopologySync()
+        ts = TopologySync()
+    ts._identity = FakeIdentityResolver()
+    return ts
 
 
 class TestVeloCloudTopologySync:
@@ -99,13 +124,12 @@ class TestVeloCloudTopologySync:
         exec_calls = []
 
         with patch("backend.worker.collectors.topology_sync.db.fetch",
-                   AsyncMock(return_value=rows)):
+                   AsyncMock(side_effect=[rows, []])):
             with patch("backend.worker.collectors.topology_sync.db.execute",
                        AsyncMock()) as mock_exec:
                 mock_exec.side_effect = lambda *a: exec_calls.append(a)
                 await ts.sync()
 
-        # Expect: 1 site node, 1 edge node, 2 wan_gateway nodes, 1 site_membership edge, 2 wan_link edges = 7
         node_queries = [c for c in exec_calls if "INSERT INTO topology_nodes" in c[0]]
         edge_queries = [c for c in exec_calls if "INSERT INTO topology_edges" in c[0]]
         assert len(node_queries) >= 3  # site + edge + at least 1 wan_gateway
@@ -118,7 +142,7 @@ class TestVeloCloudTopologySync:
         exec_calls = []
 
         with patch("backend.worker.collectors.topology_sync.db.fetch",
-                   AsyncMock(return_value=rows)):
+                   AsyncMock(side_effect=[rows, []])):
             with patch("backend.worker.collectors.topology_sync.db.execute",
                        AsyncMock()) as mock_exec:
                 mock_exec.side_effect = lambda *a: exec_calls.append(a)
@@ -139,7 +163,7 @@ class TestVeloCloudTopologySync:
         exec_calls = []
 
         with patch("backend.worker.collectors.topology_sync.db.fetch",
-                   AsyncMock(return_value=rows)):
+                   AsyncMock(side_effect=[rows, []])):
             with patch("backend.worker.collectors.topology_sync.db.execute",
                        AsyncMock()) as mock_exec:
                 mock_exec.side_effect = lambda *a: exec_calls.append(a)
@@ -161,7 +185,7 @@ class TestVeloCloudTopologySync:
         exec_calls = []
 
         with patch("backend.worker.collectors.topology_sync.db.fetch",
-                   AsyncMock(return_value=rows)):
+                   AsyncMock(side_effect=[rows, []])):
             with patch("backend.worker.collectors.topology_sync.db.execute",
                        AsyncMock()) as mock_exec:
                 mock_exec.side_effect = lambda *a: exec_calls.append(a)
@@ -185,7 +209,7 @@ class TestVeloCloudTopologySync:
         exec_calls = []
 
         with patch("backend.worker.collectors.topology_sync.db.fetch",
-                   AsyncMock(return_value=rows)):
+                   AsyncMock(side_effect=[rows, []])):
             with patch("backend.worker.collectors.topology_sync.db.execute",
                        AsyncMock()) as mock_exec:
                 mock_exec.side_effect = lambda *a: exec_calls.append(a)
@@ -206,7 +230,7 @@ class TestVeloCloudTopologySync:
         exec_calls = []
 
         with patch("backend.worker.collectors.topology_sync.db.fetch",
-                   AsyncMock(return_value=rows)):
+                   AsyncMock(side_effect=[rows, []])):
             with patch("backend.worker.collectors.topology_sync.db.execute",
                        AsyncMock()) as mock_exec:
                 mock_exec.side_effect = lambda *a: exec_calls.append(a)
@@ -229,7 +253,7 @@ class TestVeloCloudTopologySync:
         exec_calls = []
 
         with patch("backend.worker.collectors.topology_sync.db.fetch",
-                   AsyncMock(return_value=[row])):
+                   AsyncMock(side_effect=[[row], []])):
             with patch("backend.worker.collectors.topology_sync.db.execute",
                        AsyncMock()) as mock_exec:
                 mock_exec.side_effect = lambda *a: exec_calls.append(a)
@@ -245,7 +269,7 @@ class TestVeloCloudTopologySync:
         exec_calls = []
 
         with patch("backend.worker.collectors.topology_sync.db.fetch",
-                   AsyncMock(return_value=[row])):
+                   AsyncMock(side_effect=[[row], []])):
             with patch("backend.worker.collectors.topology_sync.db.execute",
                        AsyncMock()) as mock_exec:
                 mock_exec.side_effect = lambda *a: exec_calls.append(a)
@@ -262,7 +286,7 @@ class TestVeloCloudTopologySync:
         exec_calls = []
 
         with patch("backend.worker.collectors.topology_sync.db.fetch",
-                   AsyncMock(return_value=[row])):
+                   AsyncMock(side_effect=[[row], []])):
             with patch("backend.worker.collectors.topology_sync.db.execute",
                        AsyncMock()) as mock_exec:
                 mock_exec.side_effect = lambda *a: exec_calls.append(a)
@@ -293,7 +317,7 @@ class TestVeloCloudTopologySync:
         exec_calls = []
 
         with patch("backend.worker.collectors.topology_sync.db.fetch",
-                   AsyncMock(return_value=rows)):
+                   AsyncMock(side_effect=[rows, []])):
             with patch("backend.worker.collectors.topology_sync.db.execute",
                        AsyncMock()) as mock_exec:
                 mock_exec.side_effect = lambda *a: exec_calls.append(a)
@@ -319,7 +343,7 @@ class TestVeloCloudTopologySync:
         exec_calls = []
 
         with patch("backend.worker.collectors.topology_sync.db.fetch",
-                   AsyncMock(return_value=[row])):
+                   AsyncMock(side_effect=[[row], []])):
             with patch("backend.worker.collectors.topology_sync.db.execute",
                        AsyncMock()) as mock_exec:
                 mock_exec.side_effect = lambda *a: exec_calls.append(a)
@@ -328,7 +352,7 @@ class TestVeloCloudTopologySync:
         edge_node = None
         for c in exec_calls:
             if "INSERT INTO topology_nodes" in c[0] and "velo-edge-" in c[1]:
-                props_json = c[8]
+                props_json = c[9]
                 edge_node = json.loads(props_json)
                 break
 
@@ -336,3 +360,101 @@ class TestVeloCloudTopologySync:
         assert edge_node["connected"] is True
         assert edge_node["reachability"] == "reachable"
         assert edge_node["platform"] == "velocloud"
+
+
+class TestMistPhysicalLinks:
+    """
+    Tests for _sync_mist_physical_links writing to the explicit links table.
+    """
+
+    @pytest.mark.asyncio
+    async def test_physical_link_writes_to_links_table(self):
+        """
+        _sync_mist_physical_links must write switch→AP relationships to the
+        links table (parent=switch, child=AP), not topology_edges.
+        """
+        ts = _make_topology_sync(mist_enabled=True, velo_enabled=False)
+        ap_rows = [
+            {
+                "device_id": "ap-001",
+                "hostname": "sfo-ap-01",
+                "ip_address": "10.0.1.10",
+                "model": "AP43",
+                "site_id": "site-101",
+                "site_name": "SFO-DC",
+                "connected": True,
+                "num_clients": 12,
+                "firmware_version": "0.14.1",
+                "mac": "aa:bb:cc:dd:ee:01",
+            }
+        ]
+        # Wired uplink event for this AP
+        # Column aliases match the SQL query: metadata->>'mist_switch_mac' AS switch_mac
+        uplink_rows = [
+            {
+                "device_id": "ap-001",
+                "switch_mac": "00:11:22:33:44:55",
+                "port_id": "ge-0/0/1",
+                "site_id": "site-101",
+            }
+        ]
+
+        exec_calls = []
+        with patch(
+            "backend.worker.collectors.topology_sync.db.fetch",
+            AsyncMock(side_effect=[ap_rows, uplink_rows]),
+        ):
+            with patch(
+                "backend.worker.collectors.topology_sync.db.fetchrow",
+                AsyncMock(return_value=None),
+            ):
+                with patch(
+                    "backend.worker.collectors.topology_sync.db.execute",
+                    AsyncMock(),
+                ) as mock_exec:
+                    mock_exec.side_effect = lambda *a: exec_calls.append(a)
+                    await ts.sync()
+
+        # Find the link insert
+        link_inserts = [
+            c for c in exec_calls if "INSERT INTO links" in c[0]
+        ]
+        assert len(link_inserts) == 1
+
+        # Verify parent=switch, child=AP
+        parent_node_id, child_node_id, link_type = link_inserts[0][1:4]
+        assert parent_node_id == "switch-00:11:22:33:44:55"
+        assert child_node_id == "mist-ap-ap-001"
+        assert link_type == "physical"
+
+    @pytest.mark.asyncio
+    async def test_no_uplink_events_skips_link_creation(self):
+        ts = _make_topology_sync(mist_enabled=True, velo_enabled=False)
+        ap_rows = [
+            {
+                "device_id": "ap-001",
+                "hostname": "sfo-ap-01",
+                "ip_address": "10.0.1.10",
+                "model": "AP43",
+                "site_id": "site-101",
+                "site_name": "SFO-DC",
+                "connected": True,
+                "num_clients": 12,
+                "firmware_version": "0.14.1",
+                "mac": "aa:bb:cc:dd:ee:01",
+            }
+        ]
+        # No uplink events
+        with patch(
+            "backend.worker.collectors.topology_sync.db.fetch",
+            AsyncMock(side_effect=[ap_rows, []]),
+        ):
+            with patch(
+                "backend.worker.collectors.topology_sync.db.execute",
+                AsyncMock(),
+            ) as mock_exec:
+                await ts.sync()
+
+        # No link inserts should happen
+        link_calls = [c for c in mock_exec.call_args_list if "INSERT INTO links" in str(c)]
+        assert len(link_calls) == 0

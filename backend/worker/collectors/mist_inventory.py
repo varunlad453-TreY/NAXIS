@@ -25,8 +25,10 @@ except ImportError:  # pragma: no cover - supports both entry-point styles
     from shared.models.collector_outcome import CollectorOutcome
 try:
     from backend.shared.database.client import db
+    from backend.shared.database.identity import IdentityResolver
 except ImportError:  # pragma: no cover - supports both entry-point styles
     from shared.database.client import db
+    from shared.database.identity import IdentityResolver
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +73,7 @@ class MistInventoryCollector:
             rows = _build_rows(devices, site_map, stats_map, self._org_id)
             if rows:
                 await _upsert_inventory(rows)
+                await _sync_identities(rows)
 
             outcome.rows_written = len(rows)
             outcome.metadata["devices_found"] = len(devices)
@@ -132,7 +135,7 @@ class MistInventoryCollector:
                         if mac:
                             stats_map[mac] = ap
             except Exception:
-                pass  # non-fatal: stats are best-effort
+                logger.warning("Mist stats: failed to fetch live data for site %s", site_id, exc_info=True)
 
         # Process 10 sites at a time
         batch_size = 10
@@ -164,6 +167,15 @@ def _build_rows(
         uptime = int(stats.get("uptime", 0) or 0)
         firmware = d.get("version", "") or stats.get("version", "") or ""
 
+        raw_type = str(d.get("type", "")).lower()
+        model_name = str(d.get("model", "")).lower()
+        if raw_type == "switch" or model_name.startswith("ex") or "switch" in raw_type:
+            device_type = "switch"
+        elif raw_type == "gateway" or model_name.startswith("srx"):
+            device_type = "gateway"
+        else:
+            device_type = raw_type or "ap"
+
         rows.append({
             "device_id": ap_id,
             "platform": "mist",
@@ -171,7 +183,7 @@ def _build_rows(
             "mac": mac,
             "serial": d.get("serial", "") or "",
             "model": d.get("model", "") or "",
-            "device_type": d.get("type", "ap"),
+            "device_type": device_type,
             "ip_address": ip_address,
             "site_id": site_id,
             "site_name": site_name,
@@ -228,3 +240,40 @@ async def _upsert_inventory(rows: List[Dict[str, Any]]) -> None:
             row["num_clients"], row["uptime_seconds"], row["firmware_version"],
             row["last_seen"],
         )
+
+
+async def _sync_identities(rows: List[Dict[str, Any]]) -> None:
+    """Ensure every inventory row is represented in the canonical identity tables."""
+    if not rows:
+        return
+
+    resolver = IdentityResolver()
+
+    # Sites first
+    site_specs = [
+        (row["site_id"], row["site_name"] or row["site_id"], "mist", None)
+        for row in rows
+        if row["site_id"]
+    ]
+    site_map = await resolver.resolve_sites(site_specs)
+
+    # Devices
+    pairs: List[Tuple[str, str, Dict[str, Any]]] = []
+    for row in rows:
+        site_key = site_map.get(("mist", row["site_id"]))
+        hints = {
+            "display_name": row["hostname"] or row["device_id"],
+            "device_type": row["device_type"] or "ap",
+            "model": row["model"] or "",
+            "serial": row["serial"] or "",
+            "mac": row["mac"] or "",
+            "ip_address": row["ip_address"] or "",
+            "site_key": site_key,
+        }
+        pairs.append(("mist", row["device_id"], hints))
+        if row["mac"]:
+            mac_hints = dict(hints)
+            mac_hints["vendor_display_name"] = f"{row['hostname'] or row['device_id']} (mac)"
+            pairs.append(("mist", row["mac"], mac_hints))
+
+    await resolver.resolve_devices(pairs)

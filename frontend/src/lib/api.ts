@@ -5,8 +5,10 @@
 import type {
   IncidentListResponse,
   IncidentDetail,
+  IncidentStats,
   HealthResponse,
   IncidentSeverity,
+  IncidentStatus,
 } from "@/types/incident";
 import type { EventListResponse, EventFilterParams } from "@/types/event";
 import type { DeviceListResponse, DeviceFilterParams } from "@/types/device";
@@ -27,8 +29,28 @@ import type {
   SiteSummaryResponse,
 } from "@/types/topology";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+import { getAuthToken } from "@/lib/auth";
+
+export const getApiBase = (): string => {
+  if (typeof window !== "undefined") {
+    const envUrl = process.env.NEXT_PUBLIC_API_URL;
+    if (envUrl && envUrl !== "http://localhost:8000" && envUrl !== "http://127.0.0.1:8000") {
+      return envUrl;
+    }
+    const hostname = window.location.hostname;
+    if (!hostname || hostname === "localhost") {
+      return "http://127.0.0.1:8000";
+    }
+    return `http://${hostname}:8000`;
+  }
+  return process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+};
+
+export const API_BASE = getApiBase();
 const API_KEY = process.env.NEXT_PUBLIC_API_KEY || "";
+
+
+
 
 class APIError extends Error {
   constructor(
@@ -41,18 +63,36 @@ class APIError extends Error {
   }
 }
 
-async function fetchAPI<T>(endpoint: string, options?: RequestInit): Promise<T> {
+export async function fetchAPI<T>(endpoint: string, options?: RequestInit): Promise<T> {
+
   const url = `${API_BASE}${endpoint}`;
+  const authToken = getAuthToken();
 
   try {
-    const response = await fetch(url, {
+    let response = await fetch(url, {
       ...options,
       headers: {
         "Content-Type": "application/json",
-        ...(API_KEY ? { "X-API-Key": API_KEY } : {}),
+        ...(authToken ? { Authorization: `Bearer ${authToken}` } : API_KEY ? { "X-API-Key": API_KEY } : {}),
         ...options?.headers,
       },
-    });
+    }).catch(() => null);
+
+    if (!response && API_BASE !== "http://127.0.0.1:8000") {
+      const fallbackUrl = `http://127.0.0.1:8000${endpoint}`;
+      response = await fetch(fallbackUrl, {
+        ...options,
+        headers: {
+          "Content-Type": "application/json",
+          ...(authToken ? { Authorization: `Bearer ${authToken}` } : API_KEY ? { "X-API-Key": API_KEY } : {}),
+          ...options?.headers,
+        },
+      }).catch(() => null);
+    }
+
+    if (!response) {
+      throw new APIError("Network connection offline", 0);
+    }
 
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}));
@@ -69,6 +109,7 @@ async function fetchAPI<T>(endpoint: string, options?: RequestInit): Promise<T> 
     throw new APIError("Network error", 0, error);
   }
 }
+
 
 function toCamelCase(str: string): string {
   return str.replace(/([-_][a-z])/g, (g) => g.toUpperCase().replace(/[-_]/g, ""));
@@ -95,12 +136,16 @@ export const api = {
    */
   listIncidents: (params?: {
     severity?: IncidentSeverity[];
+    status?: IncidentStatus[];
     limit?: number;
     offset?: number;
   }) => {
     const searchParams = new URLSearchParams();
     if (params?.severity) {
       params.severity.forEach((s) => searchParams.append("severity", s));
+    }
+    if (params?.status) {
+      params.status.forEach((s) => searchParams.append("status", s));
     }
     if (params?.limit) searchParams.set("limit", String(params.limit));
     if (params?.offset) searchParams.set("offset", String(params.offset));
@@ -125,6 +170,11 @@ export const api = {
    * Get incident by ID
    */
   getIncident: (id: string) => fetchAPI<IncidentDetail>(`/incidents/${id}`),
+
+  /**
+   * Truthful incident KPIs — SQL aggregates, never page length
+   */
+  getIncidentStats: () => fetchAPI<IncidentStats>("/incidents/stats"),
 
   /**
    * List events with optional filters

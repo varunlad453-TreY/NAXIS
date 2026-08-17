@@ -31,7 +31,7 @@ export function EventRow({ event }: EventRowProps) {
 
         <div className="col-span-12 space-y-1.5 sm:col-span-9 lg:col-span-5">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="rounded-md border border-border/70 bg-surface-subtle/30 px-2 py-0.5 text-xs font-medium uppercase tracking-wider text-foreground-muted">
+            <span className="text-[11px] font-medium uppercase tracking-wider text-foreground-subtle">
               {event.source}
             </span>
           </div>
@@ -57,7 +57,7 @@ export function EventRow({ event }: EventRowProps) {
 
         <div className="col-span-12 flex items-center justify-start gap-3 lg:col-span-2">
           {event.incident_id && (
-            <div className="inline-flex items-center gap-1 rounded-md border border-primary/20 bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
+            <div className="inline-flex items-center gap-1 text-[11px] font-medium text-primary">
               <LinkIcon className="h-3 w-3" />
               <span>Incident</span>
             </div>

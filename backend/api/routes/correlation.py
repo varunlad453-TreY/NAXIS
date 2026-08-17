@@ -109,6 +109,7 @@ async def stream_incidents():
                             yield f"data: {data}\n\n"
                             continue
                     except Exception:
+                        logger.warning("SSE: Redis pubsub error, falling back to heartbeat", exc_info=True)
                         yield f"data: {json.dumps({'type': 'heartbeat'})}\n\n"
                         await asyncio.sleep(30)
                 else:

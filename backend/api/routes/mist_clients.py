@@ -10,8 +10,13 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Response
 from fastapi.responses import StreamingResponse
+
+try:
+    from backend.shared.cache import cached_api_route
+except ImportError:
+    from shared.cache import cached_api_route
 
 from config.settings import get_settings
 
@@ -302,29 +307,17 @@ async def _build_timeline(mac: str, start: int, end: int) -> Dict[str, Any]:
     }
 
 
-async def _get_timeline_cached(mac: str, start: int, end: int) -> Dict[str, Any]:
-    key = (mac, start, end)
-    hit = _cache.get(key)
-    now = time.time()
-    if hit and now - hit[0] < _CACHE_TTL_S:
-        return hit[1]
-    data = await _build_timeline(mac, start, end)
-    _cache[key] = (now, data)
-    if len(_cache) > 256:
-        for k in [k for k, v in _cache.items() if now - v[0] > _CACHE_TTL_S]:
-            _cache.pop(k, None)
-    return data
-
-
 @router.get("/{mac}/timeline")
+@cached_api_route(ttl_seconds=_CACHE_TTL_S, key_prefix="mist_client_timeline")
 async def get_client_timeline(
     mac: str,
+    response: Response,
     since: Optional[datetime] = Query(None),
     until: Optional[datetime] = Query(None),
 ) -> Dict[str, Any]:
     normalized = _normalize_mac(mac)
     start, end = _resolve_window(since, until)
-    return await _get_timeline_cached(normalized, start, end)
+    return await _build_timeline(normalized, start, end)
 
 
 _CSV_COLS = ["ts", "kind", "site_name", "ap", "ssid", "band", "detail", "duration_s", "ended"]

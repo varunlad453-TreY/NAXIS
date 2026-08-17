@@ -18,6 +18,7 @@ from fastapi.exceptions import HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import APIKeyHeader
 
+from api.routes.correlation import router as correlation_router
 from api.routes.devices import router as devices_router
 from api.routes.integrations import router as integrations_router
 from api.routes.events import router as events_router
@@ -28,7 +29,9 @@ from api.routes.mist_clients import router as mist_clients_router
 from api.routes.mist_sle import router as mist_sle_router
 from api.routes.sdwan_chat import router as sdwan_router
 from api.routes.topology import router as topology_router
-from api.routes.correlation import router as correlation_router
+from api.routes.diagnostics_routes import router as diagnostics_router
+from api.routes.location_routes import router as location_router
+from api.routes.rca_routes import router as rca_router
 from config.settings import get_settings
 from shared.database.client import db
 from shared.database.collector_telemetry import ensure_collector_telemetry_schema
@@ -136,6 +139,9 @@ app.include_router(mist_sle_router, dependencies=_auth)
 app.include_router(sdwan_router, dependencies=_auth)
 app.include_router(topology_router, dependencies=_auth)
 app.include_router(correlation_router, dependencies=_auth)
+app.include_router(diagnostics_router, dependencies=_auth)
+app.include_router(location_router, dependencies=_auth)
+app.include_router(rca_router, dependencies=_auth)
 
 
 @app.get("/", include_in_schema=False)

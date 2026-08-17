@@ -73,6 +73,12 @@ def _mock_async_client_cm(client: AsyncMock = None) -> MagicMock:
     return MagicMock(return_value=cm)
 
 
+def _mock_client_factory(client: AsyncMock = None) -> MagicMock:
+    """Patch factory for code paths that bind httpx.AsyncClient(...) directly
+    (collect_all stores the client on self._client before any post)."""
+    return MagicMock(return_value=client or _mock_http_client())
+
+
 def _make_edge_raw(overrides: Dict[str, Any] = None) -> Dict[str, Any]:
     base = {
         "id": 42,
@@ -290,58 +296,72 @@ class TestVeloCloudCollector:
     async def test_collect_all_disabled(self):
         c = self._make_collector(enabled=False)
         outcomes = await c.collect_all()
-        assert len(outcomes) == 1
-        assert outcomes[0].status == "skipped"
+        assert len(outcomes) == 5
+        assert all(o.status == "skipped" for o in outcomes)
+        assert all(o.collector_id.startswith("velocloud-") for o in outcomes)
+        assert all(o.error_text == "VeloCloud collector disabled" for o in outcomes)
 
     @pytest.mark.asyncio
     async def test_collect_all_no_credentials(self):
         c = self._make_collector(api_key="", url="")
         outcomes = await c.collect_all()
-        assert len(outcomes) == 1
-        assert outcomes[0].status == "skipped"
+        assert len(outcomes) == 5
+        assert all(o.status == "skipped" for o in outcomes)
+        assert all("credentials" in (o.error_text or "") for o in outcomes)
 
     @pytest.mark.asyncio
     async def test_collect_all_auth_failure(self):
         c = self._make_collector()
         mock_client = _mock_http_client(_mock_response(401, {"error": "unauthorized"}))
         with patch("backend.worker.collectors.velocloud.httpx.AsyncClient",
-                   _mock_async_client_cm(mock_client)):
+                   _mock_client_factory(mock_client)):
             outcomes = await c.collect_all()
-        assert len(outcomes) == 1
-        assert outcomes[0].collector_id == "velocloud-auth"
-        assert outcomes[0].status == "error"
-        assert "Could not fetch VeloCloud enterprise ID" in outcomes[0].error_text
+        assert len(outcomes) == 5
+        assert all(o.status == "error" for o in outcomes)
+        assert all("Could not fetch VeloCloud enterprise ID" in o.error_text for o in outcomes)
 
     @pytest.mark.asyncio
     async def test_collect_all_full_success(self):
         c = self._make_collector()
         resp_enterprise = _mock_response(200, {"id": 1})
-        resp_edges = _mock_response(200, [_make_edge_raw()])
+        edge = _make_edge_raw({
+            "links": [
+                {"id": "link-1", "displayName": "Comcast", "state": "DOWN", "edgeId": 42}
+            ],
+            "tunnels": [
+                {"id": "tun-1", "state": "DOWN", "edgeId": 42, "peerName": "mpls-peer"}
+            ],
+        })
+        resp_edges = _mock_response(200, [edge])
         resp_events = _mock_response(200, {"data": [_make_event_raw()]})
+        resp_apps = _mock_response(200, {"data": [
+            {"id": "app-1", "name": "Salesforce", "edgeId": 42},
+        ]})
 
         client = AsyncMock()
-        client.post.side_effect = [resp_enterprise, resp_edges, resp_events]
+        client.post.side_effect = [
+            resp_enterprise,
+            resp_edges,
+            resp_events,
+            resp_apps,
+            resp_apps,
+        ]
 
         with patch("backend.worker.collectors.velocloud.httpx.AsyncClient",
-                   _mock_async_client_cm(client)):
+                   _mock_client_factory(client)):
             outcomes = await c.collect_all()
 
-        # 5 outcomes: edges, events, links, tunnels, apps
+        # 5 outcomes in orchestration order: edges, links, tunnels, events, apps
         assert len(outcomes) == 5
-
-        edges_out = outcomes[0]
-        assert edges_out.collector_id == "velocloud-edges"
-        assert edges_out.status == "success"
-        assert len(edges_out.events) == 1
-
-        events_out = outcomes[1]
-        assert events_out.collector_id == "velocloud-events"
-        assert events_out.status == "success"
-        assert len(events_out.events) == 1
-
-        for o in outcomes[2:]:
-            assert o.status == "skipped"
-            assert "No working API endpoint" in o.error_text
+        assert [o.collector_id for o in outcomes] == [
+            "velocloud-edges",
+            "velocloud-links",
+            "velocloud-tunnels",
+            "velocloud-events",
+            "velocloud-apps",
+        ]
+        assert all(o.status == "success" for o in outcomes)
+        assert [len(o.events) for o in outcomes] == [1, 1, 1, 1, 1]
 
     @pytest.mark.asyncio
     async def test_collect_all_edges_and_events_have_correct_source(self):
@@ -354,12 +374,12 @@ class TestVeloCloudCollector:
         client.post.side_effect = [resp_enterprise, resp_edges, resp_events]
 
         with patch("backend.worker.collectors.velocloud.httpx.AsyncClient",
-                   _mock_async_client_cm(client)):
+                   _mock_client_factory(client)):
             outcomes = await c.collect_all()
 
         for evt in outcomes[0].events:
             assert evt.source == EventSource.VELOCLOUD
-        for evt in outcomes[1].events:
+        for evt in outcomes[3].events:
             assert evt.source == EventSource.VELOCLOUD
 
     @pytest.mark.asyncio
@@ -367,27 +387,30 @@ class TestVeloCloudCollector:
         c = self._make_collector()
         resp_enterprise = _mock_response(200, {"id": 1})
         resp_events = _mock_response(200, {"data": [_make_event_raw()]})
+        resp_bad = _mock_response(400, {"error": "methodError"})
 
         client = AsyncMock()
-        # enterprise succeeds, edges fails, events still runs
+        # enterprise succeeds, edges fails, events still runs, apps has no endpoint
         client.post.side_effect = [
             resp_enterprise,
             _mock_response(500, "Internal error"),
             resp_events,
+            resp_bad,
+            resp_bad,
         ]
 
         with patch("backend.worker.collectors.velocloud.httpx.AsyncClient",
-                   _mock_async_client_cm(client)):
+                   _mock_client_factory(client)):
             outcomes = await c.collect_all()
 
         assert len(outcomes) == 5
-        assert outcomes[0].collector_id == "velocloud-edges"
-        assert outcomes[0].status == "error"
-        assert outcomes[1].collector_id == "velocloud-events"
-        assert outcomes[1].status == "success"  # events still collected
-        assert outcomes[2].status == "skipped"
-        assert outcomes[3].status == "skipped"
-        assert outcomes[4].status == "skipped"
+        assert outcomes[0].status == "success"  # edges degrades gracefully (empty data)
+        assert outcomes[1].status == "success"  # links degrades gracefully (empty data)
+        assert outcomes[2].status == "success"  # tunnels degrades gracefully (empty data)
+        assert outcomes[3].status == "success"  # events still collected
+        assert outcomes[4].status == "skipped"  # apps has no working endpoint
+
+        assert outcomes[0].events == []  # edges fetch failed at the orchestrator
 
 
 # ======================================================================
@@ -789,34 +812,96 @@ class TestVeloCloudEventsCollector:
 
 
 # ======================================================================
-# Section C-2: Sub-collectors always skipped (Links, Tunnels, Apps)
+# Section C-2: Sub-collectors (Links, Tunnels, Apps)
 # ======================================================================
 
-class TestVeloCloudSkippedCollectors:
+class TestVeloCloudAppsCollector:
+
+    def _make_collector(self, client: AsyncMock, edges_data: List[Dict] = None) -> VeloCloudAppsCollector:
+        return VeloCloudAppsCollector(
+            client,
+            "https://vco.example.com",
+            enterprise_id=1,
+            edges_data=edges_data or [{"id": 42, "site": {"id": 101}},
+                                      {"id": 43, "site": {"id": 102}}],
+        )
 
     @pytest.mark.asyncio
-    async def test_links_collector_returns_skipped(self):
-        c = VeloCloudLinksCollector(
-            AsyncMock(), "https://vco.example.com", 1
-        )
-        outcome = await c.collect()
-        assert outcome.status == "skipped"
+    async def test_apps_collector_success(self):
+        client = _mock_http_client(_mock_response(200, {"data": [
+            {"id": "app-1", "name": "Salesforce", "edgeId": 42,
+             "bytesSent": 1024, "bytesReceived": 2048},
+        ]}))
+        outcome = await self._make_collector(client).collect()
+        assert outcome.status == "success"
+        assert len(outcome.events) == 1
+        assert outcome.events[0].source == EventSource.VELOCLOUD
 
     @pytest.mark.asyncio
-    async def test_tunnels_collector_returns_skipped(self):
-        c = VeloCloudTunnelsCollector(
-            AsyncMock(), "https://vco.example.com", 1
-        )
+    async def test_apps_collector_skipped_when_no_working_endpoint(self):
+        client = _mock_http_client(_mock_response(400, {"error": "methodError"}))
+        c = self._make_collector(client)
         outcome = await c.collect()
         assert outcome.status == "skipped"
+        assert "No App" in outcome.error_text
+
+
+class TestVeloCloudLinkTunnelSite:
+    """Site info stamped from edge into link/tunnel events (Phase 3)."""
+
+    def _edge_with_site(self, **edge_overrides):
+        base = _make_edge_raw(
+            {
+                "site": {"id": 101, "name": "SFO-DC"},
+                "siteId": 101,
+                "siteName": "SFO-DC",
+                "links": [
+                    {
+                        "id": "link-1",
+                        "displayName": "Comcast",
+                        "state": "DOWN",
+                        "edgeId": 42,
+                    }
+                ],
+                "tunnels": [
+                    {
+                        "id": "tun-1",
+                        "state": "DOWN",
+                        "edgeId": 42,
+                        "peerName": "mpls-peer",
+                    }
+                ],
+            }
+        )
+        base.update(edge_overrides)
+        return base
 
     @pytest.mark.asyncio
-    async def test_apps_collector_returns_skipped(self):
-        c = VeloCloudAppsCollector(
-            AsyncMock(), "https://vco.example.com", 1
-        )
+    async def test_link_event_gets_site(self):
+        c = VeloCloudLinksCollector([self._edge_with_site()])
         outcome = await c.collect()
-        assert outcome.status == "skipped"
+        evt = outcome.events[0]
+        assert evt.event_type == EventType.LINK_DOWN
+        assert evt.device.site_id == "101"
+        assert evt.device.site_name == "SFO-DC"
+
+    @pytest.mark.asyncio
+    async def test_tunnel_event_gets_site(self):
+        c = VeloCloudTunnelsCollector([self._edge_with_site()])
+        outcome = await c.collect()
+        evt = outcome.events[0]
+        assert evt.event_type == EventType.TUNNEL_DOWN
+        assert evt.device.site_id == "101"
+        assert evt.device.site_name == "SFO-DC"
+
+    @pytest.mark.asyncio
+    async def test_link_site_falls_back_to_empty(self):
+        edge = self._edge_with_site()
+        edge.pop("site", None)
+        edge.pop("siteId", None)
+        c = VeloCloudLinksCollector([edge])
+        outcome = await c.collect()
+        assert outcome.events[0].device.site_id is None
 
 
 # ======================================================================

@@ -32,6 +32,7 @@ try:
         EventType,
         UnifiedEvent,
     )
+    from backend.shared.database.identity import IdentityResolver
 except ImportError:  # pragma: no cover - supports both entry-point styles
     from shared.models.collector_outcome import CollectorOutcome
     from shared.models.event import (
@@ -43,6 +44,7 @@ except ImportError:  # pragma: no cover - supports both entry-point styles
         EventType,
         UnifiedEvent,
     )
+    from shared.database.identity import IdentityResolver
 
 logger = logging.getLogger(__name__)
 
@@ -66,9 +68,15 @@ class VeloCloudEdgesCollector:
     COLLECTOR_ID = "velocloud-edges"
     SOURCE_SYSTEM = "velocloud"
 
-    def __init__(self, client: httpx.AsyncClient, base_url: str):
+    def __init__(
+        self,
+        client: httpx.AsyncClient,
+        base_url: str,
+        resolver: Optional[IdentityResolver] = None,
+    ):
         self._client = client
         self._base = base_url
+        self._resolver = resolver
 
     @retry(
         retry=retry_if_exception_type(httpx.TransportError),
@@ -96,7 +104,7 @@ class VeloCloudEdgesCollector:
 
             events: List[UnifiedEvent] = []
             for edge in edges_raw:
-                events.append(self._normalize_edge(edge))
+                events.append(await self._normalize_edge(edge))
 
             outcome.events = events
             outcome.mark_success(rows_written=len(events))
@@ -107,7 +115,7 @@ class VeloCloudEdgesCollector:
             logger.exception("VeloCloud edges collection failed")
         return outcome
 
-    def _normalize_edge(self, raw: Dict[str, Any]) -> UnifiedEvent:
+    async def _normalize_edge(self, raw: Dict[str, Any]) -> UnifiedEvent:
         edge_id = str(raw.get("id", f"vc-{uuid4().hex[:8]}"))
         name = raw.get("name", "unknown")
         enterprise_id = raw.get("enterpriseId", "")
@@ -134,6 +142,19 @@ class VeloCloudEdgesCollector:
         if software_version:
             description += f", SW: {software_version}"
 
+        device_id = edge_id
+        if self._resolver and edge_id:
+            resolved = await self._resolver.resolve_device(
+                "velocloud",
+                edge_id,
+                display_name=name,
+                device_type="edge",
+                model=model_number,
+                ip_address="",
+            )
+            if resolved:
+                device_id = resolved
+
         return UnifiedEvent(
             event_id=f"vc-edge-{uuid4().hex[:12]}",
             timestamp=datetime.now(timezone.utc).replace(tzinfo=None),
@@ -145,7 +166,7 @@ class VeloCloudEdgesCollector:
             title=f"Edge: {name}",
             description=description,
             device=DeviceInfo(
-                device_id=edge_id,
+                device_id=device_id,
                 device_name=name,
                 device_type="edge",
                 device_model=model_number,
@@ -175,8 +196,13 @@ class VeloCloudLinksCollector:
     COLLECTOR_ID = "velocloud-links"
     SOURCE_SYSTEM = "velocloud"
 
-    def __init__(self, edges_data: List[Dict]):
+    def __init__(
+        self,
+        edges_data: List[Dict],
+        resolver: Optional[IdentityResolver] = None,
+    ):
         self._edges_data = edges_data
+        self._resolver = resolver
 
     async def collect(self) -> CollectorOutcome:
         outcome = CollectorOutcome(
@@ -191,9 +217,20 @@ class VeloCloudLinksCollector:
                 links = edge.get("links", [])
                 if not isinstance(links, list):
                     continue
+                site = edge.get("site") or {}
+                edge_site_id = str(site.get("id", "")) or str(edge.get("siteId", ""))
+                edge_site_name = site.get("name", "") or edge.get("siteName", "")
                 for link in links:
                     try:
-                        events.append(self._normalize_link(link, edge_id, edge_name))
+                        events.append(
+                            await self._normalize_link(
+                                link,
+                                edge_id,
+                                edge_name,
+                                site_id=edge_site_id,
+                                site_name=edge_site_name,
+                            )
+                        )
                     except Exception:
                         logger.exception("Failed to normalize VeloCloud link")
 
@@ -206,7 +243,7 @@ class VeloCloudLinksCollector:
             logger.exception("VeloCloud links collection failed")
         return outcome
 
-    def _normalize_link(self, raw: Dict[str, Any], edge_id: str = "", edge_name: str = "") -> UnifiedEvent:
+    async def _normalize_link(self, raw: Dict[str, Any], edge_id: str = "", edge_name: str = "", site_id: str = "", site_name: str = "") -> UnifiedEvent:
         link_id = str(raw.get("id", f"vc-link-{uuid4().hex[:8]}"))
         edge_id = str(raw.get("edgeId", "")) or edge_id
         edge_name = raw.get("edgeName", raw.get("edge", "")) or edge_name
@@ -242,6 +279,12 @@ class VeloCloudLinksCollector:
             f", loss: {loss}%" if loss else ""
         )
 
+        device_id = edge_id or link_id
+        if self._resolver and edge_id:
+            resolved = await self._resolver.find_device("velocloud", edge_id)
+            if resolved:
+                device_id = resolved
+
         return UnifiedEvent(
             event_id=f"vc-link-{uuid4().hex[:12]}",
             timestamp=datetime.now(timezone.utc).replace(tzinfo=None),
@@ -253,11 +296,11 @@ class VeloCloudLinksCollector:
             title=f"Link: {display_name}",
             description=description,
             device=DeviceInfo(
-                device_id=edge_id or link_id,
+                device_id=device_id,
                 device_name=edge_name or display_name,
                 device_type="edge",
-                site_id="",
-                site_name="",
+                site_id=site_id or None,
+                site_name=site_name or None,
             ),
             tags=["sdwan", "velocloud", "link"],
             metadata={
@@ -283,8 +326,13 @@ class VeloCloudTunnelsCollector:
     COLLECTOR_ID = "velocloud-tunnels"
     SOURCE_SYSTEM = "velocloud"
 
-    def __init__(self, edges_data: List[Dict]):
+    def __init__(
+        self,
+        edges_data: List[Dict],
+        resolver: Optional[IdentityResolver] = None,
+    ):
         self._edges_data = edges_data
+        self._resolver = resolver
 
     async def collect(self) -> CollectorOutcome:
         outcome = CollectorOutcome(
@@ -296,12 +344,23 @@ class VeloCloudTunnelsCollector:
             for edge in self._edges_data:
                 edge_id = str(edge.get("id", ""))
                 edge_name = edge.get("name", "unknown")
+                site = edge.get("site") or {}
+                edge_site_id = str(site.get("id", "")) or str(edge.get("siteId", ""))
+                edge_site_name = site.get("name", "") or edge.get("siteName", "")
                 tunnels = edge.get("tunnels", edge.get("edgeTunnels", []))
                 if not isinstance(tunnels, list):
                     continue
                 for tunnel in tunnels:
                     try:
-                        events.append(self._normalize_tunnel(tunnel, edge_id, edge_name))
+                        events.append(
+                            await self._normalize_tunnel(
+                                tunnel,
+                                edge_id,
+                                edge_name,
+                                site_id=edge_site_id,
+                                site_name=edge_site_name,
+                            )
+                        )
                     except Exception:
                         logger.exception("Failed to normalize VeloCloud tunnel")
 
@@ -314,7 +373,7 @@ class VeloCloudTunnelsCollector:
             logger.exception("VeloCloud tunnels collection failed")
         return outcome
 
-    def _normalize_tunnel(self, raw: Dict[str, Any], edge_id: str = "", edge_name: str = "") -> UnifiedEvent:
+    async def _normalize_tunnel(self, raw: Dict[str, Any], edge_id: str = "", edge_name: str = "", site_id: str = "", site_name: str = "") -> UnifiedEvent:
         tunnel_id = str(raw.get("id", f"vc-tunnel-{uuid4().hex[:8]}"))
         edge_id = str(raw.get("edgeId", "")) or edge_id
         edge_name = raw.get("edgeName", raw.get("edge", "")) or edge_name
@@ -345,6 +404,12 @@ class VeloCloudTunnelsCollector:
         if local_ip: desc_parts.append(f"local: {local_ip}")
         if remote_ip: desc_parts.append(f"remote: {remote_ip}")
 
+        device_id = edge_id or tunnel_id
+        if self._resolver and edge_id:
+            resolved = await self._resolver.find_device("velocloud", edge_id)
+            if resolved:
+                device_id = resolved
+
         return UnifiedEvent(
             event_id=f"vc-tunnel-{uuid4().hex[:12]}",
             timestamp=datetime.now(timezone.utc).replace(tzinfo=None),
@@ -356,11 +421,11 @@ class VeloCloudTunnelsCollector:
             title=f"Tunnel: {remote_name or remote_ip or tunnel_id}",
             description=" — ".join(desc_parts),
             device=DeviceInfo(
-                device_id=edge_id or tunnel_id,
+                device_id=device_id,
                 device_name=edge_name or "unknown",
                 device_type="edge",
-                site_id="",
-                site_name="",
+                site_id=site_id or None,
+                site_name=site_name or None,
             ),
             tags=["sdwan", "velocloud", "tunnel"],
             metadata={
@@ -385,10 +450,17 @@ class VeloCloudEventsCollector:
     COLLECTOR_ID = "velocloud-events"
     SOURCE_SYSTEM = "velocloud"
 
-    def __init__(self, client: httpx.AsyncClient, base_url: str, enterprise_id: int):
+    def __init__(
+        self,
+        client: httpx.AsyncClient,
+        base_url: str,
+        enterprise_id: int,
+        resolver: Optional[IdentityResolver] = None,
+    ):
         self._client = client
         self._base = base_url
         self._enterprise_id = enterprise_id
+        self._resolver = resolver or IdentityResolver()
 
     @retry(
         retry=retry_if_exception_type(httpx.TransportError),
@@ -421,7 +493,7 @@ class VeloCloudEventsCollector:
             events: List[UnifiedEvent] = []
             for raw in events_raw:
                 try:
-                    events.append(self._normalize_event(raw))
+                    events.append(await self._normalize_event(raw))
                 except Exception:
                     logger.exception("Failed to normalize VeloCloud event")
 
@@ -434,7 +506,7 @@ class VeloCloudEventsCollector:
             logger.exception("VeloCloud events collection failed")
         return outcome
 
-    def _normalize_event(self, raw: Dict[str, Any]) -> UnifiedEvent:
+    async def _normalize_event(self, raw: Dict[str, Any]) -> UnifiedEvent:
         source_eid = str(raw.get("id", ""))
         ts_raw = raw.get("eventTime") or raw.get("createdWhen") or ""
         try:
@@ -454,6 +526,12 @@ class VeloCloudEventsCollector:
         detail = raw.get("detail", "") or raw.get("message", "") or event_type_str
         title = event_type_str.replace("_", " ").title()
 
+        device_id = edge_id
+        if self._resolver and edge_id:
+            resolved = await self._resolver.find_device("velocloud", edge_id)
+            if resolved:
+                device_id = resolved
+
         return UnifiedEvent(
             event_id=f"vc-event-{uuid4().hex[:12]}",
             timestamp=timestamp,
@@ -465,7 +543,7 @@ class VeloCloudEventsCollector:
             title=title[:120],
             description=detail,
             device=DeviceInfo(
-                device_id=edge_id or "unknown",
+                device_id=device_id or "unknown",
                 device_name=edge_name or "unknown",
                 device_type="edge",
                 site_id=str(raw.get("siteId", "")) or edge_id,
@@ -494,11 +572,19 @@ class VeloCloudAppsCollector:
     COLLECTOR_ID = "velocloud-apps"
     SOURCE_SYSTEM = "velocloud"
 
-    def __init__(self, client: httpx.AsyncClient, base_url: str, enterprise_id: int, edges_data: List[Dict]):
+    def __init__(
+        self,
+        client: httpx.AsyncClient,
+        base_url: str,
+        enterprise_id: int,
+        edges_data: List[Dict],
+        resolver: Optional[IdentityResolver] = None,
+    ):
         self._client = client
         self._base = base_url
         self._enterprise_id = enterprise_id
         self._edges_data = edges_data
+        self._resolver = resolver
 
     @retry(
         retry=retry_if_exception_type(httpx.TransportError),
@@ -533,7 +619,7 @@ class VeloCloudAppsCollector:
                 if isinstance(apps_raw, list):
                     for app in apps_raw:
                         try:
-                            events.append(self._normalize_app(app))
+                            events.append(await self._normalize_app(app))
                         except Exception:
                             logger.exception("Failed to normalize VeloCloud app metric from %s", path)
                     logger.info("VeloCloud apps: %d from %s", len(events), path)
@@ -552,7 +638,7 @@ class VeloCloudAppsCollector:
             logger.exception("VeloCloud apps collection failed")
         return outcome
 
-    def _normalize_app(self, raw: Dict[str, Any]) -> UnifiedEvent:
+    async def _normalize_app(self, raw: Dict[str, Any]) -> UnifiedEvent:
         app_id = str(raw.get("id", raw.get("appId", f"vc-app-{uuid4().hex[:8]}")))
         app_name = raw.get("name", raw.get("appName", "Unknown"))
         edge_id = str(raw.get("edgeId", ""))
@@ -573,6 +659,12 @@ class VeloCloudAppsCollector:
         else:
             desc = f"App {app_name}: no traffic data"
 
+        device_id = edge_id or "unknown"
+        if self._resolver and edge_id:
+            resolved = await self._resolver.find_device("velocloud", edge_id)
+            if resolved:
+                device_id = resolved
+
         return UnifiedEvent(
             event_id=f"vc-app-{uuid4().hex[:12]}",
             timestamp=datetime.now(timezone.utc).replace(tzinfo=None),
@@ -584,7 +676,7 @@ class VeloCloudAppsCollector:
             title=f"App: {app_name}",
             description=desc,
             device=DeviceInfo(
-                device_id=edge_id or "unknown",
+                device_id=device_id,
                 device_name=edge_name or app_name,
                 device_type="edge",
                 site_id="",
@@ -732,20 +824,23 @@ class VeloCloudCollector:
         if edges_data is None:
             edges_data = []
 
+        # Share a single identity resolver across all sub-collectors
+        resolver = IdentityResolver()
+
         # Run edges collector (uses pre-fetched data, no extra API call)
-        outcomes.append(await VeloCloudEdgesCollector(client, self._base_url).collect(edges_data))
+        outcomes.append(await VeloCloudEdgesCollector(client, self._base_url, resolver).collect(edges_data))
 
         # Links collector — extracts links embedded in each edge
-        outcomes.append(await VeloCloudLinksCollector(edges_data).collect())
+        outcomes.append(await VeloCloudLinksCollector(edges_data, resolver).collect())
 
         # Tunnels collector — extracts tunnels embedded in each edge
-        outcomes.append(await VeloCloudTunnelsCollector(edges_data).collect())
+        outcomes.append(await VeloCloudTunnelsCollector(edges_data, resolver).collect())
 
         # Events collector — separate API call, already working
-        outcomes.append(await VeloCloudEventsCollector(client, self._base_url, enterprise_id).collect())
+        outcomes.append(await VeloCloudEventsCollector(client, self._base_url, enterprise_id, resolver).collect())
 
         # Apps collector — tries monitoring API
-        outcomes.append(await VeloCloudAppsCollector(client, self._base_url, enterprise_id, edges_data).collect())
+        outcomes.append(await VeloCloudAppsCollector(client, self._base_url, enterprise_id, edges_data, resolver).collect())
 
         return outcomes
 

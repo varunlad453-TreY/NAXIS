@@ -5,8 +5,8 @@ import dagre from "dagre";
 import type { TopologyNode, TopologyEdge } from "@/types/topology";
 import { NODE_TYPE_META } from "@/types/topology";
 
-export const NODE_WIDTH = 200;
-export const NODE_HEIGHT = 72;
+export const NODE_WIDTH = 220;
+export const NODE_HEIGHT = 90;
 const GROUP_PADDING = 48;
 const GROUP_HEADER_HEIGHT = 44;
 

@@ -50,6 +50,11 @@ from worker.collectors.arista_wlc import AristaWlcCollector
 from worker.collectors.topology_sync import TopologySync
 from worker.collectors.health_snapshot import collect_health_snapshots
 from worker.collectors.snmp_poller import SnmpPoller
+from worker.collectors.sdwan_adapter import get_sdwan_adapter
+from worker.collectors.aruba_central import ArubaCentralCollector
+from worker.collectors.clearpass import ClearPassCollector
+from worker.collectors.cloudflare_segment import CloudflarePathSegmentCollector
+from worker.collectors.netskope_segment import NetskopePathSegmentCollector
 from shared.monitoring.collector_health import check_collector_health
 from shared.monitoring.notifier import dispatch_alerts
 from shared.database.retention import run_retention
@@ -93,6 +98,11 @@ class WorkerDaemon:
         self._velocloud = VeloCloudCollector()
         self._velocloud_inventory = VelocloudInventoryCollector()
         self._arista_wlc = AristaWlcCollector()
+        self._sdwan_adapter = get_sdwan_adapter()
+        self._aruba_central = ArubaCentralCollector()
+        self._clearpass = ClearPassCollector()
+        self._cloudflare_segment = CloudflarePathSegmentCollector()
+        self._netskope_segment = NetskopePathSegmentCollector()
         self._topology_sync = TopologySync()
         self._snmp_poller = SnmpPoller()
         self._last_collected: datetime = datetime.now(timezone.utc) - timedelta(hours=24)
@@ -179,7 +189,7 @@ class WorkerDaemon:
             if incidents:
                 cascade_count = sum(
                     1 for i in incidents
-                    if "failure cascading" in i.title.lower()
+                    if i.symptom_device_ids
                 )
                 residual_count = len(incidents) - cascade_count
 
@@ -253,7 +263,12 @@ class WorkerDaemon:
         # Data retention cleanup (every 24 hours)
         if (now_utc - self._last_retention).total_seconds() >= 86400:
             try:
-                result = await run_retention(days=7)
+                result = await run_retention(
+                    days=7,
+                    event_days=_settings.event_retention_days,
+                    incident_days=_settings.incident_retention_days,
+                    raw_event_days=_settings.raw_event_debug_days,
+                )
                 logger.info("Retention cleanup: %s", result)
             except Exception:
                 logger.exception("Retention cleanup failed")
@@ -333,6 +348,55 @@ class WorkerDaemon:
                 outcomes.extend(awlc_outcomes)
             except Exception:
                 logger.exception("Arista WLC collection failed")
+
+        # HPE Aruba Central collector (WP-3.5)
+        if self._aruba_central.is_configured:
+            try:
+                aruba_outcome = await self._aruba_central.collect()
+                await record_collector_run(aruba_outcome)
+                outcomes.append(aruba_outcome)
+            except Exception:
+                logger.exception("Aruba Central collection failed")
+
+        # Aruba ClearPass collector (WP-3.5)
+        if self._clearpass.is_configured:
+            try:
+                cp_outcome = await self._clearpass.collect()
+                await record_collector_run(cp_outcome)
+                outcomes.append(cp_outcome)
+            except Exception:
+                logger.exception("ClearPass collection failed")
+
+        # Cloudflare Path Segment collector (WP-3.5)
+        if self._cloudflare_segment.is_configured:
+            try:
+                cf_outcome = await self._cloudflare_segment.collect()
+                await record_collector_run(cf_outcome)
+                outcomes.append(cf_outcome)
+            except Exception:
+                logger.exception("Cloudflare path segment collection failed")
+
+        # Netskope Path Segment collector (WP-3.5)
+        if self._netskope_segment.is_configured:
+            try:
+                ns_outcome = await self._netskope_segment.collect()
+                await record_collector_run(ns_outcome)
+                outcomes.append(ns_outcome)
+            except Exception:
+                logger.exception("Netskope path segment collection failed")
+
+        # Vendor-Neutral SD-WAN Adapter (WP-3.6)
+        if self._sdwan_adapter.is_configured:
+            try:
+                sdwan_outcomes = await self._sdwan_adapter.collect_all()
+                for o in sdwan_outcomes:
+                    try:
+                        await record_collector_run(o)
+                    except Exception:
+                        logger.exception("Failed to record SD-WAN adapter run for %s", o.collector_id)
+                outcomes.extend(sdwan_outcomes)
+            except Exception:
+                logger.exception("SD-WAN adapter collection failed")
 
         # SNMP Poller — discovers LLDP/CDP topology edges and interface events
         if self._snmp_poller._enabled and self._snmp_poller._targets:

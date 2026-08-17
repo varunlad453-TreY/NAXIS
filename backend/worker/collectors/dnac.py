@@ -35,6 +35,7 @@ try:
         EventType,
         UnifiedEvent,
     )
+    from backend.shared.database.identity import IdentityResolver
 except ImportError:  # pragma: no cover - supports both entry-point styles
     from shared.models.collector_outcome import CollectorOutcome
     from shared.models.event import (
@@ -46,6 +47,7 @@ except ImportError:  # pragma: no cover - supports both entry-point styles
         EventType,
         UnifiedEvent,
     )
+    from shared.database.identity import IdentityResolver
 
 logger = logging.getLogger(__name__)
 
@@ -69,9 +71,15 @@ class DnacDevicesCollector:
     COLLECTOR_ID = "dnac-devices"
     SOURCE_SYSTEM = "dnac"
 
-    def __init__(self, client: httpx.AsyncClient, base_url: str):
+    def __init__(
+        self,
+        client: httpx.AsyncClient,
+        base_url: str,
+        resolver: Optional[IdentityResolver] = None,
+    ):
         self._client = client
         self._base = base_url
+        self._resolver = resolver
 
     @retry(
         retry=retry_if_exception_type(httpx.TransportError),
@@ -94,7 +102,7 @@ class DnacDevicesCollector:
 
             events: List[UnifiedEvent] = []
             for dev in devices_raw:
-                events.append(self._normalize_device(dev))
+                events.append(await self._normalize_device(dev))
 
             outcome.events = events
             outcome.mark_success(rows_written=len(events))
@@ -105,9 +113,9 @@ class DnacDevicesCollector:
             logger.exception("DNAC devices collection failed")
         return outcome
 
-    def _normalize_device(self, raw: Dict[str, Any]) -> UnifiedEvent:
+    async def _normalize_device(self, raw: Dict[str, Any]) -> UnifiedEvent:
         hostname = raw.get("hostname", "unknown")
-        device_id = raw.get("id", f"dnac-{uuid4().hex[:8]}")
+        dnac_id = raw.get("id", f"dnac-{uuid4().hex[:8]}")
         mgmt_ip = raw.get("managementIpAddress", "")
         reachability = raw.get("reachabilityStatus", "unknown")
         platform = raw.get("platformId", "")
@@ -134,11 +142,25 @@ class DnacDevicesCollector:
         if sw_version:
             description += f", SW: {sw_version}"
 
+        device_id = dnac_id
+        if self._resolver and dnac_id:
+            resolved = await self._resolver.resolve_device(
+                "dnac",
+                dnac_id,
+                display_name=hostname,
+                device_type=family or "router",
+                model=platform,
+                serial=serial,
+                ip_address=mgmt_ip,
+            )
+            if resolved:
+                device_id = resolved
+
         return UnifiedEvent(
             event_id=f"dnac-device-{uuid4().hex[:12]}",
             timestamp=datetime.now(timezone.utc).replace(tzinfo=None),
             source=EventSource.DNAC,
-            source_event_id=device_id,
+            source_event_id=dnac_id,
             severity=severity,
             category=EventCategory.SYSTEM,
             event_type=event_type,
@@ -171,9 +193,15 @@ class DnacAlarmsCollector:
     COLLECTOR_ID = "dnac-alarms"
     SOURCE_SYSTEM = "dnac"
 
-    def __init__(self, client: httpx.AsyncClient, base_url: str):
+    def __init__(
+        self,
+        client: httpx.AsyncClient,
+        base_url: str,
+        resolver: Optional[IdentityResolver] = None,
+    ):
         self._client = client
         self._base = base_url
+        self._resolver = resolver
 
     @retry(
         retry=retry_if_exception_type(httpx.TransportError),
@@ -197,7 +225,7 @@ class DnacAlarmsCollector:
             events: List[UnifiedEvent] = []
             for raw in events_raw:
                 try:
-                    events.append(self._normalize_alarm(raw))
+                    events.append(await self._normalize_alarm(raw))
                 except Exception:
                     logger.exception("Failed to normalize DNAC alarm")
 
@@ -210,7 +238,7 @@ class DnacAlarmsCollector:
             logger.exception("DNAC alarms collection failed")
         return outcome
 
-    def _normalize_alarm(self, raw: Dict[str, Any]) -> UnifiedEvent:
+    async def _normalize_alarm(self, raw: Dict[str, Any]) -> UnifiedEvent:
         ts_raw = raw.get("timestamp")
         if ts_raw:
             # DNAC timestamps are in milliseconds
@@ -234,12 +262,18 @@ class DnacAlarmsCollector:
         event_type, category = _map_dnac_event_type(name, domain, sub_domain)
 
         device_name = details.get("deviceName", "")
-        device_id = details.get("deviceId", "")
+        dnac_device_id = details.get("deviceId", "")
         site_name = details.get("siteName", "")
 
         description = raw.get("description", "") or name
         if device_name:
             description = f"{device_name}: {description}"
+
+        device_id = dnac_device_id
+        if self._resolver and dnac_device_id:
+            resolved = await self._resolver.find_device("dnac", dnac_device_id)
+            if resolved:
+                device_id = resolved
 
         return UnifiedEvent(
             event_id=f"dnac-event-{uuid4().hex[:12]}",
@@ -461,9 +495,15 @@ class DnacInterfaceCollector:
     COLLECTOR_ID = "dnac-interfaces"
     SOURCE_SYSTEM = "dnac"
 
-    def __init__(self, client: httpx.AsyncClient, base_url: str):
+    def __init__(
+        self,
+        client: httpx.AsyncClient,
+        base_url: str,
+        resolver: Optional[IdentityResolver] = None,
+    ):
         self._client = client
         self._base = base_url
+        self._resolver = resolver
 
     async def collect(self, device_ids: Optional[List[str]] = None) -> CollectorOutcome:
         outcome = CollectorOutcome(
@@ -497,7 +537,7 @@ class DnacInterfaceCollector:
                     _raise_for_status(resp)
                     interfaces = resp.json().get("response", [])
                     for iface in interfaces:
-                        all_events.append(self._normalize_interface(dev_id, iface))
+                        all_events.append(await self._normalize_interface(dev_id, iface))
                 except Exception:
                     logger.debug("Failed to fetch interfaces for device %s", dev_id)
 
@@ -511,7 +551,7 @@ class DnacInterfaceCollector:
             logger.exception("DNAC interface collection failed")
         return outcome
 
-    def _normalize_interface(self, device_id: str, raw: Dict[str, Any]) -> UnifiedEvent:
+    async def _normalize_interface(self, device_id: str, raw: Dict[str, Any]) -> UnifiedEvent:
         name = raw.get("interfaceName", "unknown")
         status = raw.get("status", "unknown")
         speed = raw.get("speed", "")
@@ -525,6 +565,12 @@ class DnacInterfaceCollector:
             severity = EventSeverity.WARNING
             event_type = EventType.INTERFACE_DOWN
 
+        canonical_device_id = device_id
+        if self._resolver and device_id:
+            resolved = await self._resolver.find_device("dnac", device_id)
+            if resolved:
+                canonical_device_id = resolved
+
         return UnifiedEvent(
             event_id=f"dnac-iface-{uuid4().hex[:12]}",
             timestamp=datetime.now(timezone.utc).replace(tzinfo=None),
@@ -536,7 +582,7 @@ class DnacInterfaceCollector:
             title=f"Interface: {name} ({status})",
             description=f"Interface {name} on device {device_id} — status: {status}, speed: {speed}",
             device=DeviceInfo(
-                device_id=device_id,
+                device_id=canonical_device_id,
                 device_name=device_id,
                 device_type="switch",
             ),
@@ -628,12 +674,13 @@ class DNACCollector:
                 err_outcome.mark_error("DNAC authentication failed — check credentials")
                 return [err_outcome]
 
-            # Create sub-collectors with the authenticated client
-            devices_collector = DnacDevicesCollector(client, self._host)
-            alarms_collector = DnacAlarmsCollector(client, self._host)
+            # Create sub-collectors with the authenticated client and identity resolver
+            resolver = IdentityResolver()
+            devices_collector = DnacDevicesCollector(client, self._host, resolver)
+            alarms_collector = DnacAlarmsCollector(client, self._host, resolver)
             topology_collector = DnacTopologyCollector(client, self._host)
             client_health_collector = DnacClientHealthCollector(client, self._host)
-            interface_collector = DnacInterfaceCollector(client, self._host)
+            interface_collector = DnacInterfaceCollector(client, self._host, resolver)
 
             # Run each sub-collector
             outcomes.append(await devices_collector.collect())

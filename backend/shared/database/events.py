@@ -3,6 +3,7 @@ Events repository — Postgres CRUD operations.
 """
 
 import logging
+import json
 from datetime import datetime
 from typing import List, Optional
 
@@ -19,6 +20,13 @@ from ..models.event import (
 from .client import db
 
 logger = logging.getLogger(__name__)
+
+
+def _as_json(value):
+    """asyncpg returns jsonb as str; tests may pass dicts."""
+    if value is None:
+        return None
+    return json.loads(value) if isinstance(value, str) else value
 
 
 def _row_to_event(row) -> UnifiedEvent:
@@ -63,9 +71,48 @@ def _row_to_event(row) -> UnifiedEvent:
         tags=list(row["tags"] or []),
         incident_id=row["incident_id"] or None,
         correlation_key=row["correlation_key"] or None,
-        metadata=dict(row["metadata"]) if row["metadata"] else {},
-        raw_event=dict(row["raw_event"]) if row["raw_event"] else None,
+        metadata=_as_json(row["metadata"]) or {},
+        raw_event=_as_json(row["raw_event"]),
     )
+
+
+async def _record_state_history_for_event(event: UnifiedEvent) -> None:
+    """Hook to record device or link state history transitions if applicable."""
+    try:
+        ev_type = event.event_type.value if hasattr(event.event_type, "value") else str(event.event_type)
+        if ev_type in (EventType.DEVICE_UNREACHABLE.value, EventType.DEVICE_REACHABLE.value):
+            if event.device and event.device.device_id:
+                new_state = "offline" if ev_type == EventType.DEVICE_UNREACHABLE.value else "online"
+                from .state_history import record_device_state_transition
+                await record_device_state_transition(
+                    device_key=event.device.device_id,
+                    new_state=new_state,
+                    transition_reason=ev_type,
+                    event_id=event.event_id,
+                    site_key=event.device.site_id if event.device else None,
+                    timestamp=event.timestamp,
+                )
+        elif ev_type in (
+            EventType.LINK_DOWN.value, EventType.LINK_UP.value,
+            EventType.INTERFACE_DOWN.value, EventType.INTERFACE_UP.value,
+            EventType.BGP_DOWN.value, EventType.BGP_UP.value,
+            EventType.TUNNEL_DOWN.value, EventType.TUNNEL_UP.value,
+        ):
+            if event.device and event.device.device_id:
+                new_state = "down" if "down" in ev_type else "up"
+                parent_id = event.device.device_id
+                child_id = (event.interface.interface_name if event.interface else None) or "interface"
+                from .state_history import record_link_state_transition
+                await record_link_state_transition(
+                    parent_node_id=parent_id,
+                    child_node_id=child_id,
+                    new_state=new_state,
+                    transition_reason=ev_type,
+                    event_id=event.event_id,
+                    timestamp=event.timestamp,
+                )
+    except Exception as e:
+        logger.warning(f"Error recording state history for event {event.event_id}: {e}", exc_info=True)
 
 
 async def insert_event(event: UnifiedEvent) -> None:
@@ -108,12 +155,44 @@ async def insert_event(event: UnifiedEvent) -> None:
         d["tags"], d["incident_id"] or None, d["correlation_key"] or None,
         d["metadata"], d["raw_event"],
     )
+    await _record_state_history_for_event(event)
 
 
 async def insert_events(events: List[UnifiedEvent]) -> None:
     """Bulk insert a list of events."""
     for event in events:
         await insert_event(event)
+
+
+async def latest_event_states(source_event_ids: List[str]) -> dict:
+    """Return the most recent event per stable ``source_event_id``.
+
+    Polled-state collectors use this to emit events only when the state
+    actually changed (diff-on-write): the returned mapping is
+    ``{source_event_id: {"event_type": ..., "metadata": {...}}}`` for the
+    newest event of each id. Collectors compare it against the current
+    poll and skip identical steady states.
+    """
+    ids = [sid for sid in (source_event_ids or []) if sid]
+    if not ids:
+        return {}
+    rows = await db.fetch(
+        """
+        SELECT DISTINCT ON (source_event_id)
+               source_event_id, event_type, metadata
+        FROM events
+        WHERE source_event_id = ANY($1::text[])
+        ORDER BY source_event_id, timestamp DESC
+        """,
+        ids,
+    )
+    return {
+        r["source_event_id"]: {
+            "event_type": r["event_type"],
+            "metadata": _as_json(r["metadata"]) or {},
+        }
+        for r in rows
+    }
 
 
 async def get_event(event_id: str) -> Optional[UnifiedEvent]:

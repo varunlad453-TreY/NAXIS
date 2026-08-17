@@ -6,7 +6,7 @@ These are optimized for API serialization (vs. internal Incident model).
 """
 
 from datetime import datetime
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -23,9 +23,13 @@ class IncidentSummary(BaseModel):
     severity: str = Field(..., description="Incident severity (critical, major, minor, etc.)")
     severity_label: str = Field(..., description="Operator-friendly severity display name")
     status: str = Field(..., description="Lifecycle status (open, investigating, resolved, etc.)")
+    site_name: str = Field(default="", description="Resolved display name of the primary affected site")
+    root_device: str = Field(default="", description="Resolved display name of the root-cause device")
     event_count: int = Field(..., description="Number of related events")
     affected_sites_count: int = Field(..., description="Number of affected sites")
     affected_devices_count: int = Field(..., description="Number of affected devices")
+    root_device_count: int = Field(default=0, description="Number of root-cause devices (cascade incidents)")
+    symptom_device_count: int = Field(default=0, description="Number of symptom devices (cascade incidents)")
     confidence_score: float = Field(..., ge=0.0, le=1.0, description="RCA confidence score")
     created_at: datetime = Field(..., description="Incident creation time (UTC)")
     updated_at: datetime = Field(..., description="Last update time (UTC)")
@@ -34,7 +38,7 @@ class IncidentSummary(BaseModel):
         json_schema_extra = {
             "example": {
                 "incident_id": "inc-abc123def456",
-                "title": "Site SFO-01 - connectivity issues affecting 3 devices",
+                "title": "SFO-01 · edge-sfo-01 link down — 2 devices affected",
                 "severity": "critical",
                 "status": "open",
                 "event_count": 5,
@@ -66,6 +70,16 @@ class IncidentDetail(BaseModel):
     affected_clients: List[str] = Field(default_factory=list, description="Affected client IDs")
     topology_node_ids: List[str] = Field(default_factory=list, description="Resolved topology node IDs for affected devices")
 
+    # Correlation reasoning — root cause vs symptom split
+    root_device_ids: List[str] = Field(
+        default_factory=list,
+        description="Infrastructure device IDs identified as root cause(s)",
+    )
+    symptom_device_ids: List[str] = Field(
+        default_factory=list,
+        description="Leaf device IDs that failed as downstream consequences",
+    )
+
     # Related events
     related_event_ids: List[str] = Field(default_factory=list, description="Related event IDs")
     event_count: int = Field(..., description="Number of related events")
@@ -73,6 +87,14 @@ class IncidentDetail(BaseModel):
     # RCA enrichment
     probable_cause: Optional[str] = Field(None, description="AI-generated probable cause")
     confidence_score: float = Field(..., ge=0.0, le=1.0, description="RCA confidence score")
+    confidence_breakdown: Optional[Dict[str, Any]] = Field(
+        None,
+        description="Factor breakdown: {event_score, avg_severity, device_score, total}",
+    )
+    evidence: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        description="Compact forensic telemetry snapshots of contributing events (WP-2.6)",
+    )
 
     # Timestamps
     created_at: datetime = Field(..., description="Creation time (UTC)")
@@ -82,16 +104,19 @@ class IncidentDetail(BaseModel):
         json_schema_extra = {
             "example": {
                 "incident_id": "inc-abc123def456",
-                "title": "Site SFO-01 - connectivity issues affecting 3 devices",
+                "title": "SFO-01 · edge-sfo-01 link down — 2 devices affected",
                 "severity": "critical",
                 "status": "investigating",
                 "affected_sites": ["site-sfo-01"],
                 "affected_devices": ["dev-001", "dev-002", "dev-003"],
                 "affected_clients": [],
+                "root_device_ids": ["core-switch-sfo-01"],
+                "symptom_device_ids": ["ap-sfo-101", "ap-sfo-102"],
                 "related_event_ids": ["evt-001", "evt-002", "evt-003", "evt-004", "evt-005"],
                 "event_count": 5,
                 "probable_cause": "ISP BGP flap on primary uplink",
                 "confidence_score": 0.82,
+                "confidence_breakdown": {"event_score": 0.6826, "avg_severity": 0.76, "device_score": 0.6, "total": 0.725},
                 "created_at": "2026-05-28T10:30:00",
                 "updated_at": "2026-05-28T10:35:00",
             }
@@ -118,7 +143,7 @@ class IncidentListResponse(BaseModel):
                 "incidents": [
                     {
                         "incident_id": "inc-abc123",
-                        "title": "Site SFO-01 WAN degradation",
+                        "title": "SFO-01 · edge-sfo-01 link down — 2 devices affected",
                         "severity": "critical",
                         "status": "open",
                         "event_count": 5,
@@ -132,6 +157,36 @@ class IncidentListResponse(BaseModel):
                 "total": 1,
                 "page": 1,
                 "page_size": 100,
+            }
+        }
+
+
+class IncidentStats(BaseModel):
+    """
+    Truthful incident KPIs computed as SQL aggregates — never page-length.
+
+    Used by GET /incidents/stats endpoint.
+    """
+
+    total: int = Field(..., description="Total number of incidents")
+    active: int = Field(..., description="Incidents in an actionable state (open/investigating/mitigated)")
+    by_severity: Dict[str, int] = Field(
+        ...,
+        description="Incident counts per severity (all five severities, zero-filled)",
+    )
+    distinct_sites: int = Field(..., description="Distinct site IDs across all incidents")
+    distinct_devices: int = Field(..., description="Distinct device IDs across all incidents")
+    avg_confidence: float = Field(..., ge=0.0, le=1.0, description="Mean confidence score (0.0 when empty)")
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "total": 42,
+                "active": 7,
+                "by_severity": {"critical": 2, "major": 4, "minor": 8, "warning": 0, "info": 28},
+                "distinct_sites": 3,
+                "distinct_devices": 15,
+                "avg_confidence": 0.62,
             }
         }
 

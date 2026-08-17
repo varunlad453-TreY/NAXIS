@@ -2,17 +2,20 @@ import { describe, it, expect } from "vitest";
 import { NODE_TYPE_META, HEALTH_STATUS_META } from "./topology";
 
 describe("NODE_TYPE_META", () => {
-  it("covers all expected infrastructure types", () => {
-    const infraTypes = ["switch", "core_switch", "distribution_switch", "access_switch", "router", "firewall", "controller"];
-    for (const t of infraTypes) {
+  it("covers all expected core network types", () => {
+    const coreTypes = ["switch", "core_switch", "distribution_switch", "access_switch", "router", "controller"];
+    for (const t of coreTypes) {
       expect(NODE_TYPE_META[t]).toBeDefined();
-      expect(NODE_TYPE_META[t].category).toBe("infrastructure");
+      expect(NODE_TYPE_META[t].category).toBe("core_network");
     }
   });
 
-  it("marks wan_edge and gateway as 'edge' category", () => {
-    expect(NODE_TYPE_META["wan_edge"].category).toBe("edge");
-    expect(NODE_TYPE_META["gateway"].category).toBe("edge");
+  it("covers all expected edge security types", () => {
+    const edgeTypes = ["wan_edge", "gateway", "firewall"];
+    for (const t of edgeTypes) {
+      expect(NODE_TYPE_META[t]).toBeDefined();
+      expect(NODE_TYPE_META[t].category).toBe("edge_security");
+    }
   });
 
   it("marks ap and access_point as 'wireless' category", () => {

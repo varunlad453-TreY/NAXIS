@@ -10,10 +10,7 @@ interface InventoryToggleProps {
 
 export function InventoryToggle({ show, onToggle }: InventoryToggleProps) {
   return (
-    <section
-      className="border-t border-border/30 pt-8"
-      style={{ animation: "naxis-enter 0.6s 0.9s both" }}
-    >
+    <section className="border-t border-border/30 pt-8">
       <button
         onClick={onToggle}
         className="group flex w-full items-center justify-between px-1 py-1 text-left"
@@ -41,10 +38,7 @@ export function InventoryToggle({ show, onToggle }: InventoryToggleProps) {
         </div>
       </button>
       {show && (
-        <div
-          className="mt-5 rounded-xl border border-border/30 bg-surface/30 p-5"
-          style={{ animation: "naxis-enter 0.4s both" }}
-        >
+        <div className="mt-5">
           <InventoryPanel />
         </div>
       )}

@@ -82,7 +82,7 @@ export default function IntegrationsPage() {
 
           <div className="flex items-center gap-3 text-sm text-foreground-muted">
             {isFetching && (
-              <span className="inline-flex items-center gap-2 rounded-full border border-border/60 px-3 py-1.5">
+              <span className="inline-flex items-center gap-2 text-sm text-foreground-muted">
                 <RefreshCw className="h-4 w-4 animate-spin" />
                 Refreshing live status
               </span>
@@ -105,7 +105,7 @@ export default function IntegrationsPage() {
       )}
 
       {error && (
-        <div className="flex items-center gap-2 rounded-2xl border border-critical/30 bg-critical/5 px-4 py-3 text-sm text-critical">
+        <div className="flex items-center gap-2 border-l-2 border-l-critical pl-3 py-2 text-sm text-critical">
           <AlertCircle className="h-4 w-4" />
           {(error as Error).message}
         </div>
@@ -141,7 +141,7 @@ export default function IntegrationsPage() {
       </section>
 
       {!integrations.length && !isLoading && !error && (
-        <div className="rounded-2xl border border-dashed border-border/60 px-6 py-10 text-sm text-foreground-muted">
+        <div className="border-t border-border/60 py-10 text-sm text-foreground-muted">
           No integrations are available.
         </div>
       )}

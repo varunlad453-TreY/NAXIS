@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, fireEvent } from "@testing-library/react";
 import { NodeDetailPanel } from "./node-detail-panel";
 import type { TopologyNodeDetail } from "@/types/topology";
 
@@ -152,13 +152,13 @@ describe("NodeDetailPanel", () => {
   it("renders node name and type", () => {
     render(<NodeDetailPanel nodeDetail={mockNodeDetail} />);
     expect(screen.getByText("naxis-core-01")).toBeDefined();
-    expect(screen.getByText("Switch")).toBeDefined();
+    expect(screen.getAllByText("Switch").length).toBeGreaterThan(0);
   });
 
   it("renders health status", () => {
     render(<NodeDetailPanel nodeDetail={mockNodeDetail} />);
     expect(screen.getByText("Critical")).toBeDefined();
-    expect(screen.getByText("Current health status")).toBeDefined();
+    expect(screen.getByText(/Critical Uplink CRC & Frame Drop Threshold Breached/)).toBeDefined();
   });
 
   it("renders node detail fields", () => {
@@ -204,5 +204,64 @@ describe("NodeDetailPanel", () => {
     render(<NodeDetailPanel nodeDetail={mockNodeDetailNoNeighbors} />);
     expect(screen.queryByText(/Other Parents/)).toBeNull();
     expect(screen.queryByText(/Children/)).toBeNull();
+  });
+
+  it("renders downstream impact section when children exist", () => {
+    render(<NodeDetailPanel nodeDetail={mockNodeDetail} />);
+    expect(screen.getByText(/Downstream Impact/)).toBeDefined();
+    expect(screen.getByText(/direct downstream devices/)).toBeDefined();
+  });
+
+  it("renders quick actions when callbacks provided", () => {
+    const onPathTrace = vi.fn();
+    const onBlastRadius = vi.fn();
+    render(
+      <NodeDetailPanel
+        nodeDetail={mockNodeDetail}
+        onPathTrace={onPathTrace}
+        onBlastRadius={onBlastRadius}
+      />,
+    );
+    expect(screen.getByText(/Quick Actions/)).toBeDefined();
+    expect(screen.getByText(/Path to Internet/)).toBeDefined();
+    expect(screen.getByText(/Blast Radius/)).toBeDefined();
+  });
+
+  it("expands children list when +X more button is clicked", () => {
+    const manyChildren = Array.from({ length: 15 }, (_, i) => ({
+      node_id: `ap-${i}`,
+      node_type: "ap",
+      name: `ap-name-${i}`,
+      ip_address: `10.0.0.${i}`,
+      vendor: "mist",
+      model: "AP43",
+      site_id: "site-sfo-01",
+      site_name: "SFO-01",
+      health_status: "healthy",
+      health_label: "Healthy",
+    }));
+    const detailWithManyChildren: TopologyNodeDetail = {
+      ...mockNodeDetail,
+      children: manyChildren,
+    };
+
+    render(<NodeDetailPanel nodeDetail={detailWithManyChildren} />);
+    expect(screen.getByText("Children (15)")).toBeDefined();
+    expect(screen.getByText("ap-name-0")).toBeDefined();
+    expect(screen.queryByText("ap-name-14")).toBeNull();
+
+    const expandBtn = screen.getByText("+5 more");
+    fireEvent.click(expandBtn);
+
+    expect(screen.getByText("ap-name-14")).toBeDefined();
+    expect(screen.getByText("Show less")).toBeDefined();
+  });
+
+  it("calls path trace callback when button clicked", () => {
+    const onPathTrace = vi.fn();
+    render(<NodeDetailPanel nodeDetail={mockNodeDetail} onPathTrace={onPathTrace} />);
+    const btn = screen.getByText(/Path to Internet/);
+    fireEvent.click(btn);
+    expect(onPathTrace).toHaveBeenCalled();
   });
 });

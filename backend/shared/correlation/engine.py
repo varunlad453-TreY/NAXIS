@@ -18,24 +18,36 @@ Stage 2 restructures site+time groups into root-cause + symptom
 groups using infrastructure topology (topology_nodes/edges from DB)
 or device-type heuristics as fallback.
 
+Incident Identity (WP-2.2):
+  - Incident ID = SHA-256 of (site_id, root_device_id, category).
+  - This is a *fault fingerprint*: the same underlying failure always
+    maps to the same incident, regardless of how many events arrive
+    or across how many worker cycles.
+  - upsert_incident's ON CONFLICT DO UPDATE MERGES arrays (events,
+    devices, sites) so evidence accumulates.  Severity only escalates.
+  - If the existing incident is in a terminal state (resolved/closed/
+    suppressed), a NEW incident is created by appending the epoch hour
+    to the hash material — so recurrence gets a fresh incident.
+
 Restart resilience:
   - On first process_events() call, loads already-linked event IDs from
     the incidents table so past events are not re-processed.
-  - Incident IDs are deterministic (SHA-256 of sorted related event IDs)
-    so re-processing the same events produces the same incident_id.
+  - DEVICE_REACHABLE recovery events resolve open incidents whose root
+    cause recovered, so incidents don't linger after the outage ends.
 """
 
 import hashlib
 import logging
 import time
-from collections import OrderedDict
+from collections import Counter, OrderedDict
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Set
 
-from ..models.event import EventSeverity, UnifiedEvent
+from ..models.event import EventSeverity, EventType, UnifiedEvent
 from ..models.incident import Incident, IncidentSeverity, IncidentStatus
 from .rules import (
     CascadeGroup,
+    ConfidenceBreakdown,
     CorrelationConfig,
     SiteTimeWindowRule,
     TopologyCascadeRule,
@@ -211,6 +223,7 @@ class CorrelationEngine:
                 limit,
             )
         except Exception:
+            logger.warning("Failed to fetch unlinked events for cross-cycle correlation", exc_info=True)
             return []
 
         events: List[UnifiedEvent] = []
@@ -220,6 +233,7 @@ class CorrelationEngine:
                 if event.event_id and not self._is_event_processed(event.event_id):
                     events.append(event)
             except Exception:
+                logger.warning("Failed to convert event row %s", row.get("event_id", "?"), exc_info=True)
                 continue
 
         if events:
@@ -236,18 +250,81 @@ class CorrelationEngine:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _compute_incident_id(event_ids: List[str]) -> str:
+    def _compute_incident_id(
+        events: List[UnifiedEvent], root_device_id: str = None,
+        _epoch_suffix: str = "",
+    ) -> str:
         """
-        Deterministic incident ID derived from the sorted, deduplicated
-        set of related event IDs.
+        Deterministic incident ID derived from the root cause:
+        (site_id, root device, primary issue category).
 
-        Re-processing the exact same set of events produces the same
-        incident_id, which means ON CONFLICT DO UPDATE in upsert_incident
-        correctly deduplicates — no duplicate incidents on restart.
+        Events that describe the same underlying failure — even with
+        different event IDs (different cycles, different collectors) —
+        produce the same incident_id, so upsert_incident's ON CONFLICT
+        DO UPDATE merges them into one live incident instead of creating
+        duplicates.
+
+        If _epoch_suffix is set (e.g. epoch-hour string), it is appended
+        to the hash material so a recurrence of a resolved/closed fault
+        creates a distinct incident.
         """
-        sorted_ids = sorted(set(event_ids))
-        hash_input = ",".join(sorted_ids).encode("utf-8")
-        return f"inc-{hashlib.sha256(hash_input).hexdigest()[:16]}"
+        site_id = next(
+            (e.device.site_id for e in events if e.device and e.device.site_id),
+            "",
+        )
+        if not root_device_id:
+            root_device_id = CorrelationEngine._primary_device_id(events)
+        categories = Counter(
+            e.category.value for e in events if e.category
+        )
+        category = categories.most_common(1)[0][0] if categories else "unknown"
+        material = f"{site_id}|{root_device_id or 'unknown'}|{category}"
+        if _epoch_suffix:
+            material += f"|{_epoch_suffix}"
+        return f"inc-{hashlib.sha256(material.encode('utf-8')).hexdigest()[:16]}"
+
+    async def _compute_incident_id_with_recurrence(
+        self, events: List[UnifiedEvent], root_device_id: str = None
+    ) -> str:
+        """
+        Compute the incident ID and check if it already exists in a
+        terminal state. If so, append the current epoch hour to create
+        a new incident for the recurrence.
+        """
+        base_id = self._compute_incident_id(events, root_device_id)
+        try:
+            from ..database.incidents import get_incident_status
+            from ..models.incident import _TERMINAL_STATUSES
+
+            status = await get_incident_status(base_id)
+            if status and status in {s.value for s in _TERMINAL_STATUSES}:
+                # The incident exists and is terminal. Create a new one.
+                # We use the current hour to group recurrences that happen close together.
+                epoch_hour = str(int(time.time() / 3600))
+                return self._compute_incident_id(events, root_device_id, _epoch_suffix=epoch_hour)
+        except Exception:
+            logger.warning("Failed to check terminal status for %s", base_id, exc_info=True)
+            
+        return base_id
+
+    @staticmethod
+    def _primary_device_id(events: List[UnifiedEvent]) -> str:
+        """Device of the highest-severity event (first one on ties)."""
+        severity_rank = {
+            EventSeverity.CRITICAL: 5,
+            EventSeverity.MAJOR: 4,
+            EventSeverity.MINOR: 3,
+            EventSeverity.WARNING: 2,
+            EventSeverity.INFO: 1,
+            EventSeverity.DEBUG: 0,
+        }
+        best: Optional[UnifiedEvent] = None
+        for event in events:
+            if not (event.device and event.device.device_id):
+                continue
+            if best is None or severity_rank[event.severity] > severity_rank[best.severity]:
+                best = event
+        return best.device.device_id if best else ""
 
     # ------------------------------------------------------------------
     # Main correlation pipeline
@@ -346,7 +423,7 @@ class CorrelationEngine:
                 # Stage 2: Create root-cause + symptom incidents
                 assigned_ids: Set[str] = set()
                 for cascade in cascade_groups:
-                    incident = self._create_from_cascade(cascade)
+                    incident = await self._create_from_cascade(cascade)
                     incidents.append(incident)
                     for eid in cascade.all_event_ids():
                         assigned_ids.add(eid)
@@ -367,7 +444,7 @@ class CorrelationEngine:
                     e for e in group_events if e.event_id not in assigned_ids
                 ]
                 if unassigned:
-                    residual = self.create_incident(unassigned)
+                    residual = await self.create_incident(unassigned)
                     incidents.append(residual)
                     for e in unassigned:
                         processed_events_in_cycle.add(e.event_id)
@@ -378,7 +455,7 @@ class CorrelationEngine:
                     )
             else:
                 # Stage 1 fallback: create flat incident from the group
-                incident = self.create_incident(group_events)
+                incident = await self.create_incident(group_events)
                 incidents.append(incident)
                 for event in group_events:
                     processed_events_in_cycle.add(event.event_id)
@@ -394,12 +471,18 @@ class CorrelationEngine:
         for eid in processed_events_in_cycle:
             self._mark_processed(eid)
 
+        # --- Recovery: resolve open incidents whose root cause recovered ---
+        # Runs after incident creation so a recovery event that arrives in
+        # the same cycle as its outage still resolves it.
+        recovery_events = [
+            e for e in new_events
+            if e.event_type == EventType.DEVICE_REACHABLE
+        ]
+        if recovery_events:
+            await self._resolve_recovered_devices(recovery_events)
+
         # Update telemetry
-        cascade_count = sum(
-            1
-            for i in incidents
-            if "failure cascading" in i.title.lower()
-        )
+        cascade_count = sum(1 for i in incidents if i.symptom_device_ids)
         residual_count = len(incidents) - cascade_count
         self._total_events_processed += len(processed_events_in_cycle)
         self._total_incidents_created += len(incidents)
@@ -426,18 +509,59 @@ class CorrelationEngine:
         )
         return incidents
 
-    def _create_from_cascade(self, cascade: CascadeGroup) -> Incident:
+    async def _resolve_recovered_devices(
+        self, recovery_events: List[UnifiedEvent]
+    ) -> None:
+        """
+        Resolve OPEN incidents whose root device(s) reported recovery.
+
+        Symptom recovery does NOT resolve — the root cause must be fixed
+        first.  DB failure is swallowed so degraded cycles don't crash
+        the pipeline; recovery events are not marked processed, so a
+        failed attempt is retried on the next cycle.
+        """
+        device_ids = sorted(
+            {
+                e.device.device_id
+                for e in recovery_events
+                if e.device and e.device.device_id
+            }
+        )
+        if not device_ids:
+            return
+        try:
+            from ..database.incidents import resolve_open_incidents_for_devices
+
+            resolved = await resolve_open_incidents_for_devices(device_ids)
+            if resolved:
+                logger.info(
+                    "Recovery: resolved %d open incident(s) for %s",
+                    resolved,
+                    ", ".join(device_ids),
+                )
+        except Exception:
+            logger.warning(
+                "Recovery resolution failed for %s — will retry next cycle",
+                ", ".join(device_ids),
+                exc_info=True,
+            )
+
+    async def _create_from_cascade(self, cascade: CascadeGroup) -> Incident:
         """
         Create an Incident from a CascadeGroup.
 
         The root events define the incident severity and title.
         Symptom events are added with reduced severity (INFO) so they
         appear in the blast radius but don't drive alerting.
+
+        If the computed incident ID already exists and is in a terminal
+        state, a new incident is created via epoch-hour suffix.
         """
         if not cascade.root_events:
             raise ValueError("Cannot create incident from empty cascade root")
 
         severity = self._determine_severity(cascade.root_events)
+        all_events = cascade.root_events + cascade.symptom_events
         all_event_ids = cascade.all_event_ids()
 
         affected_sites = list(
@@ -462,38 +586,44 @@ class CorrelationEngine:
             }
         )
 
-        # Build a title that identifies the root cause
-        root_device_names = {
-            e.device.device_name or e.device.device_id
-            for e in cascade.root_events
-            if e.device
-        }
-        root_device_str = ", ".join(sorted(root_device_names)) or cascade.root_device_id
-
+        # Build a title that identifies the root cause and blast radius
         symptom_count = len(cascade.symptom_events)
-        if symptom_count > 0:
-            title = (
-                f"{root_device_str} — failure cascading to "
-                f"{symptom_count} dependent {'device' if symptom_count == 1 else 'devices'}"
-            )
-        else:
-            title = generate_incident_title(cascade.root_events)
+        title = generate_incident_title(cascade.root_events + cascade.symptom_events)
+
+        symptom_device_ids = list(
+            {
+                e.device.device_id
+                for e in cascade.symptom_events
+                if e.device and e.device.device_id
+            }
+        )
+
+        # Compute the incident ID with terminal-status recurrence check
+        incident_id = await self._compute_incident_id_with_recurrence(
+            all_events, cascade.root_device_id
+        )
 
         incident = Incident(
-            incident_id=self._compute_incident_id(all_event_ids),
+            incident_id=incident_id,
             title=title,
             severity=severity,
             status=IncidentStatus.OPEN,
             affected_sites=affected_sites,
             affected_devices=affected_devices,
             affected_clients=affected_clients,
+            root_device_ids=[cascade.root_device_id],
+            symptom_device_ids=symptom_device_ids,
             related_event_ids=all_event_ids,
         )
 
         confidence = calculate_confidence_score(
             cascade.root_events + cascade.symptom_events
         )
-        incident.confidence_score = confidence
+        incident.confidence_score = confidence.total
+        incident.confidence_breakdown = confidence.to_dict()
+
+        for ev in all_events:
+            incident.add_evidence(ev)
 
         logger.debug(
             "Created cascade incident: %s | root=%s | severity=%s | "
@@ -508,13 +638,17 @@ class CorrelationEngine:
 
         return incident
 
-    def create_incident(self, events: List[UnifiedEvent]) -> Incident:
+    async def create_incident(self, events: List[UnifiedEvent]) -> Incident:
         """
         Create an Incident from a group of correlated events (Stage 1).
 
-        Uses a deterministic incident_id derived from the sorted
-        event IDs, so re-processing the same events produces the
-        same incident (ON CONFLICT DO UPDATE deduplicates).
+        Uses a deterministic incident_id derived from the root-cause
+        key (site, root device, category).  New events for the same
+        underlying failure merge via upsert_incident's ON CONFLICT.
+
+        If the computed ID maps to a terminal incident (resolved/closed/
+        suppressed), a new incident is created with an epoch-hour suffix
+        so recurrences get fresh incidents.
 
         Args:
             events: List of correlated UnifiedEvent objects
@@ -525,9 +659,9 @@ class CorrelationEngine:
         if not events:
             raise ValueError("Cannot create incident from empty event list")
 
-        event_ids = [e.event_id for e in events]
         title = generate_incident_title(events)
         severity = self._determine_severity(events)
+        primary_device = self._primary_device_id(events)
 
         affected_sites = list(
             {e.device.site_id for e in events if e.device and e.device.site_id}
@@ -539,19 +673,29 @@ class CorrelationEngine:
             {e.client.client_id for e in events if e.client and e.client.client_id}
         )
 
+        # Compute the incident ID with terminal-status recurrence check
+        incident_id = await self._compute_incident_id_with_recurrence(
+            events, primary_device
+        )
+
         incident = Incident(
-            incident_id=self._compute_incident_id(event_ids),
+            incident_id=incident_id,
             title=title,
             severity=severity,
             status=IncidentStatus.OPEN,
             affected_sites=affected_sites,
             affected_devices=affected_devices,
             affected_clients=affected_clients,
-            related_event_ids=event_ids,
+            root_device_ids=[primary_device] if primary_device else [],
+            related_event_ids=[e.event_id for e in events],
         )
 
         confidence = calculate_confidence_score(events)
-        incident.confidence_score = confidence
+        incident.confidence_score = confidence.total
+        incident.confidence_breakdown = confidence.to_dict()
+
+        for ev in events:
+            incident.add_evidence(ev)
 
         logger.debug(
             "Created incident: %s | severity=%s | "

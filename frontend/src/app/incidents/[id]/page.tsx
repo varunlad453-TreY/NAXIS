@@ -20,13 +20,14 @@ import {
   Layers,
 } from "lucide-react";
 
-const CASCADE_PATTERN = /failure cascading to (\d+) dependent devices/i;
 import Link from "next/link";
 import { api } from "@/lib/api";
 import { SeverityBadge } from "@/components/incidents/severity-badge";
 import { StatusBadge } from "@/components/incidents/status-badge";
 import { EventRow } from "@/components/events/event-row";
 import { EventListSkeleton } from "@/components/events/event-list-skeleton";
+import { CorrelationReasoning } from "@/components/incidents/correlation-reasoning";
+import { AIRcaCard } from "@/components/incidents/ai-rca-card";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   formatTimestamp,
@@ -143,7 +144,7 @@ export default function IncidentDetailPage() {
               {error instanceof Error ? error.message : "Unknown error"}
             </p>
             <Link
-              href="/"
+              href="/correlation"
               className="mt-4 inline-flex items-center gap-2 text-sm font-medium text-primary hover:text-primary-hover"
             >
               <ArrowLeft className="h-4 w-4" />
@@ -159,7 +160,7 @@ export default function IncidentDetailPage() {
     <div className="container mx-auto px-4 py-10 sm:px-6">
       <div className="mx-auto max-w-6xl space-y-10">
         <Link
-          href="/"
+          href="/correlation"
           className="inline-flex items-center gap-2 text-sm text-foreground-muted transition-colors hover:text-foreground"
         >
           <ArrowLeft className="h-4 w-4" />
@@ -167,21 +168,21 @@ export default function IncidentDetailPage() {
         </Link>
 
         {/* Assessment Header */}
-        <div className="rounded-xl border border-border/40 bg-surface p-6 sm:p-8">
+        <div className="border-b border-border/40 pb-6 sm:pb-8">
           <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
             <div className="min-w-0 flex-1 space-y-4">
               <div className="flex flex-wrap items-center gap-2">
                 <SeverityBadge severity={incident.severity} showDot className="text-xs" />
                 <StatusBadge status={incident.status} />
-              </div>
-              <h1 className="text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
-                {incident.title}
-                {CASCADE_PATTERN.test(incident.title) && (
-                  <span className="ml-3 inline-flex items-center gap-1 rounded-full bg-amber/10 px-2.5 py-0.5 align-middle text-[10px] font-semibold uppercase tracking-[0.12em] text-amber">
+                {incident.symptom_device_ids.length > 0 && (
+                  <span className="inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-amber">
                     <Layers className="h-3 w-3" />
                     Cascade
                   </span>
                 )}
+              </div>
+              <h1 className="text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
+                {incident.title}
               </h1>
 
               {/* Impact narrative */}
@@ -218,7 +219,7 @@ export default function IncidentDetailPage() {
 
         {/* Action callout */}
         {severityInfo && incident.severity !== "info" && (
-          <div className="flex items-start gap-3 rounded-lg border border-primary/20 bg-primary/5 p-4">
+          <div className="flex items-start gap-3 border-l-2 border-l-primary pl-3 py-2">
             {incident.severity === "critical" ? (
               <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-critical" />
             ) : incident.severity === "major" ? (
@@ -239,7 +240,7 @@ export default function IncidentDetailPage() {
           <div className="space-y-10 lg:col-span-2">
             {/* Probable Cause */}
             {incident.probable_cause && (
-              <section className="space-y-3 rounded-lg border border-border/40 p-5">
+              <section className="space-y-3 border-t border-border/40 pt-5">
                 <h2 className="flex items-center gap-2 text-sm font-semibold text-foreground">
                   <TrendingUp className="h-4 w-4 text-primary" />
                   Probable Cause
@@ -250,17 +251,20 @@ export default function IncidentDetailPage() {
               </section>
             )}
 
+            {/* Correlation Reasoning */}
+            <CorrelationReasoning incident={incident} />
+
             {/* Timeline */}
-            <section className="space-y-4">
+            <section className="space-y-4 border-t border-border/40 pt-5">
               <h2 className="flex items-center gap-2 text-sm font-semibold text-foreground">
                 <Clock className="h-4 w-4 text-primary" />
                 Timeline
               </h2>
               <div className="relative space-y-6 pl-4">
-                <div className="absolute bottom-3 left-[9px] top-3 w-px bg-border/70" />
+                <div className="absolute bottom-3 left-[5px] top-3 w-px bg-border/70" />
 
                 <div className="relative flex gap-4">
-                  <div className="relative z-10 mt-1 h-2 w-2 rounded-full bg-success ring-4 ring-background" />
+                  <div className="relative z-10 mt-1 h-1.5 w-1.5 bg-success" />
                   <div className="flex-1 pb-2">
                     <div className="text-xs text-foreground-subtle">
                       {formatAbsoluteTimestamp(incident.updated_at)}
@@ -273,7 +277,7 @@ export default function IncidentDetailPage() {
                 </div>
 
                 <div className="relative flex gap-4">
-                  <div className="relative z-10 mt-1 h-2 w-2 rounded-full bg-primary ring-4 ring-background" />
+                  <div className="relative z-10 mt-1 h-1.5 w-1.5 bg-primary" />
                   <div className="flex-1">
                     <div className="text-xs text-foreground-subtle">
                       {formatAbsoluteTimestamp(incident.created_at)}
@@ -287,8 +291,11 @@ export default function IncidentDetailPage() {
               </div>
             </section>
 
+            {/* AI Root Cause Analysis */}
+            <AIRcaCard incidentId={incidentId} />
+
             {/* Related Events */}
-            <section className="space-y-4">
+            <section className="space-y-4 border-t border-border/40 pt-5">
               <div className="flex items-center justify-between">
                 <h2 className="flex items-center gap-2 text-sm font-semibold text-foreground">
                   <Activity className="h-4 w-4 text-primary" />
@@ -334,7 +341,7 @@ export default function IncidentDetailPage() {
           {/* Sidebar */}
           <div className="space-y-8">
             {/* Blast Radius */}
-            <section className="rounded-lg border border-border/40 p-5">
+            <section className="border-t border-border/40 pt-5">
               <h2 className="flex items-center gap-2 text-sm font-semibold text-foreground">
                 <Shield className="h-4 w-4 text-primary" />
                 Blast Radius
@@ -350,7 +357,7 @@ export default function IncidentDetailPage() {
               {incident.topology_node_ids && incident.topology_node_ids.length > 0 && (
                 <button
                   onClick={onViewInTopology}
-                  className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-lg border border-primary/30 bg-primary/5 px-4 py-2.5 text-sm font-medium text-primary transition-colors hover:bg-primary/10"
+                  className="mt-4 inline-flex w-full items-center justify-center gap-2 border border-primary/30 bg-primary/5 px-4 py-2.5 text-sm font-medium text-primary transition-colors hover:bg-primary/10"
                 >
                   <Network className="h-4 w-4" />
                   View in Topology
@@ -360,7 +367,7 @@ export default function IncidentDetailPage() {
 
             {/* Affected Sites */}
             {incident.affected_sites.length > 0 && (
-              <section className="rounded-lg border border-border/40 p-5">
+              <section className="border-t border-border/40 pt-5">
                 <h2 className="flex items-center gap-2 text-sm font-semibold text-foreground">
                   <MapPin className="h-4 w-4 text-primary" />
                   Affected Sites
@@ -377,7 +384,7 @@ export default function IncidentDetailPage() {
 
             {/* Affected Devices */}
             {incident.affected_devices.length > 0 && (
-              <section className="rounded-lg border border-border/40 p-5">
+              <section className="border-t border-border/40 pt-5">
                 <h2 className="flex items-center gap-2 text-sm font-semibold text-foreground">
                   <Server className="h-4 w-4 text-primary" />
                   Affected Devices
@@ -428,7 +435,7 @@ function IncidentDetailSkeleton() {
     <div className="container mx-auto px-4 py-10 sm:px-6">
       <div className="mx-auto max-w-6xl space-y-10">
         <Skeleton className="h-4 w-32" />
-        <div className="rounded-xl border border-border/40 bg-surface p-6 sm:p-8">
+        <div className="border-b border-border/40 pb-6 sm:pb-8">
           <div className="flex flex-col gap-6 lg:flex-row lg:justify-between">
             <div className="space-y-3">
               <div className="flex gap-3">

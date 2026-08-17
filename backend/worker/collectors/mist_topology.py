@@ -52,6 +52,16 @@ except ImportError:  # pragma: no cover - supports both entry-point styles
         EventType,
         UnifiedEvent,
     )
+try:
+    from backend.worker.collectors.mist_ap_history import record_snapshots
+except ImportError:  # pragma: no cover - supports both entry-point styles
+    from worker.collectors.mist_ap_history import record_snapshots
+try:
+    from backend.shared.database.events import latest_event_states
+    from backend.shared.database.identity import IdentityResolver
+except ImportError:  # pragma: no cover - supports both entry-point styles
+    from shared.database.events import latest_event_states
+    from shared.database.identity import IdentityResolver
 
 logger = logging.getLogger(__name__)
 
@@ -81,26 +91,54 @@ class MistTopologyApiError(Exception):
         self.status_code = status_code
 
 
+async def _resolve_mist_ap(
+    resolver: Optional[IdentityResolver],
+    mac: str,
+    name: str = "",
+    model: str = "",
+    site_id: str = "",
+) -> str:
+    """Resolve a Mist AP MAC to a canonical device_key when a resolver is available."""
+    if not resolver or not mac:
+        return mac
+    site_key = None
+    if site_id:
+        site_key = await resolver.resolve_site(site_id, site_id, "mist")
+    return await resolver.resolve_device(
+        "mist",
+        mac,
+        display_name=name or mac,
+        device_type="ap",
+        model=model or "",
+        site_key=site_key,
+    )
+
+
 # ---------------------------------------------------------------------------
 # 1. AP History — device lifecycle tracking
 # ---------------------------------------------------------------------------
 
 class MistApHistoryCollector:
     """
-    Collects AP lifecycle history (firmware changes, site moves, reboots,
-    uptime trends) from ``/api/v1/sites/{site_id}/stats/devices``.
+    Collects AP lifecycle history and emits reachability events only on
+    state transitions.
 
-    Uses the ``history`` / ``last_seen`` / ``uptime`` / ``version`` fields
-    available on the device stats response.
+    Polls ``/api/v1/sites/{site_id}/stats/devices`` and diffs each poll
+    against the ``mist_ap_history`` ledger (diff-on-write). A CRITICAL
+    ``device_unreachable`` event is emitted only when a device flips
+    reachable -> unreachable, and an INFO ``device_reachable`` recovery
+    event when it flips back. A device that stays down across many polls
+    produces exactly one event, not one per poll.
     """
 
     COLLECTOR_ID = "mist-ap-history"
     SOURCE_SYSTEM = _SOURCE_SYSTEM
 
-    def __init__(self, client: httpx.AsyncClient, base_url: str, org_id: str):
+    def __init__(self, client: httpx.AsyncClient, base_url: str, org_id: str, resolver: Optional[IdentityResolver] = None):
         self._client = client
         self._base_url = base_url
         self._org_id = org_id
+        self._resolver = resolver
 
     @retry(
         retry=retry_if_exception_type(httpx.TransportError),
@@ -112,54 +150,112 @@ class MistApHistoryCollector:
         self,
         site_ids: List[str],
         site_devices: Dict[str, List[Dict]],
+        site_map: Optional[Dict[str, str]] = None,
     ) -> CollectorOutcome:
         outcome = CollectorOutcome(
             collector_id=self.COLLECTOR_ID,
             source_system=self.SOURCE_SYSTEM,
         )
         try:
-            events: List[UnifiedEvent] = []
+            snapshots: List[Dict[str, Any]] = []
             for site_id in site_ids:
                 devices = site_devices.get(site_id, [])
                 for dev in devices:
                     try:
-                        event = self._normalize(site_id, dev)
-                        if event is not None:
-                            events.append(event)
+                        snapshot = self._to_snapshot(site_id, dev, site_map)
+                        if snapshot is not None:
+                            snapshots.append(snapshot)
                     except Exception:
                         logger.exception(
-                            "Failed to normalize AP history for %s",
+                            "Failed to snapshot AP history for %s",
                             dev.get("mac", "?"),
                         )
+
+            transitions = await record_snapshots(snapshots)
+
+            events: List[UnifiedEvent] = []
+            for t in transitions:
+                event = await self._event_from_transition(t)
+                if event is not None:
+                    events.append(event)
 
             outcome.events = events
             outcome.mark_success(rows_written=len(events))
             outcome.metadata["sites_scanned"] = len(site_ids)
-            logger.info("Mist AP history: %d events from %d sites", len(events), len(site_ids))
+            outcome.metadata["devices_seen"] = len(snapshots)
+            outcome.metadata["transitions"] = len(transitions)
+            logger.info(
+                "Mist AP history: %d transition event(s) from %d devices across %d sites",
+                len(events),
+                len(snapshots),
+                len(site_ids),
+            )
         except Exception as exc:
             outcome.mark_error(str(exc))
             logger.exception("Mist AP history collection failed")
         return outcome
 
-    def _normalize(self, site_id: str, raw: Dict[str, Any]) -> Optional[UnifiedEvent]:
-        """Normalize a device stats entry into an AP lifecycle event."""
+    def _to_snapshot(
+        self,
+        site_id: str,
+        raw: Dict[str, Any],
+        site_map: Optional[Dict[str, str]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Build a ledger snapshot row from a device stats entry."""
         mac = raw.get("mac", "")
-        name = raw.get("name", mac or "unknown")
-        model = raw.get("model", "")
-        uptime = int(raw.get("uptime", 0) or 0)
-        version = raw.get("version", "")
-        connected = raw.get("connected", False)
-
         if not mac:
             return None
 
-        # Severity: unreachable devices are critical
-        if not connected:
+        connected = bool(raw.get("connected", False))
+        site_name = site_map.get(site_id, "") if site_map else ""
+        return {
+            "device_id": mac,
+            "serial": raw.get("serial", "") or mac,
+            "mac": mac,
+            "hostname": raw.get("name", "") or mac,
+            "model": raw.get("model", "") or "",
+            "site_id": site_id,
+            "site_name": site_name or f"site-{site_id[:8]}",
+            "firmware_version": raw.get("version", "") or "",
+            "reachability": "reachable" if connected else "unreachable",
+            "uptime_seconds": int(raw.get("uptime", 0) or 0),
+        }
+
+    async def _event_from_transition(
+        self, transition: Dict[str, Any]
+    ) -> Optional[UnifiedEvent]:
+        """Map a ledger reachability transition to a UnifiedEvent.
+
+        Only first-sighting-down, reachable -> unreachable (outage), and
+        unreachable -> reachable (recovery) produce events. First-sighting
+        reachable and steady states produce nothing.
+        """
+        cur = transition.get("cur_reachability")
+        prev = transition.get("prev_reachability")
+        if prev is None:
+            if cur != "unreachable":
+                return None
             severity = EventSeverity.CRITICAL
             event_type = EventType.DEVICE_UNREACHABLE
-        else:
+        elif prev == "reachable" and cur == "unreachable":
+            severity = EventSeverity.CRITICAL
+            event_type = EventType.DEVICE_UNREACHABLE
+        elif prev == "unreachable" and cur == "reachable":
             severity = EventSeverity.INFO
             event_type = EventType.DEVICE_REACHABLE
+        else:
+            return None
+
+        snapshot = transition["snapshot"]
+        mac = snapshot.get("mac", "")
+        name = snapshot.get("hostname", mac or "unknown")
+        model = snapshot.get("model", "")
+        uptime = snapshot.get("uptime_s", 0)
+        version = snapshot.get("firmware", "")
+        site_id = snapshot.get("site_id", "")
+        site_name = snapshot.get("site_name", "") or f"site-{site_id[:8]}"
+
+        device_key = await _resolve_mist_ap(self._resolver, mac, name, model, site_id)
 
         description = f"AP {name} ({mac}) — uptime: {uptime}s"
         if version:
@@ -178,12 +274,12 @@ class MistApHistoryCollector:
             title=f"AP History: {name}",
             description=description,
             device=DeviceInfo(
-                device_id=mac,
+                device_id=device_key,
                 device_name=name,
                 device_type="ap",
                 device_model=model,
                 site_id=site_id,
-                site_name=f"site-{site_id[:8]}",
+                site_name=site_name,
             ),
             tags=["wireless", "mist", "history", "topology"],
             metadata={
@@ -191,10 +287,11 @@ class MistApHistoryCollector:
                 "mist_model": model,
                 "mist_uptime_seconds": uptime,
                 "mist_firmware": version,
-                "mist_connected": connected,
+                "mist_connected": cur == "reachable",
                 "mist_site_id": site_id,
+                "reachability_transition": f"{prev} -> {cur}",
             },
-            raw_event=raw,
+            raw_event=snapshot,
         )
 
 
@@ -214,10 +311,11 @@ class MistApRfCollector:
     COLLECTOR_ID = "mist-ap-rf"
     SOURCE_SYSTEM = _SOURCE_SYSTEM
 
-    def __init__(self, client: httpx.AsyncClient, base_url: str, org_id: str):
+    def __init__(self, client: httpx.AsyncClient, base_url: str, org_id: str, resolver: Optional[IdentityResolver] = None):
         self._client = client
         self._base_url = base_url
         self._org_id = org_id
+        self._resolver = resolver
 
     @retry(
         retry=retry_if_exception_type(httpx.TransportError),
@@ -235,35 +333,48 @@ class MistApRfCollector:
             source_system=self.SOURCE_SYSTEM,
         )
         try:
-            events: List[UnifiedEvent] = []
+            entries: List[Dict[str, Any]] = []
             for site_id in site_ids:
                 devices = site_devices.get(site_id, [])
                 for dev in devices:
                     try:
-                        rf_events = self._normalize_rf(site_id, dev)
-                        events.extend(rf_events)
+                        entries.extend(self._rf_entries(site_id, dev))
                     except Exception:
                         logger.exception(
                             "Failed to normalize AP RF for %s",
                             dev.get("mac", "?"),
                         )
 
+            states = await latest_event_states([e["source_event_id"] for e in entries])
+
+            events: List[UnifiedEvent] = []
+            for entry in entries:
+                prev = states.get(entry["source_event_id"])
+                if prev is not None and prev["metadata"].get("mist_rf_level") == entry["level"]:
+                    continue
+                events.append(await self._rf_event(entry))
+
             outcome.events = events
             outcome.mark_success(rows_written=len(events))
             outcome.metadata["sites_scanned"] = len(site_ids)
-            logger.info("Mist AP RF: %d RF entries from %d sites", len(events), len(site_ids))
+            outcome.metadata["entries_seen"] = len(entries)
+            logger.info(
+                "Mist AP RF: %d RF event(s) from %d entries across %d sites",
+                len(events), len(entries), len(site_ids),
+            )
         except Exception as exc:
             outcome.mark_error(str(exc))
             logger.exception("Mist AP RF collection failed")
         return outcome
 
-    def _normalize_rf(self, site_id: str, raw: Dict[str, Any]) -> List[UnifiedEvent]:
+    def _rf_entries(self, site_id: str, raw: Dict[str, Any]) -> List[Dict[str, Any]]:
         """
-        Extract per-radio RF stats from a device entry.
+        Extract per-radio RF state from a device entry.
 
         The Mist device stats object contains radio_stat with per-band data
         (band_24, band_5, band_6) including channel, tx_power, num_clients,
-        and utilization.
+        and utilization. Returns entries keyed by a stable source_event_id
+        so steady-state polls can be skipped.
         """
         mac = raw.get("mac", "")
         name = raw.get("name", mac or "unknown")
@@ -276,7 +387,7 @@ class MistApRfCollector:
         if not isinstance(radio_stat, dict):
             return []
 
-        events: List[UnifiedEvent] = []
+        entries: List[Dict[str, Any]] = []
         band_map = {
             "band_24": "2.4 GHz",
             "band_5": "5 GHz",
@@ -294,58 +405,88 @@ class MistApRfCollector:
             utilization = band_data.get("utilization", 0)
             bssid = band_data.get("bssid", "")
 
-            # High utilization indicates performance concern
-            if isinstance(utilization, (int, float)) and utilization > 80:
-                severity = EventSeverity.WARNING
-                event_type = EventType.HIGH_BANDWIDTH
-            elif isinstance(utilization, (int, float)) and utilization > 60:
-                severity = EventSeverity.INFO
-                event_type = EventType.OTHER
-            else:
-                severity = EventSeverity.INFO
-                event_type = EventType.OTHER
+            entries.append({
+                "site_id": site_id,
+                "mac": mac,
+                "name": name,
+                "model": model,
+                "band_key": band_key,
+                "band_label": band_label,
+                "channel": channel,
+                "tx_power": tx_power,
+                "num_clients": num_clients,
+                "utilization": utilization,
+                "bssid": bssid,
+                "level": self._rf_level(utilization),
+                "source_event_id": f"mist-rf-{mac}-{band_key}",
+            })
 
-            description = (
-                f"AP {name} — {band_label}, channel {channel}, "
-                f"utilization {utilization}%, {num_clients} clients"
-            )
-            if bssid:
-                description += f", BSSID: {bssid}"
+        return entries
 
-            events.append(UnifiedEvent(
-                event_id=f"mist-rf-{uuid4().hex[:12]}",
-                timestamp=datetime.now(timezone.utc).replace(tzinfo=None),
-                source=EventSource.MIST,
-                source_event_id=f"mist-rf-{mac}-{band_key}-{uuid4().hex[:8]}",
-                severity=severity,
-                category=EventCategory.PERFORMANCE,
-                event_type=event_type,
-                title=f"RF Stats: {name} ({band_label})",
-                description=description,
-                device=DeviceInfo(
-                    device_id=mac,
-                    device_name=name,
-                    device_type="ap",
-                    device_model=model,
-                    site_id=site_id,
-                    site_name=f"site-{site_id[:8]}",
-                ),
-                tags=["wireless", "mist", "rf", "topology"],
-                metadata={
-                    "mist_mac": mac,
-                    "mist_band": band_label,
-                    "mist_band_key": band_key,
-                    "mist_channel": channel,
-                    "mist_tx_power": tx_power,
-                    "mist_num_clients": num_clients,
-                    "mist_utilization": utilization,
-                    "mist_bssid": bssid,
-                    "mist_site_id": site_id,
-                },
-                raw_event=raw,
-            ))
+    @staticmethod
+    def _rf_level(utilization) -> str:
+        """Bucket utilization into a stable performance state."""
+        if isinstance(utilization, (int, float)):
+            if utilization > 80:
+                return "high"
+            if utilization > 60:
+                return "elevated"
+        return "clear"
 
-        return events
+    async def _rf_event(self, entry: Dict[str, Any]) -> UnifiedEvent:
+        """Build an RF stats event from a state entry."""
+        utilization = entry["utilization"]
+        if entry["level"] == "high":
+            severity = EventSeverity.WARNING
+            event_type = EventType.HIGH_BANDWIDTH
+        else:
+            severity = EventSeverity.INFO
+            event_type = EventType.OTHER
+
+        description = (
+            f"AP {entry['name']} — {entry['band_label']}, channel {entry['channel']}, "
+            f"utilization {utilization}%, {entry['num_clients']} clients"
+        )
+        if entry["bssid"]:
+            description += f", BSSID: {entry['bssid']}"
+
+        device_key = await _resolve_mist_ap(
+            self._resolver, entry["mac"], entry["name"], entry["model"], entry["site_id"]
+        )
+
+        return UnifiedEvent(
+            event_id=f"mist-rf-{uuid4().hex[:12]}",
+            timestamp=datetime.now(timezone.utc).replace(tzinfo=None),
+            source=EventSource.MIST,
+            source_event_id=entry["source_event_id"],
+            severity=severity,
+            category=EventCategory.PERFORMANCE,
+            event_type=event_type,
+            title=f"RF Stats: {entry['name']} ({entry['band_label']})",
+            description=description,
+            device=DeviceInfo(
+                device_id=device_key,
+                device_name=entry["name"],
+                device_type="ap",
+                device_model=entry["model"],
+                site_id=entry["site_id"],
+                site_name=f"site-{entry['site_id'][:8]}" if entry["site_id"] else None,
+            ),
+            tags=["wireless", "mist", "rf", "topology"],
+            metadata={
+                "mist_mac": entry["mac"],
+                "mist_band": entry["band_label"],
+                "mist_band_key": entry["band_key"],
+                "mist_channel": entry["channel"],
+                "mist_tx_power": entry["tx_power"],
+                "mist_num_clients": entry["num_clients"],
+                "mist_utilization": utilization,
+                "mist_bssid": entry["bssid"],
+                "mist_site_id": entry["site_id"],
+                "mist_rf_level": entry["level"],
+            },
+            raw_event=None,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -355,7 +496,7 @@ class MistApRfCollector:
 class MistClientTopologyCollector:
     """
     Collects client connectivity data from
-    ``/api/v1/orgs/{org_id}/clients``.
+    ``/api/v1/orgs/{org_id}/clients/search`` (or site stats fallback).
 
     Maps client MAC, IP, SSID, band, RSSI, and connection events to
     build the client-to-AP connectivity layer.
@@ -364,10 +505,11 @@ class MistClientTopologyCollector:
     COLLECTOR_ID = "mist-client-topology"
     SOURCE_SYSTEM = _SOURCE_SYSTEM
 
-    def __init__(self, client: httpx.AsyncClient, base_url: str, org_id: str):
+    def __init__(self, client: httpx.AsyncClient, base_url: str, org_id: str, resolver: Optional[IdentityResolver] = None):
         self._client = client
         self._base_url = base_url
         self._org_id = org_id
+        self._resolver = resolver
 
     @retry(
         retry=retry_if_exception_type(httpx.TransportError),
@@ -386,7 +528,7 @@ class MistClientTopologyCollector:
             events: List[UnifiedEvent] = []
             for client_raw in clients:
                 try:
-                    event = self._normalize(client_raw)
+                    event = await self._normalize(client_raw)
                     if event is not None:
                         events.append(event)
                 except Exception:
@@ -405,8 +547,11 @@ class MistClientTopologyCollector:
         return outcome
 
     async def _fetch_clients(self) -> List[Dict]:
-        """Fetch all clients from the org endpoint with pagination."""
-        url = f"{self._base_url}/api/v1/orgs/{self._org_id}/clients"
+        """
+        Fetch all clients from the org search endpoint with pagination.
+        Falls back to per-site stats if org-level search is unavailable or restricted.
+        """
+        url = f"{self._base_url}/api/v1/orgs/{self._org_id}/clients/search"
         params: Dict[str, Any] = {"limit": _PAGE_LIMIT}
         results: List[Dict] = []
         page = 0
@@ -420,8 +565,8 @@ class MistClientTopologyCollector:
                 else:
                     resp = await self._client.get(current_url)
                 _raise_for_status(resp)
-            except (MistTopologyApiError, httpx.TransportError) as exc:
-                logger.error("Mist clients fetch failed on page %d: %s", page + 1, exc)
+            except Exception as exc:
+                logger.warning("Mist org clients search failed on page %d: %s — attempting site stats fallback", page + 1, exc)
                 break
 
             body = resp.json()
@@ -437,9 +582,43 @@ class MistClientTopologyCollector:
             current_url = f"{self._base_url}{next_path}"
             current_params = None
 
+        if not results:
+            # Fallback: per-site stats client fetch
+            results = await self._fetch_clients_per_site_fallback()
+
         return results
 
-    def _normalize(self, raw: Dict[str, Any]) -> Optional[UnifiedEvent]:
+    async def _fetch_clients_per_site_fallback(self) -> List[Dict]:
+        """Fallback: Fetch clients per site via /api/v1/sites/{site_id}/stats/clients."""
+        results: List[Dict] = []
+        try:
+            sites_resp = await self._client.get(f"{self._base_url}/api/v1/orgs/{self._org_id}/sites")
+            _raise_for_status(sites_resp)
+            sites_data = sites_resp.json()
+            site_ids = [s.get("id") for s in (sites_data if isinstance(sites_data, list) else sites_data.get("results", [])) if isinstance(s, dict) and s.get("id")]
+
+            for site_id in site_ids:
+                try:
+                    resp = await self._client.get(
+                        f"{self._base_url}/api/v1/sites/{site_id}/stats/clients",
+                        params={"limit": _PAGE_LIMIT},
+                    )
+                    _raise_for_status(resp)
+                    body = resp.json()
+                    page_items = body.get("results", body) if isinstance(body, dict) else body
+                    if isinstance(page_items, list):
+                        for item in page_items:
+                            if isinstance(item, dict):
+                                item.setdefault("site_id", site_id)
+                                results.append(item)
+                except Exception as e:
+                    logger.debug("Mist site %s client stats fetch failed: %s", site_id, e)
+        except Exception as exc:
+            logger.debug("Mist sites listing for fallback failed: %s", exc)
+
+        return results
+
+    async def _normalize(self, raw: Dict[str, Any]) -> Optional[UnifiedEvent]:
         """Normalize a Mist client entry into a client topology event."""
         mac = raw.get("mac", "")
         if not mac:
@@ -486,6 +665,10 @@ class MistClientTopologyCollector:
             ssid=ssid or None,
         )
 
+        ap_device_key = None
+        if ap_mac and self._resolver:
+            ap_device_key = await _resolve_mist_ap(self._resolver, ap_mac, ap_mac, "", site_id)
+
         return UnifiedEvent(
             event_id=f"mist-client-{uuid4().hex[:12]}",
             timestamp=datetime.now(timezone.utc).replace(tzinfo=None),
@@ -498,7 +681,7 @@ class MistClientTopologyCollector:
             description=description,
             client=client_info,
             device=DeviceInfo(
-                device_id=ap_mac or mac,
+                device_id=ap_device_key or ap_mac or mac,
                 device_name=ap_mac or "unknown",
                 device_type="ap",
                 site_id=site_id,
@@ -538,10 +721,11 @@ class MistWiredUplinkCollector:
     COLLECTOR_ID = "mist-wired-uplink"
     SOURCE_SYSTEM = _SOURCE_SYSTEM
 
-    def __init__(self, client: httpx.AsyncClient, base_url: str, org_id: str):
+    def __init__(self, client: httpx.AsyncClient, base_url: str, org_id: str, resolver: Optional[IdentityResolver] = None):
         self._client = client
         self._base_url = base_url
         self._org_id = org_id
+        self._resolver = resolver
 
     @retry(
         retry=retry_if_exception_type(httpx.TransportError),
@@ -564,12 +748,18 @@ class MistWiredUplinkCollector:
                 devices = site_devices.get(site_id, [])
                 uplinks.extend(self._extract_uplinks(site_id, devices))
 
+            states = await latest_event_states([self._state_key(u) for u in uplinks])
+
             events: List[UnifiedEvent] = []
             for uplink in uplinks:
                 try:
-                    event = self._normalize(uplink)
-                    if event is not None:
-                        events.append(event)
+                    event = await self._normalize(uplink)
+                    if event is None:
+                        continue
+                    prev = states.get(event.source_event_id)
+                    if prev is not None and prev["event_type"] == event.event_type:
+                        continue
+                    events.append(event)
                 except Exception:
                     logger.exception(
                         "Failed to normalize wired uplink: %s",
@@ -579,11 +769,20 @@ class MistWiredUplinkCollector:
             outcome.events = events
             outcome.mark_success(rows_written=len(events))
             outcome.metadata["raw_count"] = len(uplinks)
-            logger.info("Mist wired uplinks: %d links collected", len(events))
+            logger.info(
+                "Mist wired uplinks: %d link event(s) from %d links collected",
+                len(events), len(uplinks),
+            )
         except Exception as exc:
             outcome.mark_error(str(exc))
             logger.exception("Mist wired uplink collection failed")
         return outcome
+
+    @staticmethod
+    def _state_key(raw: Dict[str, Any]) -> str:
+        """Stable identity for one physical uplink."""
+        uplink_id = raw.get("uplink_id") or f"{raw.get('uplink_mac', '')}-{raw.get('port_id', 'uplink')}"
+        return f"mist-uplink-{uplink_id}"
 
     @staticmethod
     def _extract_uplinks(site_id: str, devices: List[Dict]) -> List[Dict]:
@@ -632,7 +831,7 @@ class MistWiredUplinkCollector:
                     })
         return uplinks
 
-    def _normalize(self, raw: Dict[str, Any]) -> Optional[UnifiedEvent]:
+    async def _normalize(self, raw: Dict[str, Any]) -> Optional[UnifiedEvent]:
         """Normalize a wired uplink entry into a topology edge event."""
         ap_mac = raw.get("uplink_mac", "") or raw.get("mac", "")
         switch_mac = raw.get("switch_mac", "") or raw.get("lldp_system_name", "")
@@ -664,18 +863,20 @@ class MistWiredUplinkCollector:
         if duplex:
             description += f", duplex: {duplex}"
 
+        device_key = await _resolve_mist_ap(self._resolver, ap_mac, ap_mac, "", site_id)
+
         return UnifiedEvent(
             event_id=f"mist-uplink-{uuid4().hex[:12]}",
             timestamp=datetime.now(timezone.utc).replace(tzinfo=None),
             source=EventSource.MIST,
-            source_event_id=f"mist-uplink-{ap_mac}-{switch_mac}-{uuid4().hex[:8]}",
+            source_event_id=self._state_key(raw),
             severity=severity,
             category=EventCategory.CONNECTIVITY,
             event_type=event_type,
             title=f"Uplink: {ap_mac} → {switch_mac or 'unknown'}",
             description=description,
             device=DeviceInfo(
-                device_id=ap_mac,
+                device_id=device_key,
                 device_name=ap_mac,
                 device_type="ap",
                 site_id=site_id,
@@ -713,10 +914,11 @@ class MistRadioNeighborsCollector:
     COLLECTOR_ID = "mist-radio-neighbors"
     SOURCE_SYSTEM = _SOURCE_SYSTEM
 
-    def __init__(self, client: httpx.AsyncClient, base_url: str, org_id: str):
+    def __init__(self, client: httpx.AsyncClient, base_url: str, org_id: str, resolver: Optional[IdentityResolver] = None):
         self._client = client
         self._base_url = base_url
         self._org_id = org_id
+        self._resolver = resolver
 
     @retry(
         retry=retry_if_exception_type(httpx.TransportError),
@@ -735,7 +937,7 @@ class MistRadioNeighborsCollector:
                 neighbors = await self._fetch_neighbors(site_id)
                 for neighbor in neighbors:
                     try:
-                        event = self._normalize(site_id, neighbor)
+                        event = await self._normalize(site_id, neighbor)
                         if event is not None:
                             events.append(event)
                     except Exception:
@@ -769,17 +971,17 @@ class MistRadioNeighborsCollector:
         except Exception:
             logger.debug("Failed to fetch radio neighbors for site %s", site_id)
         return []
-
-    def _normalize(self, site_id: str, raw: Dict[str, Any]) -> Optional[UnifiedEvent]:
+    async def _normalize(self, site_id: str, raw: Dict[str, Any]) -> Optional[UnifiedEvent]:
         """Normalize a radio neighbor entry into an RF environment event."""
         bssid = raw.get("bssid", "")
         radio_mac = raw.get("radio_mac", "") or raw.get("ap_mac", "")
+        
         channel = raw.get("channel", 0)
         band = raw.get("band", "")
         rssi = raw.get("rssi", 0)
         ssid = raw.get("ssid", "")
         neighbor_name = raw.get("name", "") or bssid
-
+        
         if not bssid and not radio_mac:
             return None
 
@@ -806,6 +1008,12 @@ class MistRadioNeighborsCollector:
             f"type: {interference_type}"
         )
 
+        device_id = radio_mac or bssid
+        if self._resolver and radio_mac:
+            resolved = await self._resolver.find_device("mist", radio_mac)
+            if resolved:
+                device_id = resolved
+
         return UnifiedEvent(
             event_id=f"mist-neighbor-{uuid4().hex[:12]}",
             timestamp=datetime.now(timezone.utc).replace(tzinfo=None),
@@ -817,7 +1025,7 @@ class MistRadioNeighborsCollector:
             title=f"Radio Neighbor: {neighbor_name}",
             description=description,
             device=DeviceInfo(
-                device_id=radio_mac or bssid,
+                device_id=device_id,
                 device_name=neighbor_name,
                 device_type="ap",
                 site_id=site_id,
@@ -863,6 +1071,7 @@ class MistTopologyCollector:
             "Authorization": f"Token {self._api_key}",
             "Content-Type": "application/json",
         }
+        self._site_map: Dict[str, str] = {}
 
     @property
     def is_configured(self) -> bool:
@@ -887,12 +1096,13 @@ class MistTopologyCollector:
             timeout=httpx.Timeout(30.0),
             follow_redirects=True,
         ) as client:
-            # Create sub-collectors with the shared client
-            ap_history = MistApHistoryCollector(client, self._base_url, self._org_id)
-            ap_rf = MistApRfCollector(client, self._base_url, self._org_id)
-            client_topology = MistClientTopologyCollector(client, self._base_url, self._org_id)
-            wired_uplink = MistWiredUplinkCollector(client, self._base_url, self._org_id)
-            radio_neighbors = MistRadioNeighborsCollector(client, self._base_url, self._org_id)
+            # Create sub-collectors with the shared client and identity resolver
+            resolver = IdentityResolver()
+            ap_history = MistApHistoryCollector(client, self._base_url, self._org_id, resolver)
+            ap_rf = MistApRfCollector(client, self._base_url, self._org_id, resolver)
+            client_topology = MistClientTopologyCollector(client, self._base_url, self._org_id, resolver)
+            wired_uplink = MistWiredUplinkCollector(client, self._base_url, self._org_id, resolver)
+            radio_neighbors = MistRadioNeighborsCollector(client, self._base_url, self._org_id, resolver)
 
             # Fetch site list once, share across site-scoped collectors
             site_ids = await self._fetch_site_ids(client)
@@ -902,7 +1112,7 @@ class MistTopologyCollector:
             site_devices = await self._fetch_all_site_devices(client, site_ids)
 
             # Run each sub-collector, passing pre-fetched device stats
-            outcomes.append(await ap_history.collect(site_ids, site_devices))
+            outcomes.append(await ap_history.collect(site_ids, site_devices, self._site_map))
             outcomes.append(await ap_rf.collect(site_ids, site_devices))
             outcomes.append(await client_topology.collect())
             outcomes.append(await wired_uplink.collect(site_ids, site_devices))
@@ -934,13 +1144,24 @@ class MistTopologyCollector:
         return result
 
     async def _fetch_site_ids(self, client: httpx.AsyncClient) -> List[str]:
-        """Fetch all site IDs for the org (shared across sub-collectors)."""
+        """Fetch all site IDs (and names) for the org.
+
+        Also populates ``self._site_map`` ({site_id: site_name}) which is
+        shared with the AP history collector so events carry real site
+        names instead of ``site-<uuid8>`` placeholders.
+        """
         try:
             resp = await client.get(
                 f"{self._base_url}/api/v1/orgs/{self._org_id}/sites"
             )
             if resp.status_code == 200:
-                return [s["id"] for s in resp.json() if s.get("id")]
+                sites = resp.json()
+                self._site_map = {
+                    s["id"]: s.get("name", "")
+                    for s in sites
+                    if s.get("id")
+                }
+                return list(self._site_map.keys())
         except Exception:
             logger.exception("Failed to fetch Mist sites for topology")
         return []

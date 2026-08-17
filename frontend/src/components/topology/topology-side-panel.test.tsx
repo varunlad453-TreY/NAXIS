@@ -21,15 +21,20 @@ const mockIncidentDetail: IncidentDetail = {
   event_count: 12,
   affected_sites_count: 1,
   affected_devices_count: 3,
+  root_device_count: 1,
+  symptom_device_count: 2,
   confidence_score: 0.85,
   created_at: "2026-07-08T10:00:00Z",
   updated_at: "2026-07-08T10:15:00Z",
   affected_sites: ["site-sfo-01"],
   affected_devices: ["core-switch-01", "ap-sfo-101", "ap-sfo-102"],
   affected_clients: [],
+  root_device_ids: ["core-switch-01"],
+  symptom_device_ids: ["ap-sfo-101", "ap-sfo-102"],
   related_event_ids: ["evt-001", "evt-002", "evt-003"],
   probable_cause: "ISP BGP flap on primary uplink",
   topology_node_ids: ["core-switch-01"],
+  confidence_breakdown: { event_score: 0.7, avg_severity: 0.8, device_score: 0.6, total: 0.74 },
 };
 
 const mockNodeDetail: TopologyNodeDetail = {
@@ -108,7 +113,7 @@ describe("TopologySidePanel", () => {
     );
     expect(screen.getByText("Node Details")).toBeDefined();
     expect(screen.getByText("naxis-core-01")).toBeDefined();
-    expect(screen.getByText("Switch")).toBeDefined();
+    expect(screen.getAllByText("Switch").length).toBeGreaterThan(0);
     expect(screen.getByText("Critical")).toBeDefined();
     expect(screen.getByText("10.0.0.1")).toBeDefined();
   });

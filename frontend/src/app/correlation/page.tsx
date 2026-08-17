@@ -4,26 +4,40 @@ import { useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Activity,
-  AlertCircle,
-  AlertTriangle,
   Brain,
   Clock,
-  Info,
+  MapPin,
   Radio,
   Search,
+  Server,
   Shield,
   Sparkles,
   X,
 } from "lucide-react";
 import { api } from "@/lib/api";
 import { useIncidentStream } from "@/hooks/use-incident-stream";
+import { buildStats } from "@/lib/incident-stats";
+import { groupByRootCause } from "@/lib/alerts";
 import { Skeleton } from "@/components/ui/skeleton";
-import { IncidentCard } from "@/components/incidents/incident-card";
+import { SeverityBadge } from "@/components/incidents/severity-badge";
+import { StatusBadge } from "@/components/incidents/status-badge";
+import { formatConfidence, formatElapsed } from "@/lib/utils";
 import type { IncidentSeverity, IncidentSummary } from "@/types/incident";
 
 const severityOrder: Record<IncidentSeverity, number> = { critical: 4, major: 3, minor: 2, info: 1 };
 
-export default function CorrelationEnginePage() {
+function KpiCell({ value, label, tone }: { value: number | string; label: string; tone?: string }) {
+  return (
+    <div>
+      <div className={`text-3xl font-semibold ${tone ?? "text-foreground"}`}>{value}</div>
+      <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-foreground-subtle mt-0.5">
+        {label}
+      </div>
+    </div>
+  );
+}
+
+export default function AlertsPage() {
   const [search, setSearch] = useState("");
   const [severityFilter, setSeverityFilter] = useState<IncidentSeverity | "all">("all");
   const queryClient = useQueryClient();
@@ -33,6 +47,12 @@ export default function CorrelationEnginePage() {
     queryFn: () => api.listIncidents({ limit: 500 }),
     // Real-time push (SSE) drives updates; this is a slow safety-net poll.
     refetchInterval: 60000,
+  });
+
+  const { data: kpiData } = useQuery({
+    queryKey: ["incident-stats"],
+    queryFn: () => api.getIncidentStats(),
+    refetchInterval: 30000,
   });
 
   const { data: engineStats } = useQuery({
@@ -49,14 +69,14 @@ export default function CorrelationEnginePage() {
   const engineHealth = engineStats as { status?: string; stats?: Record<string, unknown> } | undefined;
 
   const incidents = data?.incidents ?? [];
+  const totalIncidents = data?.total ?? incidents.length;
 
-  const stats = useMemo(() => ({
-    critical: incidents.filter((i) => i.severity === "critical").length,
-    major: incidents.filter((i) => i.severity === "major").length,
-    minor: incidents.filter((i) => i.severity === "minor").length,
-    total: incidents.length,
-    active: incidents.filter((i) => ["open", "investigating", "mitigated"].includes(i.status)).length,
-  }), [incidents]);
+  // Truthful KPIs — SQL aggregates from GET /incidents/stats; the list page
+  // (limit 500) never becomes the headline number.
+  const stats = useMemo(
+    () => buildStats(kpiData, incidents, totalIncidents),
+    [kpiData, incidents, totalIncidents]
+  );
 
   const filteredIncidents = useMemo(() => {
     const term = search.toLowerCase();
@@ -66,14 +86,15 @@ export default function CorrelationEnginePage() {
         if (!term) return true;
         return (
           inc.title.toLowerCase().includes(term) ||
-          inc.incident_id.toLowerCase().includes(term)
+          inc.incident_id.toLowerCase().includes(term) ||
+          (inc.site_name ?? "").toLowerCase().includes(term) ||
+          (inc.root_device ?? "").toLowerCase().includes(term)
         );
       })
       .sort((a, b) => severityOrder[b.severity] - severityOrder[a.severity] || new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
   }, [incidents, severityFilter, search]);
 
-  const totalConfidence = incidents.reduce((sum, i) => sum + i.confidence_score, 0);
-  const avgConfidence = incidents.length > 0 ? totalConfidence / incidents.length : 0;
+  const groups = useMemo(() => groupByRootCause(filteredIncidents), [filteredIncidents]);
 
   return (
     <div className="min-h-screen px-4 py-10 sm:px-6 lg:px-8">
@@ -106,119 +127,64 @@ export default function CorrelationEnginePage() {
               {streamStatus === "live" ? "Live" : streamStatus === "connecting" ? "Connecting" : "Polling"}
             </span>
           </div>
-          <h1 className="mt-1 text-3xl font-semibold tracking-tight text-foreground">Correlation Engine</h1>
+          <h1 className="mt-1 text-3xl font-semibold tracking-tight text-foreground">Alerts</h1>
           <p className="mt-1 text-sm text-foreground-muted max-w-2xl">
-            Correlated incidents generated from raw telemetry across all vendors. Events are grouped by
-            site, time, and severity to produce actionable operational incidents with confidence scores
-            and blast radius.
+            Active outages and degraded service across all sites, grouped by root cause with
+            confidence scores and blast radius.
           </p>
 
           {/* KPIs */}
           <div className="mt-8 flex flex-wrap gap-8">
-            <div>
-              <div className="text-3xl font-semibold text-critical">{stats.critical}</div>
-              <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-foreground-subtle mt-0.5">
-                <span className="text-critical">Outage</span>
-              </div>
-            </div>
-            <div>
-              <div className="text-3xl font-semibold text-major">{stats.major}</div>
-              <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-foreground-subtle mt-0.5">
-                <span className="text-major">Degraded</span>
-              </div>
-            </div>
-            <div>
-              <div className="text-3xl font-semibold text-minor">{stats.minor}</div>
-              <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-foreground-subtle mt-0.5">
-                <span className="text-minor">Attention</span>
-              </div>
-            </div>
-            <div>
-              <div className="text-3xl font-semibold text-foreground">{stats.active}</div>
-              <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-foreground-subtle mt-0.5">Active</div>
-            </div>
-            <div>
-              <div className="text-3xl font-semibold text-foreground">{stats.total}</div>
-              <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-foreground-subtle mt-0.5">Total incidents</div>
-            </div>
-            <div>
-              <div className="text-3xl font-semibold text-foreground">{(avgConfidence * 100).toFixed(0)}%</div>
-              <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-foreground-subtle mt-0.5">Avg confidence</div>
-            </div>
+            <KpiCell value={stats.active} label="Active outages" tone="text-critical" />
+            <KpiCell value={stats.distinctSites} label="Sites affected" />
+            <KpiCell value={stats.distinctDevices} label="Devices affected" />
+            <KpiCell value={`${(stats.avgConfidence * 100).toFixed(0)}%`} label="Avg confidence" />
           </div>
         </div>
 
-        {/* Engine Health */}
+        {/* Engine telemetry — footnote, not a feature */}
         {engineHealth && (
-          <div className="flex flex-wrap items-center gap-4 rounded-xl border border-border/40 bg-surface/30 p-4 text-sm">
-            <div className="flex items-center gap-2">
-              <Brain className="h-4 w-4 text-primary" />
-              <span className="font-medium text-foreground">Engine</span>
-            </div>
-            <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium ${
-              engineHealth.status === "active" ? "bg-emerald-500/10 text-emerald-400" :
-              engineHealth.status === "no_data" ? "bg-amber-500/10 text-amber-400" :
-              "bg-foreground/5 text-foreground-muted"
-            }`}>
-              <span className={`h-1.5 w-1.5 rounded-full ${
-                engineHealth.status === "active" ? "bg-emerald-400" :
-                engineHealth.status === "no_data" ? "bg-amber-400" :
-                "bg-foreground-muted"
-              }`} />
-              {engineHealth.status ?? "unknown"}
-            </span>
+          <p className="text-xs text-foreground-subtle flex items-center gap-1.5">
+            <Brain className="h-3 w-3" />
+            Correlation engine {engineHealth.status ?? "unknown"}
             {engineHealth.stats && (
               <>
-                <span className="text-foreground-muted">|</span>
-                <span className="text-foreground-muted">
-                  {engineHealth.stats.lastCycleIncidents as number ?? 0} incidents
-                </span>
-                <span className="text-foreground-muted">·</span>
-                <span className="text-foreground-muted">
-                  {(engineHealth.stats.lastCycleEvents as number ?? 0).toLocaleString()} events
-                </span>
+                <span>·</span>
+                <span>{engineHealth.stats.lastCycleIncidents as number ?? 0} incidents</span>
+                <span>·</span>
+                <span>{(engineHealth.stats.lastCycleEvents as number ?? 0).toLocaleString()} events</span>
                 {engineHealth.stats.lastDurationMs != null && (
                   <>
-                    <span className="text-foreground-muted">·</span>
-                    <span className="text-foreground-muted">
-                      {(engineHealth.stats.lastDurationMs as number).toFixed(0)}ms
-                    </span>
-                  </>
-                )}
-                {engineHealth.stats.cascadeEnabled != null && (
-                  <>
-                    <span className="text-foreground-muted">·</span>
-                    <span className="text-foreground-muted">
-                      Cascade: {engineHealth.stats.cascadeEnabled ? "on" : "off"}
-                    </span>
+                    <span>·</span>
+                    <span>{(engineHealth.stats.lastDurationMs as number).toFixed(0)}ms</span>
                   </>
                 )}
               </>
             )}
-          </div>
+          </p>
         )}
 
         {/* Empty state — no incidents yet */}
         {!isLoading && incidents.length === 0 && (
           <div className="space-y-6">
-            <div className="flex items-start gap-4 rounded-xl border border-primary/20 bg-primary/5 p-6">
-              <Brain className="h-6 w-6 text-primary shrink-0 mt-0.5" />
+            <div className="flex items-start gap-4 border-l-2 border-l-primary pl-4 py-2">
+              <Brain className="h-5 w-5 text-primary shrink-0 mt-0.5" />
               <div>
-                <p className="font-semibold text-foreground">No incidents yet</p>
+                <p className="font-semibold text-foreground">No alerts yet</p>
                 <p className="mt-1 text-sm text-foreground-muted">
                   The correlation engine is waiting for telemetry. When Mist, VeloCloud SD-WAN, DNAC,
-                  or Arista WLC events arrive, they will be automatically correlated into incidents
-                  grouped by site, time window, and severity.
+                  or Arista WLC events arrive, they will be automatically correlated into alerts
+                  grouped by root cause with confidence scores and blast radius.
                 </p>
               </div>
             </div>
             <div className="grid gap-4 sm:grid-cols-3 text-sm">
               {[
                 { icon: <Activity className="h-5 w-5 text-violet-400" />, title: "Site grouping", desc: "Events at the same site within 5 minutes become one incident" },
-                { icon: <AlertTriangle className="h-5 w-5 text-amber-400" />, title: "Severity filtering", desc: "Only MAJOR+ events trigger correlation; single CRITICAL events create incidents" },
                 { icon: <Shield className="h-5 w-5 text-emerald-400" />, title: "Confidence scoring", desc: "Each incident scored by event count, severity distribution, and device diversity" },
+                { icon: <Clock className="h-5 w-5 text-amber-400" />, title: "Root-cause dedup", desc: "Incidents are grouped by root cause — one alert per root device, not one per symptom" },
               ].map(({ icon, title, desc }) => (
-                <div key={title} className="flex items-start gap-3 rounded-lg border border-border/40 p-4">
+                <div key={title} className="flex items-start gap-3 border-t border-border/40 pt-3">
                   {icon}
                   <div>
                     <p className="font-medium text-foreground">{title}</p>
@@ -230,7 +196,7 @@ export default function CorrelationEnginePage() {
           </div>
         )}
 
-        {/* Incident list */}
+        {/* Alert list */}
         {(isLoading || incidents.length > 0) && (
           <div className="space-y-6">
             {/* Filters */}
@@ -239,7 +205,7 @@ export default function CorrelationEnginePage() {
                 <Search className="absolute left-0 top-1/2 h-4 w-4 -translate-y-1/2 text-foreground-subtle" />
                 <input
                   type="text"
-                  placeholder="Search incidents..."
+                  placeholder="Search alerts, sites, devices..."
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                   className="w-full border-b border-border/70 bg-transparent pl-7 pr-4 py-2 text-sm text-foreground outline-none placeholder:text-foreground-subtle focus:border-primary/30"
@@ -249,19 +215,19 @@ export default function CorrelationEnginePage() {
                 {(["all", "critical", "major", "minor"] as const).map((s) => {
                   const filterLabels: Record<string, string> = { critical: "Outage", major: "Degraded", minor: "Attention", all: "All" };
                   return (
-                    <button
-                      key={s}
-                      onClick={() => setSeverityFilter(s)}
-                      className={`px-2.5 py-1 rounded text-sm font-medium transition-colors ${
-                        severityFilter === s
-                          ? s === "all"
-                            ? "bg-surface text-foreground"
-                            : "bg-critical/10 text-critical border border-critical/30"
-                          : "text-foreground-muted hover:text-foreground"
-                      }`}
-                    >
-                      {filterLabels[s]}
-                    </button>
+                <button
+                  key={s}
+                  onClick={() => setSeverityFilter(s)}
+                  className={`px-1 py-1 text-sm font-medium transition-colors ${
+                    severityFilter === s
+                      ? s === "all"
+                        ? "text-foreground border-b border-foreground"
+                        : "text-critical border-b border-critical"
+                      : "text-foreground-muted hover:text-foreground"
+                  }`}
+                >
+                  {filterLabels[s]}
+                </button>
                   );
                 })}
                 {(search || severityFilter !== "all") && (
@@ -294,31 +260,45 @@ export default function CorrelationEnginePage() {
                   </div>
                 ))}
               </div>
-            ) : filteredIncidents.length === 0 ? (
+            ) : groups.length === 0 ? (
               <div className="flex flex-col items-start gap-3 border-t border-border/60 py-12">
                 <Shield className="h-6 w-6 text-foreground-subtle" />
                 <div>
-                  <p className="font-semibold text-foreground">No matching incidents</p>
+                  <p className="font-semibold text-foreground">No matching alerts</p>
                   <p className="mt-1 text-sm text-foreground-muted">Try clearing filters or broadening your search.</p>
                 </div>
               </div>
             ) : (
-              <div className="divide-y divide-border/60 border-t border-border/60">
-                <div className="hidden grid-cols-12 gap-4 px-2 py-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-foreground-subtle lg:grid">
-                  <div className="col-span-5">Incident</div>
-                  <div className="col-span-4">Impact</div>
-                  <div className="col-span-2">Confidence</div>
-                  <div className="col-span-1 text-right">Updated</div>
-                </div>
-                {filteredIncidents.map((incident) => (
-                  <IncidentCard key={incident.incident_id} incident={incident} />
+              <div className="space-y-8">
+                {groups.map((group) => (
+                  <section key={group.key} className="border-t border-border/60 pt-5">
+                    {/* Root cause header */}
+                    <div className="mb-2 flex flex-wrap items-center gap-2">
+                      <h2 className="text-sm font-semibold text-foreground">{group.rootDevice}</h2>
+                      <span className="flex items-center gap-1 text-xs text-foreground-muted">
+                        <MapPin className="h-3 w-3" />
+                        {group.siteName}
+                      </span>
+                      {group.incidents.length > 1 && (
+                        <span className="text-[11px] text-foreground-subtle">
+                          {group.incidents.length} issues
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="divide-y divide-border/60 border-t border-border/60">
+                      {group.incidents.map((incident) => (
+                        <AlertRow key={incident.incident_id} incident={incident} />
+                      ))}
+                    </div>
+                  </section>
                 ))}
               </div>
             )}
 
             {filteredIncidents.length > 0 && (
               <p className="text-xs text-foreground-subtle text-center pt-2">
-                Showing {filteredIncidents.length} of {incidents.length} incidents
+                Showing {filteredIncidents.length} of {totalIncidents} alerts
               </p>
             )}
           </div>
@@ -326,5 +306,50 @@ export default function CorrelationEnginePage() {
 
       </div>
     </div>
+  );
+}
+
+function AlertRow({ incident }: { incident: IncidentSummary }) {
+  const isActive = ["open", "investigating", "mitigated"].includes(incident.status);
+
+  return (
+    <a
+      href={`/incidents/${incident.incident_id}`}
+      className="group grid grid-cols-12 items-center gap-4 px-4 py-3 transition-colors hover:bg-surface"
+    >
+      <div className="col-span-12 lg:col-span-5">
+        <div className="flex flex-wrap items-center gap-2">
+          <SeverityBadge severity={incident.severity} label={incident.severity_label} showDot={false} />
+          <StatusBadge status={incident.status} />
+        </div>
+        <h3 className="mt-1 text-sm font-medium leading-snug text-foreground transition-colors group-hover:text-primary">
+          {incident.title}
+        </h3>
+      </div>
+
+      <div className="col-span-12 flex items-center gap-5 pl-0 text-sm lg:col-span-4">
+        <div className="flex items-center gap-1.5">
+          <Clock className="h-3.5 w-3.5 text-foreground-subtle" />
+          <span className="text-foreground-muted">
+            {isActive ? `ongoing for ${formatElapsed(incident.created_at)}` : `resolved ${formatElapsed(incident.updated_at)} ago`}
+          </span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <Server className="h-3.5 w-3.5 text-foreground-subtle" />
+          <span className="text-foreground-muted">{incident.affected_devices_count} devices</span>
+        </div>
+      </div>
+
+      <div className="col-span-6 pl-0 text-sm lg:col-span-2">
+        <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-foreground-subtle">Confidence</div>
+        <div className="mt-0.5 font-semibold text-foreground">
+          {formatConfidence(incident.confidence_score)}
+        </div>
+      </div>
+
+      <div className="col-span-6 text-right text-xs text-foreground-subtle lg:col-span-1">
+        {incident.event_count} events
+      </div>
+    </a>
   );
 }

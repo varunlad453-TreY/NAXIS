@@ -3,8 +3,10 @@ from .incidents import (
     insert_incident,
     upsert_incident,
     get_incident,
+    get_incident_status,
     list_incidents,
     count_incidents,
+    get_incident_stats,
 )
 from .events import (
     insert_event,
@@ -21,8 +23,10 @@ __all__ = [
     "insert_incident",
     "upsert_incident",
     "get_incident",
+    "get_incident_status",
     "list_incidents",
     "count_incidents",
+    "get_incident_stats",
     # events
     "insert_event",
     "insert_events",

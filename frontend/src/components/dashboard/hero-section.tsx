@@ -36,11 +36,10 @@ function liveVendors(n: number): string {
 
 export function HeroSection({ isOnline, eventCount, eventCountStale, eventRange, onEventRangeChange, siteCount, vendorCount }: HeroSectionProps) {
   return (
-    <section className="max-w-2xl space-y-6" style={{ animation: "naxis-enter 0.6s 0.1s both" }}>
+    <section className="max-w-2xl space-y-6">
       <div className="flex items-center gap-2.5">
         <span
           className={`h-1.5 w-1.5 rounded-full ${isOnline ? "bg-success" : "bg-foreground-subtle"}`}
-          style={{ boxShadow: isOnline ? "0 0 6px 1px hsl(var(--success)/0.5)" : "none" }}
         />
         <span className="text-[10px] font-semibold uppercase tracking-[0.25em] text-foreground-subtle">
           {isOnline ? "Systems nominal" : "Connecting…"}
@@ -57,7 +56,7 @@ export function HeroSection({ isOnline, eventCount, eventCountStale, eventRange,
         <h1 className="text-5xl font-semibold leading-tight tracking-tight text-foreground lg:text-6xl">
           One platform.
           <br />
-          <span className="naxis-shimmer-text">Every network.</span>
+          <span className="text-foreground">Every network.</span>
         </h1>
       </div>
 
@@ -66,7 +65,7 @@ export function HeroSection({ isOnline, eventCount, eventCountStale, eventRange,
         feeding one intelligence layer.
       </p>
 
-      <div className="flex flex-wrap items-end gap-4 border-t border-border/40 pt-5 text-sm">
+      <div className="flex flex-wrap items-end gap-6 border-t border-border/40 pt-5 text-sm">
         <div>
           <div className={`font-mono text-lg font-semibold transition-opacity ${eventCountStale ? "text-foreground/40" : "text-foreground"}`}>
             {fmt(eventCount)}
@@ -81,14 +80,14 @@ export function HeroSection({ isOnline, eventCount, eventCountStale, eventRange,
           <div className="font-mono text-lg font-semibold text-foreground">{new Intl.NumberFormat().format(siteCount)}</div>
           <div className="text-[11px] text-foreground-subtle">Sites monitored</div>
         </div>
-        <div className="ml-auto flex gap-1 rounded-lg border border-border/40 p-0.5">
+        <div className="ml-auto flex gap-0 border border-border/40">
           {(Object.keys(RANGE_LABELS) as EventRange[]).map((r) => (
             <button
               key={r}
               onClick={() => onEventRangeChange(r)}
-              className={`rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors ${
+              className={`px-3 py-1.5 text-[11px] font-medium transition-colors border-r border-border/40 last:border-0 ${
                 r === eventRange
-                  ? "bg-accent text-accent-foreground shadow-sm"
+                  ? "bg-accent text-accent-foreground"
                   : "text-foreground-subtle hover:text-foreground"
               }`}
             >

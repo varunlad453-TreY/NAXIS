@@ -1,0 +1,1109 @@
+"use client";
+
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
+import { useQuery } from "@tanstack/react-query";
+import { Zap } from "lucide-react";
+import {
+  ReactFlow,
+  Background,
+  Controls,
+  MiniMap,
+  Node,
+  Edge,
+  ReactFlowInstance,
+  Panel,
+  ConnectionLineType,
+} from "reactflow";
+import "reactflow/dist/style.css";
+
+import type { TopologyGraphResponse, TopologyNode } from "@/types/topology";
+import { NODE_TYPE_META, AGGREGATED_VIEW_THRESHOLD } from "@/types/topology";
+import { api } from "@/lib/api";
+import { TopologySidePanel, type PanelMode } from "./topology-side-panel";
+import { topologyNodeTypes } from "./topology-node-types";
+import { topologyEdgeTypes } from "./topology-edge-types";
+import { TopologyToolbar } from "./topology-toolbar";
+import { TopologyLegend } from "./topology-legend";
+import { AllSitesGrid, regionFromSite, healthColor } from "./all-sites-grid";
+import { AggregatedView } from "./aggregated-view";
+import { ContextGraph } from "./context-graph";
+import { SiteContextBanner } from "./site-context-banner";
+import { HostMapView } from "./host-map-view";
+import { WorstOffendersStrip } from "./worst-offenders-strip";
+import { computeAlertScope, collapseLeafSiblings, remapEdgesForCollapsedGroups, isAlerting } from "@/lib/large-site-utils";
+import {
+  normalizeTopology,
+  tracePath,
+  getDownstreamImpact,
+  getNodeRank,
+} from "./topology-graph-model";
+import {
+  buildHierarchicalLayout,
+  buildReadableHierarchicalLayout,
+
+  buildBackboneLayout,
+  buildSiteGroupedLayout,
+  buildRegionClustersLayout,
+} from "./topology-layout-engine";
+
+
+interface TopologyGraphV2Props {
+  data: TopologyGraphResponse;
+  isLoading?: boolean;
+  error?: Error | null;
+  highlightedNodeIds?: string[];
+  incidentId?: string | null;
+  isBackbone?: boolean;
+  activeSiteId?: string;
+  siteName?: string;
+  onSiteSelect?: (siteId: string) => void;
+  onBackToBackbone?: () => void;
+}
+
+function TopologySkeleton() {
+  return (
+    <div className="flex h-[640px] items-center justify-center border border-slate-800/60 bg-slate-900/30">
+      <div className="space-y-4 text-center">
+        <div className="mx-auto h-12 w-12 animate-pulse rounded-full bg-slate-800" />
+        <div className="mx-auto h-4 w-48 animate-pulse bg-slate-800" />
+        <div className="mx-auto h-3 w-32 animate-pulse bg-slate-800" />
+      </div>
+    </div>
+  );
+}
+
+function TopologyEmptyState({ isBackbone }: { isBackbone?: boolean }) {
+  return (
+    <div className="flex h-[640px] items-center justify-center border border-dashed border-slate-800/60">
+      <div className="max-w-md space-y-4 text-center">
+        <h3 className="text-lg font-bold text-white">
+          {isBackbone ? "No sites discovered" : "No topology data available"}
+        </h3>
+        <p className="text-sm text-slate-500">
+          {isBackbone
+            ? "Site topology will appear once the network discovery sync completes."
+            : "Topology nodes and edges will appear here once the worker starts collecting network topology from Mist, VeloCloud, or SNMP pollers."}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function TopologyErrorState({ error }: { error: Error }) {
+  return (
+    <div className="flex h-[640px] items-center justify-center border border-rose-500/20 bg-rose-500/5">
+      <div className="max-w-md space-y-3 text-center">
+        <h3 className="font-bold text-white">Failed to load topology</h3>
+        <p className="text-sm text-slate-500">{error.message}</p>
+      </div>
+    </div>
+  );
+}
+
+export function TopologyGraphV2({
+  data,
+  isLoading,
+  error,
+  highlightedNodeIds,
+  incidentId,
+  isBackbone,
+  activeSiteId,
+  siteName,
+  onSiteSelect,
+  onBackToBackbone,
+}: TopologyGraphV2Props) {
+  const router = useRouter();
+  const reactFlowWrapper = useRef<HTMLDivElement>(null);
+  const [rfInstance, setRfInstance] = useState<ReactFlowInstance | null>(null);
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const [panelMode, setPanelMode] = useState<PanelMode>(incidentId ? "incident" : null);
+  const [layoutMode, setLayoutMode] = useState<"hierarchical" | "readable" | "readable-lr" | "flat">("readable");
+  const [activeFilters, setActiveFilters] = useState<Set<string>>(new Set(Object.keys(NODE_TYPE_META)));
+  const [searchQuery, setSearchQuery] = useState("");
+  const [legendVisible, setLegendVisible] = useState(false);
+  const [pathTraceMode, setPathTraceMode] = useState(false);
+  const [pathTraceStart, setPathTraceStart] = useState<string | null>(null);
+  const [pathTraceEnd, setPathTraceEnd] = useState<string | null>(null);
+  const [activeBlastFocusId, setActiveBlastFocusId] = useState<string | null>(null);
+  const [selectedRegionHub, setSelectedRegionHub] = useState<{
+    name: string;
+    sites: TopologyNode[];
+    criticalCount: number;
+    warningCount: number;
+    deviceCount: number;
+  } | null>(null);
+  const firstFitDone = useRef(false);
+
+  // Collapsible ranks — smart default: hide noisy leaf layers on crowded sites
+  const [collapsedRanks, setCollapsedRanks] = useState<Set<number>>(new Set());
+
+  // Large-site view mode (hostmap vs aggregated vs readable device graph)
+  const [siteViewMode, setSiteViewMode] = useState<"auto" | "hostmap" | "aggregated" | "readable">("auto");
+  const [contextNode, setContextNode] = useState<{ id: string; name: string } | null>(null);
+  // Large-site health scope: show only alerting devices + their ancestors by default
+  const [healthScope, setHealthScope] = useState<"alerting" | "all">("alerting");
+  // Collapsed leaf groups the user has expanded (per-parent leaf collapsing)
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+
+  // Reset view mode & context when navigating between sites or backbone
+  useEffect(() => {
+    setSiteViewMode("auto");
+    setContextNode(null);
+    setCollapsedRanks(new Set());
+    setHealthScope("alerting");
+    setExpandedGroups(new Set());
+  }, [activeSiteId, isBackbone]);
+
+  // Large-site detection for single-site view
+  const isLargeSite = useMemo(() => {
+    if (!activeSiteId || isBackbone) return false;
+    const nonSiteCount = data.nodes.filter((n) => n.node_type !== "site").length;
+    return nonSiteCount >= AGGREGATED_VIEW_THRESHOLD;
+  }, [data.nodes, activeSiteId, isBackbone]);
+
+  // Compute smart defaults for collapsed ranks whenever site data changes
+  useEffect(() => {
+    if (!activeSiteId || isBackbone) return;
+    const siteNodes = data.nodes.filter((n) => n.node_type !== "site");
+    const counts = new Map<number, number>();
+    for (const n of siteNodes) {
+      const rank = getNodeRank(n.node_type);
+      counts.set(rank, (counts.get(rank) ?? 0) + 1);
+    }
+    const collapsed = new Set<number>();
+    // Large sites: per-parent leaf groups handle density — never auto-collapse
+    // ranks there, or the group badges (typed as their children) get hidden.
+    if (!isLargeSite) {
+      // Always collapse noisy leaf layers so the backbone is visible first
+      if ((counts.get(6) ?? 0) > 0) collapsed.add(6); // endpoints
+      // Wireless: collapse only when very dense — but never in alerting scope,
+      // where the alerting APs ARE the content the user came for
+      if ((counts.get(5) ?? 0) > 30 && healthScope !== "alerting") {
+        collapsed.add(5);
+      }
+    }
+    setCollapsedRanks(collapsed);
+  }, [data.nodes, activeSiteId, isBackbone, isLargeSite, healthScope]);
+
+  // Incident detail query
+  const { data: incidentDetail, isLoading: incidentLoading } = useQuery({
+    queryKey: ["incident", incidentId],
+    queryFn: () => api.getIncident(incidentId!),
+    enabled: panelMode === "incident" && !!incidentId,
+  });
+
+  // Blast radius query for graph highlighting
+  const { data: blastRadius } = useQuery({
+    queryKey: ["blast-radius", incidentId],
+    queryFn: () => api.getBlastRadius(incidentId!),
+    enabled: !!incidentId,
+    staleTime: 30000,
+  });
+
+  // Node detail query
+  const { data: nodeDetail, isLoading: nodeLoading } = useQuery({
+    queryKey: ["topology-node", selectedNodeId],
+    queryFn: () => api.getTopologyNode(selectedNodeId!),
+    enabled: panelMode === "node" && !!selectedNodeId,
+  });
+
+  // Filter nodes by type
+  const filteredNodes = useMemo(() => {
+    if (activeFilters.size === 0) return [];
+    return data.nodes.filter((n) => n.node_type === "site" || activeFilters.has(n.node_type));
+  }, [data.nodes, activeFilters]);
+
+
+  // Compute search results
+  const searchResults = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (q.length < 2) return [];
+    return filteredNodes
+      .filter(
+        (n) =>
+          n.name?.toLowerCase().includes(q) ||
+          n.node_id?.toLowerCase().includes(q) ||
+          n.ip_address?.toLowerCase().includes(q)
+      )
+      .slice(0, 20)
+      .map((n) => ({ node_id: n.node_id, name: n.name || n.node_id, node_type: n.node_type }));
+  }, [searchQuery, filteredNodes]);
+
+  const [backboneViewMode, setBackboneViewMode] = useState<"regions" | "degraded" | "all">("regions");
+  const [hubRegionFilter, setHubRegionFilter] = useState<string | undefined>(undefined);
+
+  const resolvedSiteMode = useMemo(() => {
+    if (contextNode) return "context";
+    if (siteViewMode !== "auto") return siteViewMode;
+    // Large sites default to the host map — instantly readable at 155+ devices.
+    // Small sites keep the architecture graph.
+    return isLargeSite ? "hostmap" : "readable";
+  }, [siteViewMode, isLargeSite, contextNode]);
+
+  // Compute graph nodes and edges using the layout engine
+  const { graphNodes, graphEdges } = useMemo(() => {
+    if (filteredNodes.length === 0) return { graphNodes: [], graphEdges: [] };
+
+    const highlightSet = new Set(highlightedNodeIds ?? []);
+
+    if (isBackbone) {
+      const siteNodes = filteredNodes.filter((n) => n.node_type === "site");
+      const interSiteEdges = data.edges.filter((e) => {
+        const src = data.nodes.find((n) => n.node_id === e.src_id);
+        const dst = data.nodes.find((n) => n.node_id === e.dst_id);
+        return src && dst && src.site_id && dst.site_id && src.site_id !== dst.site_id;
+      });
+
+      if (backboneViewMode === "regions") {
+        const result = buildRegionClustersLayout(siteNodes, highlightSet);
+        return { graphNodes: result.nodes, graphEdges: result.edges };
+      }
+
+      if (backboneViewMode === "degraded") {
+        const degradedSites = siteNodes.filter(
+          (s) =>
+            s.health_status === "critical" ||
+            s.health_status === "warning" ||
+            s.health_status === "degraded" ||
+            (s as any).critical_count > 0 ||
+            (s as any).warning_count > 0
+        );
+
+        if (degradedSites.length === 0) {
+          const healthyBannerNode: any = {
+            id: "all-healthy-banner",
+            type: "statusBanner",
+            position: { x: 320, y: 160 },
+
+            data: {
+              topoNode: {
+                node_id: "all-healthy-banner",
+                node_type: "site",
+                name: "All 153 Enterprise Sites Operating Normally",
+                ip_address: "",
+                vendor: "system",
+                model: "Zero Active Incidents",
+                site_id: "none",
+                site_name: "All Healthy",
+                health_status: "healthy",
+                health_label: "0 Active Alerts",
+                device_count: 1880,
+              },
+              label: "All 153 Enterprise Sites Operating Normally",
+              nodeType: "site",
+              healthStatus: "healthy",
+              healthColor: "#10b981",
+              deviceColor: "#10b981",
+              deviceLabel: "Healthy",
+              rank: 0,
+              isHighlighted: false,
+              isDimmed: false,
+              isRootCause: false,
+              isSymptom: false,
+              isSelected: false,
+              isSiteGroup: true,
+              childCount: 153,
+              crossSiteEdgeCount: 0,
+            },
+            width: 380,
+            height: 100,
+          };
+          return { graphNodes: [healthyBannerNode], graphEdges: [] };
+        }
+
+        const result = buildBackboneLayout(degradedSites, interSiteEdges, highlightSet);
+        return { graphNodes: result.nodes, graphEdges: result.edges };
+      }
+
+
+      const result = buildBackboneLayout(siteNodes, interSiteEdges, highlightSet);
+      return { graphNodes: result.nodes, graphEdges: result.edges };
+    }
+
+
+    // Site internal view
+    if (activeSiteId) {
+      // Use site grouped layout when multiple sites present, else hierarchical
+      const hasMultipleSites =
+        new Set(filteredNodes.filter((n) => n.node_type !== "site").map((n) => n.site_id)).size > 1;
+
+      if (hasMultipleSites) {
+        const result = buildSiteGroupedLayout(filteredNodes, data.edges, {
+          highlightSet,
+          activeTypeFilters: activeFilters,
+        });
+        return { graphNodes: result.nodes, graphEdges: result.edges };
+      }
+    }
+
+    // Standard hierarchical or flat layout (single site)
+    // Large sites: scope to alerting devices + ancestors, or collapse dense
+    // leaf siblings under their parent into expandable group badges.
+    let layoutNodesInput = filteredNodes;
+    let layoutEdgesInput = data.edges;
+    const collapsedGroupMap = new Map<string, import("@/lib/large-site-utils").CollapsedLeafGroup>();
+
+    if (activeSiteId && isLargeSite) {
+      let effectiveScope = healthScope;
+      if (effectiveScope === "alerting") {
+        const scope = computeAlertScope(filteredNodes, data.edges);
+        const scoped = filteredNodes.filter((n) => scope.has(n.node_id));
+        if (scoped.some((n) => n.node_type !== "site")) {
+          layoutNodesInput = scoped;
+        } else {
+          // Nothing alerting — a healthy site falls through to the collapsed full view
+          effectiveScope = "all";
+        }
+      }
+
+      if (effectiveScope === "all") {
+        const collapse = collapseLeafSiblings(filteredNodes, data.edges, {
+          minGroupSize: 4,
+          expandedGroups,
+          getRank: getNodeRank,
+        });
+        if (collapse.groups.length > 0) {
+          const parentSite = new Map(filteredNodes.map((n) => [n.node_id, n.site_id]));
+          for (const g of collapse.groups) {
+            collapsedGroupMap.set(g.id, g);
+          }
+          const pseudoNodes: TopologyNode[] = collapse.groups.map((g) => ({
+            node_id: g.id,
+            node_type: g.children[0]?.node_type ?? "ap",
+            name: `${g.children.length} devices`,
+            ip_address: "",
+            vendor: "",
+            model: "",
+            site_id: parentSite.get(g.parentId) ?? "",
+            site_name: null,
+            health_status:
+              g.health.critical_count > 0 ? "critical"
+                : g.health.warning_count > 0 ? "warning"
+                  : g.health.healthy_count > 0 ? "healthy"
+                    : "unknown",
+            health_label: "",
+          }));
+          layoutNodesInput = [...collapse.keptNodes, ...pseudoNodes];
+          layoutEdgesInput = remapEdgesForCollapsedGroups(
+            data.edges,
+            collapse.hiddenToGroup,
+            new Set(collapse.keptNodes.map((n) => n.node_id)),
+          );
+        }
+      }
+    }
+
+    let result: ReturnType<typeof buildHierarchicalLayout>;
+    if (layoutMode === "hierarchical") {
+      result = buildHierarchicalLayout(layoutNodesInput, layoutEdgesInput, { highlightSet });
+    } else if (layoutMode === "readable") {
+      result = buildReadableHierarchicalLayout(layoutNodesInput, layoutEdgesInput, { rankdir: "TB", highlightSet, collapsedRanks });
+    } else if (layoutMode === "readable-lr") {
+      result = buildReadableHierarchicalLayout(layoutNodesInput, layoutEdgesInput, { rankdir: "LR", highlightSet, collapsedRanks });
+    } else {
+      result = buildHierarchicalLayout(layoutNodesInput, layoutEdgesInput, { rankdir: "TB", highlightSet });
+    }
+
+    // Swap synthetic group placeholders for the collapsed-group node renderer
+    if (collapsedGroupMap.size > 0) {
+      result = {
+        nodes: result.nodes.map((n) =>
+          collapsedGroupMap.has(n.id)
+            ? { ...n, type: "collapsedGroup", data: { ...n.data, collapsedGroup: collapsedGroupMap.get(n.id) } }
+            : n,
+        ),
+        edges: result.edges,
+      };
+    }
+    return { graphNodes: result.nodes, graphEdges: result.edges };
+  }, [filteredNodes, data.edges, data.nodes, highlightedNodeIds, isBackbone, layoutMode, activeFilters, activeSiteId, backboneViewMode, collapsedRanks, isLargeSite, healthScope, expandedGroups]);
+
+
+  // Apply blast radius root cause / symptom highlighting
+  const blastRadiusNodes = useMemo(() => {
+    if (!blastRadius) return graphNodes;
+    const rootSet = new Set(blastRadius.root_cause_node_ids);
+    const symptomSet = new Set(blastRadius.symptom_node_ids);
+    return graphNodes.map((n: any) => ({
+      ...n,
+      data: {
+        ...n.data,
+        isRootCause: rootSet.has(n.id),
+        isSymptom: symptomSet.has(n.id),
+      },
+    }));
+  }, [graphNodes, blastRadius]);
+
+  // Path trace & Blast Radius Isolation highlighting
+  const { finalNodes, finalEdges } = useMemo(() => {
+    if (activeBlastFocusId) {
+      const normalized = normalizeTopology(
+        filteredNodes,
+        data.edges,
+        { highlightedNodeIds: new Set(highlightedNodeIds ?? []) }
+      );
+      const impact = getDownstreamImpact(normalized, activeBlastFocusId, 5);
+      const nodeIds = impact.nodeIds;
+      const edgeIds = impact.edgeIds;
+
+      const nodes = blastRadiusNodes.map((n: any) => ({
+        ...n,
+        data: {
+          ...n.data,
+          isRootCause: n.id === activeBlastFocusId,
+          isSymptom: nodeIds.has(n.id) && n.id !== activeBlastFocusId,
+          isHighlighted: nodeIds.has(n.id),
+          isDimmed: !nodeIds.has(n.id),
+        },
+      }));
+      const edges = graphEdges.map((e: any) => ({
+        ...e,
+        data: {
+          ...e.data,
+          isPathTrace: edgeIds.has(e.id),
+          isHighlighted: edgeIds.has(e.id),
+          isDimmed: !edgeIds.has(e.id),
+        },
+      }));
+      return { finalNodes: nodes, finalEdges: edges };
+    }
+
+    if (!pathTraceMode || !pathTraceStart || !pathTraceEnd) {
+      return { finalNodes: blastRadiusNodes, finalEdges: graphEdges };
+    }
+
+    const normalized = normalizeTopology(
+      filteredNodes,
+      data.edges,
+      { highlightedNodeIds: new Set(highlightedNodeIds ?? []) }
+    );
+
+    const pathResult = tracePath(normalized, pathTraceStart, pathTraceEnd);
+    if (!pathResult) {
+      const impact = getDownstreamImpact(normalized, pathTraceStart, 5);
+      const nodeIds = impact.nodeIds;
+      const edgeIds = impact.edgeIds;
+
+      const nodes = blastRadiusNodes.map((n: any) => ({
+        ...n,
+        data: {
+          ...n.data,
+          isHighlighted: nodeIds.has(n.id),
+          isDimmed: !nodeIds.has(n.id),
+        },
+      }));
+      const edges = graphEdges.map((e: any) => ({
+        ...e,
+        data: {
+          ...e.data,
+          isPathTrace: edgeIds.has(e.id),
+          isHighlighted: edgeIds.has(e.id),
+          isDimmed: !edgeIds.has(e.id),
+        },
+      }));
+      return { finalNodes: nodes, finalEdges: edges };
+    }
+
+    const { nodeIds, edgeIds } = pathResult;
+    const nodes = blastRadiusNodes.map((n: any) => ({
+      ...n,
+      data: {
+        ...n.data,
+        isHighlighted: nodeIds.has(n.id),
+        isDimmed: !nodeIds.has(n.id),
+      },
+    }));
+    const edges = graphEdges.map((e: any) => ({
+      ...e,
+      data: {
+        ...e.data,
+        isPathTrace: edgeIds.has(e.id),
+        isHighlighted: edgeIds.has(e.id),
+        isDimmed: !edgeIds.has(e.id),
+      },
+    }));
+    return { finalNodes: nodes, finalEdges: edges };
+  }, [activeBlastFocusId, blastRadiusNodes, graphEdges, pathTraceMode, pathTraceStart, pathTraceEnd, filteredNodes, data.edges, highlightedNodeIds]);
+
+
+  // Fit view whenever nodes load or layout mode changes
+  useEffect(() => {
+    if (rfInstance && finalNodes.length > 0) {
+      const timer = setTimeout(() => {
+        rfInstance.fitView({ padding: 0.15, duration: 300 });
+      }, 150);
+      return () => clearTimeout(timer);
+    }
+  }, [rfInstance, finalNodes.length, isBackbone, activeSiteId, layoutMode]);
+
+
+  // Re-fit when highlighted nodes change
+  useEffect(() => {
+    if (rfInstance && highlightedNodeIds && highlightedNodeIds.length > 0) {
+      const timer = setTimeout(() => {
+        rfInstance.fitView({
+          padding: 0.2,
+          nodes: highlightedNodeIds.map((id) => ({ id })),
+          duration: 300,
+        });
+      }, 150);
+      return () => clearTimeout(timer);
+    }
+  }, [rfInstance, highlightedNodeIds]);
+
+  // Clear region filter when leaving All Sites view
+  useEffect(() => {
+    if (backboneViewMode !== "all") {
+      setHubRegionFilter(undefined);
+    }
+  }, [backboneViewMode]);
+
+  const handleNodeClick = useCallback(
+    (_event: React.MouseEvent, node: Node) => {
+      // Collapsed leaf group → expand just that branch
+      if (node.type === "collapsedGroup") {
+        setExpandedGroups((prev) => new Set(prev).add(node.id));
+        return;
+      }
+
+      // Regional hub → open hub detail panel showing all sites in the region
+      if (node.type === "regionalHub") {
+        const sites = node.data?.regionSites as TopologyNode[] | undefined;
+        const topoNode = node.data?.topoNode as any;
+        if (sites && sites.length > 0) {
+          setSelectedRegionHub({
+            name: topoNode?.name || node.data?.label || "Regional Hub",
+            sites,
+            criticalCount: sites.filter((s) => s.health_status === "critical").length,
+            warningCount: sites.filter((s) => s.health_status === "warning" || s.health_status === "degraded").length,
+            deviceCount: sites.reduce((acc, s) => acc + ((s as any).device_count ?? 1), 0),
+          });
+        }
+        return;
+      }
+
+      const isGroupNode =
+        node.type === "siteGroup" ||
+        node.type === "site" ||
+        node.type === "statusBanner";
+
+      if (isGroupNode) {
+        if (onSiteSelect) {
+          const targetSiteId =
+            node.data?.topoNode?.site_id ||
+            node.data?.topoNode?.node_id;
+
+          if (targetSiteId && targetSiteId !== "none" && !targetSiteId.startsWith("all-") && !targetSiteId.startsWith("region-")) {
+            onSiteSelect(targetSiteId);
+            return;
+          }
+        }
+        return;
+      }
+
+      if (pathTraceMode) {
+        if (!pathTraceStart) {
+          setPathTraceStart(node.id);
+        } else if (!pathTraceEnd && node.id !== pathTraceStart) {
+          setPathTraceEnd(node.id);
+        } else {
+          setPathTraceStart(node.id);
+          setPathTraceEnd(null);
+        }
+        return;
+      }
+
+      setSelectedNodeId((prev) => (prev === node.id ? null : node.id));
+      setPanelMode((prev) => {
+        if (prev === "node" && selectedNodeId === node.id) return incidentId ? "incident" : null;
+        return "node";
+      });
+    },
+    [onSiteSelect, pathTraceMode, pathTraceStart, pathTraceEnd, selectedNodeId, incidentId]
+  );
+
+  const handlePanelClose = useCallback(() => {
+    setPanelMode(incidentId ? "incident" : null);
+    setSelectedNodeId(null);
+  }, [incidentId]);
+
+  const handleRegionHubClose = useCallback(() => {
+    setSelectedRegionHub(null);
+  }, []);
+
+  const handleNodePathTrace = useCallback(() => {
+    if (!selectedNodeId) return;
+    const selectedNode = data.nodes.find((n) => n.node_id === selectedNodeId);
+    const target = selectedNode?.ip_address || selectedNodeId;
+    router.push(`/path-trace?ip=${encodeURIComponent(target)}&device_id=${encodeURIComponent(selectedNodeId)}`);
+  }, [selectedNodeId, data.nodes, router]);
+
+  const handleNodeBlastRadius = useCallback(() => {
+    if (!selectedNodeId) return;
+    setActiveBlastFocusId(selectedNodeId);
+  }, [selectedNodeId]);
+
+  useEffect(() => {
+    if (rfInstance && activeBlastFocusId) {
+      const normalized = normalizeTopology(filteredNodes, data.edges);
+      const impact = getDownstreamImpact(normalized, activeBlastFocusId, 5);
+      const targetNodes = Array.from(impact.nodeIds).map((id) => ({ id }));
+      if (targetNodes.length > 0) {
+        rfInstance.fitView({ padding: 0.3, nodes: targetNodes, duration: 500 });
+      }
+    }
+  }, [rfInstance, activeBlastFocusId, filteredNodes, data.edges]);
+
+  const handleContextSelect = useCallback((nodeId: string, nodeName: string) => {
+    setContextNode({ id: nodeId, name: nodeName });
+  }, []);
+
+  const handleContextBack = useCallback(() => {
+    setContextNode(null);
+  }, []);
+
+  const handleZoomIn = useCallback(() => {
+    rfInstance?.zoomIn({ duration: 200 });
+  }, [rfInstance]);
+
+  const handleZoomOut = useCallback(() => {
+    rfInstance?.zoomOut({ duration: 200 });
+  }, [rfInstance]);
+
+  const handleFitView = useCallback(() => {
+    rfInstance?.fitView({ padding: 0.15, duration: 300 });
+  }, [rfInstance]);
+
+  const handleReset = useCallback(() => {
+    setPathTraceMode(false);
+    setPathTraceStart(null);
+    setPathTraceEnd(null);
+    setSelectedNodeId(null);
+    setPanelMode(incidentId ? "incident" : null);
+    handleFitView();
+  }, [incidentId, handleFitView]);
+
+  const handleRefresh = useCallback(() => {
+    window.location.reload();
+  }, []);
+
+  const handleToggleFilter = useCallback((type: string) => {
+    setActiveFilters((prev) => {
+      const next = new Set(prev);
+      if (next.has(type)) next.delete(type);
+      else next.add(type);
+      return next;
+    });
+  }, []);
+
+  const handleToggleRank = useCallback((rank: number) => {
+    setCollapsedRanks((prev) => {
+      const next = new Set(prev);
+      if (next.has(rank)) next.delete(rank);
+      else next.add(rank);
+      return next;
+    });
+  }, []);
+
+  const handlePathTrace = useCallback(() => {
+    if (pathTraceMode) {
+      setPathTraceMode(false);
+      setPathTraceStart(null);
+      setPathTraceEnd(null);
+    } else {
+      setPathTraceMode(true);
+      setPathTraceStart(null);
+      setPathTraceEnd(null);
+    }
+  }, [pathTraceMode]);
+
+  const handleSearchSelect = useCallback(
+    (nodeId: string) => {
+      setSearchQuery("");
+      setSelectedNodeId(nodeId);
+      setPanelMode("node");
+      if (rfInstance) {
+        rfInstance.fitView({ padding: 0.2, nodes: [{ id: nodeId }], duration: 300 });
+      }
+    },
+    [rfInstance]
+  );
+
+  if (isLoading) return <TopologySkeleton />;
+  if (error) return <TopologyErrorState error={error} />;
+  if (!data.nodes.length) return <TopologyEmptyState isBackbone={isBackbone} />;
+
+  return (
+    <div className="space-y-3">
+      {/* Toolbar */}
+      <TopologyToolbar
+        totalNodes={finalNodes.length}
+        totalEdges={finalEdges.length}
+
+        searchQuery={searchQuery}
+        onSearchChange={setSearchQuery}
+        searchResults={searchResults}
+        onSelectSearchResult={handleSearchSelect}
+        layoutMode={layoutMode}
+        onLayoutModeChange={setLayoutMode}
+        activeFilters={activeFilters}
+        onToggleFilter={handleToggleFilter}
+        onFitView={handleFitView}
+        onZoomIn={handleZoomIn}
+        onZoomOut={handleZoomOut}
+        onReset={handleReset}
+        onRefresh={handleRefresh}
+        onPathTrace={handlePathTrace}
+        pathTraceActive={pathTraceMode}
+        onToggleLegend={() => setLegendVisible((v) => !v)}
+        legendVisible={legendVisible}
+        isBackbone={!!isBackbone}
+        onBackToBackbone={onBackToBackbone}
+        siteName={siteName}
+        backboneViewMode={backboneViewMode}
+        onBackboneViewModeChange={setBackboneViewMode}
+      />
+
+      {/* Large-site view switcher + health scope */}
+      {isLargeSite && resolvedSiteMode !== "context" && (
+        <div className="flex flex-wrap items-center gap-3 text-xs border-b border-slate-800/60 pb-3">
+          <span className="text-slate-500 font-mono">
+            {data.nodes.filter((n) => n.node_type !== "site").length} devices
+          </span>
+          <div className="flex items-center gap-1">
+            {(
+              [
+                { key: "hostmap", label: "Impact map" },
+                { key: "aggregated", label: "Clusters" },
+                { key: "readable", label: "Device graph" },
+              ] as const
+            ).map((mode) => (
+              <button
+                key={mode.key}
+                onClick={() => setSiteViewMode(mode.key)}
+                className={[
+                  "px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider transition-colors border-b-2",
+                  resolvedSiteMode === mode.key
+                    ? "text-indigo-400 border-indigo-500"
+                    : "text-slate-400 hover:text-slate-200 border-transparent",
+                ].join(" ")}
+              >
+                {mode.label}
+              </button>
+            ))}
+          </div>
+
+          {resolvedSiteMode === "readable" && (
+            <div className="flex items-center gap-1 ml-2">
+              {(
+                [
+                  { key: "alerting", label: "Alerting", count: data.nodes.filter((n) => n.node_type !== "site" && isAlerting(n)).length },
+                  { key: "all", label: "All", count: data.nodes.filter((n) => n.node_type !== "site").length },
+                ] as const
+              ).map((scope) => (
+                <button
+                  key={scope.key}
+                  onClick={() => setHealthScope(scope.key)}
+                  className={[
+                    "px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider transition-colors border-b-2",
+                    healthScope === scope.key
+                      ? "text-rose-400 border-rose-500"
+                      : "text-slate-400 hover:text-slate-200 border-transparent",
+                  ].join(" ")}
+                >
+                  {scope.label}
+                  <span className="ml-1 text-[10px] opacity-70">{scope.count}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Site context banner */}
+      {!isBackbone && activeSiteId && (
+        <SiteContextBanner
+          siteName={siteName}
+          nodes={data.nodes}
+          totalDevices={data.nodes.filter((n) => n.node_type !== "site").length}
+        />
+      )}
+
+      {/* Path trace instructions */}
+      {pathTraceMode && (
+        <div className="flex items-center gap-2 text-xs text-indigo-400">
+          <span className="font-bold">Path trace:</span>
+          {!pathTraceStart ? (
+            <span className="text-slate-500">Click a source device</span>
+          ) : !pathTraceEnd ? (
+            <span className="text-slate-500">Click a destination device</span>
+          ) : (
+            <span className="text-slate-500">Tracing path… click any device to reset</span>
+          )}
+          <button
+            onClick={() => { setPathTraceMode(false); setPathTraceStart(null); setPathTraceEnd(null); }}
+            className="ml-auto text-[10px] text-slate-500 hover:text-slate-300"
+          >
+            Cancel
+          </button>
+        </div>
+      )}
+
+      {/* Rank toggle chips for site internal readable view */}
+      {!isBackbone && activeSiteId && resolvedSiteMode === "readable" && (
+        <div className="flex flex-wrap items-center gap-3 text-xs">
+          {[
+            { rank: 0, label: "Internet" },
+            { rank: 1, label: "Edge" },
+            { rank: 2, label: "Core" },
+            { rank: 3, label: "Distribution" },
+            { rank: 4, label: "Access" },
+            { rank: 5, label: "Wireless" },
+            { rank: 6, label: "Endpoints" },
+          ].map(({ rank, label }) => {
+            const count = data.nodes.filter((n) => getNodeRank(n.node_type) === rank && n.node_type !== "site").length;
+            if (count === 0) return null;
+            const collapsed = collapsedRanks.has(rank);
+            return (
+              <button
+                key={rank}
+                onClick={() => handleToggleRank(rank)}
+                className={[
+                  "inline-flex items-center gap-1 text-[11px] transition-colors",
+                  collapsed
+                    ? "text-slate-700 line-through"
+                    : "text-slate-400 hover:text-slate-200",
+                ].join(" ")}
+                title={collapsed ? `Show ${label}` : `Hide ${label}`}
+              >
+                <span className={collapsed ? "opacity-50" : ""}>{label}</span>
+                <span className="text-[10px] text-slate-600 font-mono">{count}</span>
+                {collapsed && <span className="text-[10px] text-slate-600">▶</span>}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Blast Radius Isolation Banner */}
+      {activeBlastFocusId && (
+        <div className="flex items-center gap-3 rounded border border-rose-500/40 bg-rose-500/10 px-3.5 py-2 text-xs text-rose-300">
+          <span className="font-bold flex items-center gap-1.5">
+            <Zap className="h-3.5 w-3.5 text-rose-400 shrink-0" />
+            Blast Radius Isolation Mode:
+          </span>
+          <span className="truncate">Focusing device {activeBlastFocusId} — unrelated graph nodes dimmed by 90% opacity.</span>
+          <button
+            onClick={() => setActiveBlastFocusId(null)}
+            className="ml-auto shrink-0 rounded bg-rose-500/20 px-2.5 py-1 text-[11px] font-semibold text-rose-200 hover:bg-rose-500/30 transition-colors cursor-pointer"
+          >
+            Clear Isolation
+          </button>
+        </div>
+      )}
+
+      {/* Worst offenders — instant actionable readout for any single site */}
+      {!isBackbone && activeSiteId && resolvedSiteMode !== "context" && (
+        <WorstOffendersStrip
+          nodes={data.nodes}
+          edges={data.edges}
+          onSelect={handleContextSelect}
+        />
+      )}
+
+      {/* All-Sites grid view — replaces canvas when mode is "all" */}
+      {isBackbone && backboneViewMode === "all" ? (
+        <AllSitesGrid
+          sites={data.nodes.filter((n) => n.node_type === "site")}
+          onSiteClick={onSiteSelect}
+          defaultRegion={hubRegionFilter}
+        />
+      ) : resolvedSiteMode === "hostmap" ? (
+        <HostMapView
+          data={data}
+          onContextSelect={handleContextSelect}
+        />
+      ) : resolvedSiteMode === "aggregated" ? (
+        <AggregatedView
+          data={data}
+          onContextSelect={handleContextSelect}
+          onFlatView={() => { setSiteViewMode("readable"); setHealthScope("all"); }}
+        />
+      ) : resolvedSiteMode === "context" && contextNode ? (
+        <ContextGraph
+          nodeId={contextNode.id}
+          nodeName={contextNode.name}
+          onBack={handleContextBack}
+          onNodeClick={handleContextSelect}
+          allNodeIds={data.nodes.map((n) => n.node_id)}
+        />
+      ) : (
+        /* Graph canvas */
+        <div ref={reactFlowWrapper} className="relative h-[640px] w-full">
+          <ReactFlow
+            nodes={finalNodes}
+            edges={finalEdges}
+            nodeTypes={topologyNodeTypes}
+            edgeTypes={topologyEdgeTypes}
+            onInit={setRfInstance}
+            onNodeClick={handleNodeClick}
+            fitView={true}
+            fitViewOptions={{ padding: 0.15 }}
+            onlyRenderVisibleElements
+            attributionPosition="bottom-left"
+            connectionLineType={ConnectionLineType.SmoothStep}
+            minZoom={activeSiteId ? 0.25 : 0.05}
+            maxZoom={4}
+            deleteKeyCode={null}
+            multiSelectionKeyCode={["Shift", "Control"]}
+            zoomOnScroll={false}
+            panOnScroll={false}
+            zoomOnPinch={true}
+            preventScrolling={false}
+            className="bg-slate-950"
+            defaultEdgeOptions={{
+              type: "topologyEdge",
+              style: { stroke: "#9ca3af", strokeWidth: 1.5 },
+            }}
+          >
+            <Background color="rgba(51,65,85,0.2)" gap={24} size={1} />
+            <Controls
+              className="!bg-slate-900 !border-slate-800"
+              showInteractive={false}
+            />
+            <MiniMap
+              className="!bg-slate-900 !border-slate-800"
+              nodeColor={(node) => {
+                const color = (node.data as any)?.deviceColor ?? "#6b7280";
+                const health = (node.data as any)?.healthStatus;
+                if (health === "critical") return "#ef4444";
+                if (health === "warning") return "#eab308";
+                return color;
+              }}
+              maskColor="rgba(0,0,0,0.05)"
+              style={{ width: 140, height: 90 }}
+            />
+            <Panel position="bottom-left" className="!mb-14 !ml-3 z-30 pointer-events-auto">
+              <TopologyLegend visible={legendVisible} onClose={() => setLegendVisible(false)} />
+            </Panel>
+          </ReactFlow>
+
+          {/* Side panel */}
+          <TopologySidePanel
+            mode={panelMode}
+            incidentId={incidentId}
+            incidentDetail={incidentDetail ?? null}
+            nodeDetail={nodeDetail ?? null}
+            onClose={handlePanelClose}
+            incidentLoading={incidentLoading}
+            nodeLoading={nodeLoading}
+            onNodePathTrace={handleNodePathTrace}
+            onNodeBlastRadius={handleNodeBlastRadius}
+          />
+
+          {/* Region Hub detail panel */}
+          {selectedRegionHub && (
+            <div className="absolute right-0 top-0 h-full w-[380px] bg-slate-950 border-l border-slate-800 flex flex-col z-40">
+              {/* Header */}
+              <div className="shrink-0 px-5 py-4 border-b border-slate-800/60">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <span className="text-[10px] font-semibold uppercase tracking-wider text-indigo-400">
+                      Regional Hub
+                    </span>
+                    <h2 className="text-lg font-semibold text-white truncate mt-0.5">
+                      {selectedRegionHub.name}
+                    </h2>
+                  </div>
+                  <button
+                    onClick={handleRegionHubClose}
+                    className="p-1 text-slate-500 hover:text-white hover:bg-slate-800 rounded-sm transition-colors flex-shrink-0"
+                  >
+                    ✕
+                  </button>
+                </div>
+
+                {/* Aggregate stats */}
+                <div className="flex items-baseline gap-x-6 gap-y-2 mt-3 text-xs">
+                  <div className="flex items-baseline gap-1.5">
+                    <span className="text-slate-500 uppercase tracking-wider">Sites</span>
+                    <span className="font-semibold text-white font-mono">{selectedRegionHub.sites.length}</span>
+                  </div>
+                  <span className="text-slate-700">|</span>
+                  <div className="flex items-baseline gap-1.5">
+                    <span className="text-slate-500 uppercase tracking-wider">Devices</span>
+                    <span className="font-semibold text-white font-mono">{selectedRegionHub.deviceCount}</span>
+                  </div>
+                  <span className="text-slate-700">|</span>
+                  {selectedRegionHub.criticalCount > 0 && (
+                    <div className="flex items-baseline gap-1.5">
+                      <span className="text-slate-500 uppercase tracking-wider">Critical</span>
+                      <span className="font-semibold text-rose-400 font-mono">{selectedRegionHub.criticalCount}</span>
+                    </div>
+                  )}
+                  {selectedRegionHub.warningCount > 0 && (
+                    <>
+                      <span className="text-slate-700">|</span>
+                      <div className="flex items-baseline gap-1.5">
+                        <span className="text-slate-500 uppercase tracking-wider">Degraded</span>
+                        <span className="font-semibold text-amber-400 font-mono">{selectedRegionHub.warningCount}</span>
+                      </div>
+                    </>
+                  )}
+                </div>
+              </div>
+
+              {/* Site list */}
+              <div className="flex-1 overflow-y-auto">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="border-b border-slate-800/60 text-slate-500 text-[10px] uppercase tracking-wider font-semibold">
+                      <th className="py-2 px-4">Site</th>
+                      <th className="py-2 px-3 text-center">APs</th>
+                      <th className="py-2 px-3 text-center">Alerts</th>
+                      <th className="py-2 px-3 text-right">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800/40 text-xs">
+                    {selectedRegionHub.sites.map((site) => {
+                      const color = healthColor(site.health_status);
+                      const alertCount = (site.critical_count ?? 0) + (site.warning_count ?? 0);
+                      return (
+                        <tr
+                          key={site.node_id}
+                          onClick={() => { onSiteSelect?.(site.site_id || site.node_id); handleRegionHubClose(); }}
+                          className="hover:bg-slate-800/30 cursor-pointer transition-colors"
+                        >
+                          <td className="py-2 px-4 font-medium text-white truncate max-w-[180px]">
+                            {site.name || site.site_name || site.site_id || site.node_id}
+                          </td>
+                          <td className="py-2 px-3 text-center font-mono text-slate-300">
+                            {(site as any).device_count ?? 0}
+                          </td>
+                          <td className="py-2 px-3 text-center font-mono">
+                            <span className={alertCount > 0 ? "text-amber-400 font-semibold" : "text-slate-500"}>
+                              {alertCount}
+                            </span>
+                          </td>
+                          <td className="py-2 px-3 text-right">
+                            <span className="flex items-center justify-end gap-1.5">
+                              <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: color }} />
+                              <span className="capitalize" style={{ color }}>
+                                {site.health_status === "healthy" ? "Operational" : site.health_status}
+                              </span>
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}

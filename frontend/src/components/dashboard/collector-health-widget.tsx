@@ -4,7 +4,6 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import {
-  Activity,
   AlertTriangle,
   ChevronDown,
   ChevronRight,
@@ -15,68 +14,23 @@ import {
 
 import { cn } from "@/lib/utils";
 import { api } from "@/lib/api";
-import { AlertBanner } from "@/components/integrations/alert-banner";
-import type { TelemetryAlert, TelemetryResponse } from "@/types/integration";
+import type { TelemetryAlert } from "@/types/integration";
 
 type StatusKey = "healthy" | "degraded" | "error" | "stale";
 
 const STATUS_META: Record<
   StatusKey,
-  { label: string; dot: string; text: string; bg: string; border: string }
+  { label: string; dot: string; text: string }
 > = {
-  healthy: {
-    label: "Healthy",
-    dot: "bg-success",
-    text: "text-success",
-    bg: "bg-success/10",
-    border: "border-success/15",
-  },
-  degraded: {
-    label: "Degraded",
-    dot: "bg-minor",
-    text: "text-minor",
-    bg: "bg-minor/10",
-    border: "border-minor/15",
-  },
-  error: {
-    label: "Error",
-    dot: "bg-critical",
-    text: "text-critical",
-    bg: "bg-critical/10",
-    border: "border-critical/15",
-  },
-  stale: {
-    label: "Stale",
-    dot: "bg-warning",
-    text: "text-warning",
-    bg: "bg-warning/10",
-    border: "border-warning/15",
-  },
+  healthy: { label: "Healthy", dot: "bg-success", text: "text-success" },
+  degraded: { label: "Degraded", dot: "bg-minor", text: "text-minor" },
+  error: { label: "Error", dot: "bg-critical", text: "text-critical" },
+  stale: { label: "Stale", dot: "bg-warning", text: "text-warning" },
 };
 
 const STATUS_ORDER: StatusKey[] = ["healthy", "degraded", "error", "stale"];
 
 const MAX_VISIBLE_ALERTS = 3;
-
-function StatItem({ count, statusKey }: { count: number; statusKey: StatusKey }) {
-  const meta = STATUS_META[statusKey];
-  return (
-    <div
-      className={cn(
-        "flex flex-col gap-1 rounded-lg border px-3 py-2.5 transition-colors",
-        meta.bg,
-        meta.border,
-      )}
-    >
-      <span className={cn("font-mono text-lg font-semibold tabular-nums", meta.text)}>
-        {count}
-      </span>
-      <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-foreground-subtle">
-        {meta.label}
-      </span>
-    </div>
-  );
-}
 
 export function CollectorHealthWidget() {
   const [alertsExpanded, setAlertsExpanded] = useState(true);
@@ -90,21 +44,17 @@ export function CollectorHealthWidget() {
 
   if (isLoading) {
     return (
-      <div
-        className="rounded-xl border border-border/60 bg-surface/40 p-5"
-        style={{ animation: "naxis-enter 0.6s 0.1s both" }}
-      >
+      <div>
         <div className="flex items-center gap-2.5">
-          <div className="h-8 w-8 animate-pulse rounded-lg bg-foreground/5" />
-          <div className="space-y-1.5">
-            <div className="h-3.5 w-36 animate-pulse rounded bg-foreground/5" />
-            <div className="h-2.5 w-24 animate-pulse rounded bg-foreground/5" />
+          <div className="h-4 w-4 animate-pulse bg-foreground/5" />
+          <div className="space-y-1">
+            <div className="h-3 w-36 animate-pulse bg-foreground/5" />
+            <div className="h-2 w-24 animate-pulse bg-foreground/5" />
           </div>
-          <div className="ml-auto h-6 w-20 animate-pulse rounded-full bg-foreground/5" />
         </div>
-        <div className="mt-4 grid grid-cols-4 gap-2.5">
+        <div className="mt-3 flex gap-4">
           {[1, 2, 3, 4].map((i) => (
-            <div key={i} className="h-[62px] animate-pulse rounded-lg bg-foreground/5" />
+            <div key={i} className="h-4 w-16 animate-pulse bg-foreground/5" />
           ))}
         </div>
       </div>
@@ -113,17 +63,12 @@ export function CollectorHealthWidget() {
 
   if (error || !data) {
     return (
-      <div
-        className="flex items-center gap-3 rounded-xl border border-critical/20 bg-critical/5 px-4 py-3"
-        style={{ animation: "naxis-enter 0.6s 0.1s both" }}
-      >
-        <XCircle className="h-4 w-4 shrink-0 text-critical" />
-        <span className="text-sm leading-5 text-critical">
-          Failed to load collector health
-        </span>
+      <div className="flex items-center gap-3 border-t border-critical/20 py-3 text-critical">
+        <XCircle className="h-4 w-4 shrink-0" />
+        <span className="text-sm leading-5">Failed to load collector health</span>
         <button
           onClick={() => window.location.reload()}
-          className="ml-auto rounded-lg border border-critical/20 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.1em] text-critical transition-colors hover:bg-critical/10"
+          className="ml-auto text-[10px] font-semibold uppercase tracking-[0.1em] text-critical transition-colors hover:text-critical/80"
         >
           Retry
         </button>
@@ -139,78 +84,65 @@ export function CollectorHealthWidget() {
   const hasCritical = alerts.some((a: TelemetryAlert) => a.severity === "critical");
 
   return (
-    <section
-      className="group rounded-xl border border-border/60 bg-surface/40 p-5 transition-colors duration-200 hover:border-border hover:bg-surface"
-      style={{ animation: "naxis-enter 0.6s 0.2s both" }}
-    >
-      <div className="mb-4 flex items-center justify-between">
+    <section>
+      <div className="mb-3 flex items-center justify-between">
         <div className="flex items-center gap-2.5">
-          <div
-            className={cn(
-              "flex h-8 w-8 items-center justify-center rounded-lg",
-              allHealthy ? "bg-success/10 text-success" : hasCritical ? "bg-critical/10 text-critical" : "bg-minor/10 text-minor",
-            )}
-          >
-            <HardDrive className="h-4 w-4" />
-          </div>
+          <HardDrive className={cn("h-4 w-4", allHealthy ? "text-success" : hasCritical ? "text-critical" : "text-minor")} />
           <div>
-            <h3 className="text-sm font-semibold text-foreground">
-              Collector Health
-            </h3>
-            <p className="text-[10px] leading-4 text-foreground-subtle/70">
-              Data pipeline status
-            </p>
+            <h3 className="text-sm font-semibold text-foreground">Collector Health</h3>
+            <p className="text-[10px] leading-4 text-foreground-subtle/70">Data pipeline status</p>
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-3 text-[10px]">
           {allHealthy && (
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-success/10 px-2.5 py-1 text-[10px] font-semibold text-success">
-              <span className="h-1.5 w-1.5 rounded-full bg-success" />
+            <span className="inline-flex items-center gap-1.5 text-success">
+              <span className="h-1.5 w-1.5 bg-success" />
               All healthy
             </span>
           )}
           {hasCritical && (
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-critical/10 px-2.5 py-1 text-[10px] font-semibold text-critical">
-              <span className="relative flex h-1.5 w-1.5">
-                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-critical/60" />
-                <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-critical" />
-              </span>
+            <span className="inline-flex items-center gap-1.5 text-critical">
+              <span className="h-1.5 w-1.5 bg-critical" />
               {alerts.filter((a: TelemetryAlert) => a.severity === "critical").length} critical
             </span>
           )}
-          <span className="rounded-full bg-foreground/5 px-2.5 py-1 text-[10px] font-semibold tabular-nums text-foreground-subtle">
+          <span className="font-mono tabular-nums text-foreground-subtle">
             {summary.totalCollectors}
           </span>
         </div>
       </div>
 
-      <div className="mb-4 grid grid-cols-4 gap-2.5">
-        {STATUS_ORDER.map((key) => (
-          <StatItem key={key} count={summary[key]} statusKey={key} />
-        ))}
+      <div className="mb-3 flex flex-wrap gap-4 text-sm">
+        {STATUS_ORDER.map((key) => {
+          const meta = STATUS_META[key];
+          return (
+            <span key={key} className="inline-flex items-center gap-1.5">
+              <span className={cn("h-1.5 w-1.5", meta.dot)} />
+              <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-foreground-subtle">{meta.label}</span>
+              <span className={cn("font-mono font-semibold tabular-nums", meta.text)}>{summary[key]}</span>
+            </span>
+          );
+        })}
       </div>
 
       {hasAlerts && (
         <>
-          <div className="mb-3 flex items-center justify-between border-t border-border/40 pt-3.5">
+          <div className="mb-2 flex items-center justify-between border-t border-border/40 pt-2.5">
             <button
               onClick={() => setAlertsExpanded((v) => !v)}
               className="flex items-center gap-2 text-left transition-colors hover:text-foreground"
             >
               <div className="flex items-center gap-1.5">
                 {hasCritical ? (
-                  <span className="relative flex h-2 w-2">
-                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-critical/40" />
-                    <span className="relative inline-flex h-2 w-2 rounded-full bg-critical" />
-                  </span>
+                  <span className="h-2 w-2 bg-critical" />
                 ) : (
                   <AlertTriangle className="h-3.5 w-3.5 text-minor" />
                 )}
                 <span className="text-xs font-semibold uppercase tracking-[0.14em] text-foreground-subtle">
                   Active Alerts
                 </span>
-                <span className="rounded-full bg-foreground/10 px-1.5 py-0.5 text-[10px] font-semibold tabular-nums">
+                <span className="font-mono text-[10px] font-semibold tabular-nums">
                   {alerts.length}
                 </span>
               </div>
@@ -231,22 +163,40 @@ export function CollectorHealthWidget() {
           </div>
 
           {alertsExpanded && (
-            <div className="space-y-2">
+            <div className="divide-y divide-border/30">
               {visibleAlerts.map((alert, i) => (
-                <AlertBanner
-                  key={`${alert.collectorId}-${alert.type}-${i}`}
-                  alert={alert}
-                />
+                <div key={`${alert.collectorId}-${alert.type}-${i}`} className="flex items-start gap-3 py-2">
+                  <span className={cn(
+                    "mt-1 h-2 w-2 shrink-0",
+                    alert.severity === "critical" ? "bg-critical" : "bg-minor",
+                    alert.severity === "critical" && "animate-pulse"
+                  )} />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                      <span className={cn("text-xs font-semibold uppercase tracking-[0.12em]", alert.severity === "critical" ? "text-critical" : "text-minor")}>
+                        {alert.type}
+                      </span>
+                      <span className="text-xs text-foreground-muted">·</span>
+                      <span className="text-xs font-medium text-foreground-subtle">{alert.sourceSystem}</span>
+                    </div>
+                    <p className="text-sm leading-5 text-foreground">{alert.message}</p>
+                  </div>
+                  <span className={cn(
+                    "text-[10px] font-semibold uppercase tracking-[0.12em]",
+                    alert.severity === "critical" ? "text-critical" : "text-minor"
+                  )}>
+                    {alert.severity === "critical" ? "Critical" : "Warning"}
+                  </span>
+                </div>
               ))}
               {overflowCount > 0 && (
-                <Link
-                  href="/integrations"
-                  className="flex items-center justify-center gap-1.5 rounded-2xl border border-dashed border-border/40 px-4 py-2.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-foreground-subtle transition-colors hover:border-border hover:text-foreground"
-                >
-                  <AlertTriangle className="h-3 w-3" />
-                  +{overflowCount} more — view all in Integrations
-                  <ChevronRight className="h-3 w-3" />
-                </Link>
+                <div className="py-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-foreground-subtle">
+                  <Link href="/integrations" className="flex items-center gap-1 transition-colors hover:text-foreground">
+                    <AlertTriangle className="h-3 w-3" />
+                    +{overflowCount} more — view all in Integrations
+                    <ChevronRight className="h-3 w-3" />
+                  </Link>
+                </div>
               )}
             </div>
           )}
@@ -254,9 +204,9 @@ export function CollectorHealthWidget() {
       )}
 
       {allHealthy && (
-        <div className="flex items-center justify-between border-t border-border/40 pt-3.5">
+        <div className="flex items-center justify-between border-t border-border/40 pt-2.5">
           <div className="flex items-center gap-1.5">
-            <span className="h-1.5 w-1.5 rounded-full bg-success" />
+            <span className="h-1.5 w-1.5 bg-success" />
             <span className="text-[10px] font-medium text-foreground-subtle">
               All collectors operating normally
             </span>

@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
-from api.main import app
+from backend.main import app
 
 
 @pytest.fixture
@@ -29,6 +29,7 @@ def _mock_node_row(
     site_id: str = "site-sfo-01",
     props: str = '{}',
     updated_at: datetime = None,
+    canonical_key: str = "",
 ):
     class MockRow:
         def __getitem__(self, key):
@@ -42,6 +43,7 @@ def _mock_node_row(
                 "site_id": site_id,
                 "props": props,
                 "updated_at": updated_at or datetime.utcnow(),
+                "canonical_key": canonical_key,
             }[key]
 
     return MockRow()
@@ -73,9 +75,22 @@ def _default_fetch_sequence(node_rows, edge_rows, filtered=False):
     When *filtered* is True (site_id or node_type provided), the endpoint
     makes two edge queries (src_ids + dst_ids) instead of one full scan.
     """
+    # Build canonical key rows: each node falls back to its own node_id
+    # (SQL COALESCE(NULLIF(canonical_key,''), node_id))
+    canonical_rows = []
+    for n in node_rows:
+        nid = n["node_id"]
+        try:
+            ckey = n["canonical_key"]
+            ckey = ckey if ckey else nid
+        except (KeyError, TypeError):
+            ckey = nid
+        canonical_rows.append(_mock_node_row(nid, canonical_key=ckey))
+
     seq = [
         node_rows,          # _NODES_QUERY (or filtered query)
         [],                 # _enrich_site_names (empty site name lookup)
+        canonical_rows,     # _CANONICAL_KEYS_QUERY (falls back to node_id per row)
         [],                 # _HEALTH_EVENTS_QUERY (empty events)
         [],                 # _HEALTH_INVENTORY_QUERY (empty inventory)
         [],                 # _HEALTH_NODE_PROPS_QUERY (empty props)
@@ -190,10 +205,9 @@ class TestTopologyHealth:
             mock_db.fetch.side_effect = [
                 [node],       # _NODES_QUERY
                 [],           # _enrich_site_names
+                [_mock_node_row("core-switch-01", canonical_key="core-switch-01")],  # _CANONICAL_KEYS_QUERY
                 [],           # _HEALTH_EVENTS_QUERY (no recent events)
-                [             # _HEALTH_INVENTORY_QUERY
-                    {"device_id": "core-switch-01", "reachability": "reachable"},
-                ],
+                [{"device_id": "core-switch-01", "reachability": "reachable"}],  # _HEALTH_INVENTORY_QUERY
                 [],           # _HEALTH_NODE_PROPS_QUERY
                 [],           # _EDGES_QUERY
             ]
@@ -210,10 +224,11 @@ class TestTopologyHealth:
 
             node = _mock_node_row("ap-sfo-01", "ap", "ap-101")
             mock_db.fetch.side_effect = [
-                [node],
-                [],
-                [],
-                [{"device_id": "ap-sfo-01", "reachability": "unreachable"}],
+                [node],       # _NODES_QUERY
+                [],           # _enrich_site_names
+                [_mock_node_row("ap-sfo-01", canonical_key="ap-sfo-01")],  # _CANONICAL_KEYS_QUERY
+                [],           # _HEALTH_EVENTS_QUERY
+                [{"device_id": "ap-sfo-01", "reachability": "unreachable"}],  # _HEALTH_INVENTORY_QUERY
                 [],
                 [],
             ]
@@ -230,9 +245,10 @@ class TestTopologyHealth:
 
             node = _mock_node_row("core-switch-01", "switch", "naxis-core-01")
             mock_db.fetch.side_effect = [
-                [node],
-                [],
-                [{"device_id": "core-switch-01", "severity": "critical", "latest_at": datetime.utcnow()}],
+                [node],       # _NODES_QUERY
+                [],           # _enrich_site_names
+                [_mock_node_row("core-switch-01", canonical_key="core-switch-01")],  # _CANONICAL_KEYS_QUERY
+                [{"device_id": "core-switch-01", "severity": "critical", "latest_at": datetime.utcnow()}],  # _HEALTH_EVENTS_QUERY
                 [],
                 [],
                 [],
@@ -250,9 +266,10 @@ class TestTopologyHealth:
 
             node = _mock_node_row("core-switch-01", "switch", "naxis-core-01")
             mock_db.fetch.side_effect = [
-                [node],
-                [],
-                [{"device_id": "core-switch-01", "severity": "major", "latest_at": datetime.utcnow()}],
+                [node],       # _NODES_QUERY
+                [],           # _enrich_site_names
+                [_mock_node_row("core-switch-01", canonical_key="core-switch-01")],  # _CANONICAL_KEYS_QUERY
+                [{"device_id": "core-switch-01", "severity": "major", "latest_at": datetime.utcnow()}],  # _HEALTH_EVENTS_QUERY
                 [],
                 [],
                 [],
@@ -270,11 +287,12 @@ class TestTopologyHealth:
 
             node = _mock_node_row("velo-edge-001", "wan_edge", "edge-001", props='{"reachability": "unreachable"}')
             mock_db.fetch.side_effect = [
-                [node],
-                [],
-                [],
-                [],
-                [{"node_id": "velo-edge-001", "reachability": "unreachable", "connected": None}],
+                [node],       # _NODES_QUERY
+                [],           # _enrich_site_names
+                [_mock_node_row("velo-edge-001", canonical_key="velo-edge-001")],  # _CANONICAL_KEYS_QUERY
+                [],           # _HEALTH_EVENTS_QUERY
+                [],           # _HEALTH_INVENTORY_QUERY
+                [{"node_id": "velo-edge-001", "reachability": "unreachable", "connected": None}],  # _HEALTH_NODE_PROPS_QUERY
                 [],
             ]
 
@@ -290,10 +308,11 @@ class TestTopologyHealth:
 
             node = _mock_node_row("mist-ap-abc123", "ap", "ap-101")
             mock_db.fetch.side_effect = [
-                [node],
-                [],
-                [],
-                [{"device_id": "abc123", "reachability": "unreachable"}],
+                [node],       # _NODES_QUERY
+                [],           # _enrich_site_names
+                [_mock_node_row("mist-ap-abc123", canonical_key="abc123")],  # _CANONICAL_KEYS_QUERY (backfill sets canonical_key="abc123")
+                [],           # _HEALTH_EVENTS_QUERY
+                [{"device_id": "abc123", "reachability": "unreachable"}],  # _HEALTH_INVENTORY_QUERY
                 [],
                 [],
             ]
@@ -568,14 +587,14 @@ class TestGetTopologyBackbone:
                 site_rows,        # 1: _SITE_NODES_QUERY
                 count_rows,       # 2: _SITE_DEVICE_COUNTS_QUERY
                 child_rows,       # 3: _CHILD_NODES_BY_SITE
-                [],               # 4: _HEALTH_EVENTS_QUERY (child enrich)
-                [],               # 5: _HEALTH_INVENTORY_QUERY (child enrich)
-                [],               # 6: _HEALTH_NODE_PROPS_QUERY (child enrich)
-                [],               # 7: _SITE_NAME_QUERY (enrich_site_names)
-                [],               # 8: _HEALTH_EVENTS_QUERY (backbone enrich)
-                [],               # 9: _HEALTH_INVENTORY_QUERY (backbone enrich)
-                [],               # 10: _HEALTH_NODE_PROPS_QUERY (backbone enrich)
-                edge_rows,        # 11: _INTER_SITE_EDGES_QUERY
+                [_mock_node_row("ap-sfo-01", canonical_key="ap-sfo-01"),
+                 _mock_node_row("sw-sfo-01", canonical_key="sw-sfo-01"),
+                 _mock_node_row("ap-nyc-01", canonical_key="ap-nyc-01")],  # 4: _CANONICAL_KEYS_QUERY
+                [],               # 5: _HEALTH_EVENTS_QUERY (child enrich)
+                [],               # 6: _HEALTH_INVENTORY_QUERY (child enrich)
+                [],               # 7: _HEALTH_NODE_PROPS_QUERY (child enrich)
+                [],               # 8: _SITE_NAME_QUERY (enrich_site_names)
+                edge_rows,        # 9: _INTER_SITE_EDGES_QUERY
             ]
 
             response = client.get("/topology/backbone")
@@ -606,14 +625,12 @@ class TestGetTopologyBackbone:
                 site_rows,        # 1: _SITE_NODES_QUERY
                 [{"site_id": "site-sfo", "device_count": 5}],  # 2: _SITE_DEVICE_COUNTS_QUERY
                 [],               # 3: _CHILD_NODES_BY_SITE (no child nodes)
-                [],               # 4: _HEALTH_EVENTS_QUERY (child enrich — skipped)
-                [],               # 5: _HEALTH_INVENTORY_QUERY (child enrich — skipped)
-                [],               # 6: _HEALTH_NODE_PROPS_QUERY (child enrich — skipped)
-                [],               # 7: _SITE_NAME_QUERY
-                [],               # 8: _HEALTH_EVENTS_QUERY (backbone enrich)
-                [],               # 9: _HEALTH_INVENTORY_QUERY (backbone enrich)
-                [],               # 10: _HEALTH_NODE_PROPS_QUERY (backbone enrich)
-                [],               # 11: _INTER_SITE_EDGES_QUERY (no inter-site edges)
+                [],               # 4: _CANONICAL_KEYS_QUERY (child enrich skipped — no children)
+                [],               # 5: _HEALTH_EVENTS_QUERY (child enrich skipped)
+                [],               # 6: _HEALTH_INVENTORY_QUERY (child enrich skipped)
+                [],               # 7: _HEALTH_NODE_PROPS_QUERY (child enrich skipped)
+                [],               # 8: _SITE_NAME_QUERY
+                [],               # 9: _INTER_SITE_EDGES_QUERY (no inter-site edges)
             ]
 
             response = client.get("/topology/backbone")
@@ -735,13 +752,14 @@ class TestGetSiteSummary:
             mock_db.fetch = AsyncMock()
 
             mock_db.fetch.side_effect = [
-                [{"node_type": "ap", "cnt": 3}],              # 1: type breakdown
-                [{"vendor": "mist", "cnt": 3}],               # 2: vendor breakdown
-                [_mock_node_row("ap-01", "ap", "ap-01", site_id="site-named")],  # 3: child nodes
-                [],               # 4: _HEALTH_EVENTS_QUERY (child enrich)
-                [],               # 5: _HEALTH_INVENTORY_QUERY (child enrich)
-                [],               # 6: _HEALTH_NODE_PROPS_QUERY (child enrich)
-                [{"site_id": "site-named", "site_name": "San Francisco Site"}],  # 7: site name
+                [{"node_type": "ap", "cnt": 3}],  # 1: type breakdown
+                [{"vendor": "mist", "cnt": 3}],  # 2: vendor breakdown
+                [_mock_node_row("ap-01", "ap", "ap-01", site_id="site-named")],  # 3: _NODES_BY_SITE_QUERY
+                [_mock_node_row("ap-01", canonical_key="ap-01")],  # 4: _CANONICAL_KEYS_QUERY
+                [],  # 5: _HEALTH_EVENTS_QUERY (child enrich)
+                [],  # 6: _HEALTH_INVENTORY_QUERY (child enrich)
+                [],  # 7: _HEALTH_NODE_PROPS_QUERY (child enrich)
+                [{"site_id": "site-named", "site_name": "San Francisco Site"}],  # 8: _SITE_NAME_QUERY
             ]
 
             response = client.get("/topology/sites/site-named/summary")
@@ -779,14 +797,16 @@ class TestGetSiteInternalTopology:
                 _mock_edge_row("ap-01", "sw-01"),
             ]
             mock_db.fetch.side_effect = [
-                node_rows,        # 1: _NODES_BY_SITE_QUERY
-                [],               # 2: _SITE_NAME_QUERY (enrich_site_names)
-                [],               # 3: _HEALTH_EVENTS_QUERY
-                [],               # 4: _HEALTH_INVENTORY_QUERY
-                [],               # 5: _HEALTH_NODE_PROPS_QUERY
-                [],               # 6: _NODE_BY_ID_QUERY (site_id as node_id — not found)
-                [],               # 7: _NODE_BY_ID_QUERY (mist-site- prefix — not found)
-                edge_rows,        # 8: _EDGES_FOR_SITE_IDS
+                node_rows,           # 1: _NODES_BY_SITE_QUERY
+                [],                   # 2: _SITE_NAME_QUERY (enrich_site_names — site_ids not empty)
+                [_mock_node_row("sw-01", canonical_key="sw-01"),
+                 _mock_node_row("ap-01", canonical_key="ap-01")],  # 3-6: _enrich_health: CANONICAL, EVENTS, INVENTORY, PROPS
+                [],
+                [],
+                [],
+                [],                   # 7: _NODE_BY_ID_QUERY (site_id as node_id — not found)
+                [],                   # 8: _NODE_BY_ID_QUERY (mist-site- prefix — not found)
+                edge_rows,            # 9: _EDGES_FOR_SITE_IDS
             ]
 
             response = client.get("/topology/sites/site-sfo/internal")
@@ -803,26 +823,26 @@ class TestGetSiteInternalTopology:
             mock_db.pool = AsyncMock()
             mock_db.fetch = AsyncMock()
 
-            # First batch: 1 switch node
             node_rows = [
                 _mock_node_row("sw-01", "switch", "core-switch", site_id="site-sfo"),
             ]
-            # Site node found by direct node_id lookup
             site_node_row = [_mock_node_row("site-sfo", "site", "San Francisco", site_id="site-sfo")]
             edge_rows = []
             mock_db.fetch.side_effect = [
                 node_rows,        # 1: _NODES_BY_SITE_QUERY
                 [],               # 2: _SITE_NAME_QUERY (enrich_site_names for first batch)
-                [],               # 3: _HEALTH_EVENTS_QUERY (enrich_health)
-                [],               # 4: _HEALTH_INVENTORY_QUERY
-                [],               # 5: _HEALTH_NODE_PROPS_QUERY
-                site_node_row,    # 6: _NODE_BY_ID_QUERY (site_id as node_id — found!)
-                [],               # 7: _SITE_NAME_QUERY (enrich_site_names for site node)
-                [],               # 8: _HEALTH_EVENTS_QUERY (enrich_health for site node)
-                [],               # 9: _HEALTH_INVENTORY_QUERY
-                [],               # 10: _HEALTH_NODE_PROPS_QUERY
-                [],               # 11: _NODE_BY_ID_QUERY (mist-site- prefix — not found)
-                edge_rows,        # 12: _EDGES_FOR_SITE_IDS
+                [_mock_node_row("sw-01", canonical_key="sw-01")],  # 3-6: _enrich_health for first batch: CANONICAL, EVENTS, INVENTORY, PROPS
+                [],
+                [],
+                [],
+                site_node_row,    # 7: _NODE_BY_ID_QUERY (site_id as node_id — found!)
+                [],               # 8: _SITE_NAME_QUERY (enrich_site_names for site node)
+                [_mock_node_row("site-sfo", canonical_key="site-sfo")],  # 9-12: _enrich_health for site node: CANONICAL, EVENTS, INVENTORY, PROPS
+                [],
+                [],
+                [],
+                [],               # 13: _NODE_BY_ID_QUERY (mist-site- prefix — not found)
+                edge_rows,        # 14: _EDGES_FOR_SITE_IDS
             ]
 
             response = client.get("/topology/sites/site-sfo/internal")
@@ -847,17 +867,20 @@ class TestGetSiteInternalTopology:
             edge_rows = [
                 _mock_edge_row("ap-01", "site-sfo", "site_membership"),
                 _mock_edge_row("sw-01", "site-sfo", "site_membership"),
-                _mock_edge_row("ap-01", "sw-01", "physical_link"),
+                _mock_edge_row("ap-01", "sw-01", "physical"),
             ]
             mock_db.fetch.side_effect = [
                 node_rows,           # 1: _NODES_BY_SITE_QUERY
-                [],                  # 2: _SITE_NAME_QUERY (enrich_site_names)
-                [],                  # 3: _HEALTH_EVENTS_QUERY
-                [],                  # 4: _HEALTH_INVENTORY_QUERY
-                [],                  # 5: _HEALTH_NODE_PROPS_QUERY
-                [],                  # 6: _NODE_BY_ID_QUERY (site_id as node_id — already in batch)
-                [],                  # 7: _NODE_BY_ID_QUERY (mist-site- — not found)
-                edge_rows,           # 8: _EDGES_FOR_SITE_IDS
+                [],                   # 2: _SITE_NAME_QUERY (enrich_site_names — site_ids not empty)
+                [_mock_node_row("sw-01", canonical_key="sw-01"),
+                 _mock_node_row("ap-01", canonical_key="ap-01"),
+                 _mock_node_row("site-sfo", canonical_key="site-sfo")],  # 3-6: _enrich_health: CANONICAL, EVENTS, INVENTORY, PROPS
+                [],
+                [],
+                [],
+                [],                   # 7: _NODE_BY_ID_QUERY (site_id as node_id — already in set, skipped)
+                [],                   # 8: _NODE_BY_ID_QUERY (mist-site- — not found)
+                edge_rows,            # 9: _EDGES_FOR_SITE_IDS
             ]
 
             response = client.get("/topology/sites/site-sfo/internal")
@@ -867,7 +890,7 @@ class TestGetSiteInternalTopology:
             assert data["total_edges"] == 3
             edge_types = {e["edge_type"] for e in data["edges"]}
             assert "site_membership" in edge_types
-            assert "physical_link" in edge_types
+            assert "physical" in edge_types
 
     def test_not_found_returns_empty(self, client):
         with patch("api.routes.topology.db") as mock_db:

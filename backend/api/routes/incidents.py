@@ -4,16 +4,20 @@ Incident API Routes
 
 import logging
 from datetime import datetime
-from typing import List
+from typing import Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
+from shared.auth.dependencies import require_role
+from shared.auth.keycloak import UserPrincipal
+from shared.database.incidents import resolve_display_names
 from shared.database.topology import resolve_node_id as resolve_topology_node_id
-from shared.models.incident import Incident
+from shared.models.incident import Incident, IncidentStatus
 from ..models.incident_models import (
     HealthResponse,
     IncidentDetail,
     IncidentListResponse,
+    IncidentStats,
     IncidentSummary,
 )
 from ..services.incident_service import incident_service
@@ -28,22 +32,6 @@ router = APIRouter(
         500: {"description": "Internal server error"},
     },
 )
-
-
-def _incident_to_summary(incident: Incident) -> IncidentSummary:
-    return IncidentSummary(
-        incident_id=incident.incident_id,
-        title=incident.title,
-        severity=incident.severity.value,
-        severity_label=incident.severity.label,
-        status=incident.status.value,
-        event_count=incident.event_count(),
-        affected_sites_count=len(incident.affected_sites),
-        affected_devices_count=len(incident.affected_devices),
-        confidence_score=incident.confidence_score,
-        created_at=incident.created_at,
-        updated_at=incident.updated_at,
-    )
 
 
 async def _resolve_affected_device_ids(device_ids: List[str]) -> List[str]:
@@ -61,6 +49,55 @@ async def _resolve_affected_device_ids(device_ids: List[str]) -> List[str]:
     return resolved
 
 
+async def _enrich_summaries(
+    incidents: List[Incident],
+) -> tuple:
+    """
+    Resolve operator-facing display names for a page of incidents.
+
+    Walks each incident's primary site (affected_sites[0]) and root-cause
+    device (root_device_ids[0]) and resolves them to inventory site names and
+    device hostnames in two batched queries.  Falls back to the raw id when a
+    name cannot be resolved.
+    """
+    site_ids = [i.affected_sites[0] for i in incidents if i.affected_sites]
+    root_ids = [i.root_device_ids[0] for i in incidents if i.root_device_ids]
+    if not site_ids and not root_ids:
+        return {}, {}
+    site_names, device_names = await resolve_display_names(site_ids, root_ids)
+    return site_names, device_names
+
+
+def _incident_to_summary(
+    incident: Incident,
+    site_names: Optional[Dict[str, str]] = None,
+    root_device_names: Optional[Dict[str, str]] = None,
+) -> IncidentSummary:
+    site_names = site_names or {}
+    root_device_names = root_device_names or {}
+    return IncidentSummary(
+        incident_id=incident.incident_id,
+        title=incident.title,
+        severity=incident.severity.value,
+        severity_label=incident.severity.label,
+        status=incident.status.value,
+        site_name=site_names.get(incident.affected_sites[0], "")
+        if incident.affected_sites
+        else "",
+root_device=root_device_names.get(incident.root_device_ids[0], "")
+        if incident.root_device_ids
+        else "",
+        event_count=incident.event_count(),
+        affected_sites_count=len(incident.affected_sites),
+        affected_devices_count=len(incident.affected_devices),
+        root_device_count=len(incident.root_device_ids),
+        symptom_device_count=len(incident.symptom_device_ids),
+        confidence_score=incident.confidence_score,
+        created_at=incident.created_at,
+        updated_at=incident.updated_at,
+    )
+
+
 async def _incident_to_detail(incident: Incident) -> IncidentDetail:
     topology_node_ids = await _resolve_affected_device_ids(list(incident.affected_devices))
     return IncidentDetail(
@@ -72,11 +109,15 @@ async def _incident_to_detail(incident: Incident) -> IncidentDetail:
         affected_sites=list(incident.affected_sites),
         affected_devices=list(incident.affected_devices),
         affected_clients=list(incident.affected_clients),
+        root_device_ids=list(incident.root_device_ids),
+        symptom_device_ids=list(incident.symptom_device_ids),
         topology_node_ids=topology_node_ids,
         related_event_ids=list(incident.related_event_ids),
         event_count=incident.event_count(),
         probable_cause=incident.probable_cause,
         confidence_score=incident.confidence_score,
+        confidence_breakdown=incident.confidence_breakdown,
+        evidence=list(incident.evidence),
         created_at=incident.created_at,
         updated_at=incident.updated_at,
     )
@@ -85,15 +126,25 @@ async def _incident_to_detail(incident: Incident) -> IncidentDetail:
 @router.get("", response_model=IncidentListResponse, summary="List incidents")
 async def list_incidents(
     severity: List[str] = Query(None, description="Filter by severity"),
+    status: List[IncidentStatus] = Query(None, description="Filter by status"),
     limit: int = Query(100, ge=1, le=1000),
     offset: int = Query(0, ge=0),
 ) -> IncidentListResponse:
     try:
         incidents = await incident_service.list_incidents(
-            severity_filter=severity, limit=limit, offset=offset
+            severity_filter=severity,
+            status_filter=status,
+            limit=limit,
+            offset=offset,
         )
-        total = await incident_service.count_incidents(severity_filter=severity)
-        summaries = [_incident_to_summary(i) for i in incidents]
+        total = await incident_service.count_incidents(
+            severity_filter=severity,
+            status_filter=status,
+        )
+        site_names, root_device_names = await _enrich_summaries(incidents)
+        summaries = [
+            _incident_to_summary(i, site_names, root_device_names) for i in incidents
+        ]
         return IncidentListResponse(incidents=summaries, total=total, page=1, page_size=limit)
     except Exception as e:
         logger.error(f"Error listing incidents: {e}", exc_info=True)
@@ -108,10 +159,31 @@ async def list_active_incidents(
     try:
         incidents = await incident_service.get_active_incidents(limit=limit, offset=offset)
         total = len(incidents)
-        summaries = [_incident_to_summary(i) for i in incidents]
+        site_names, root_device_names = await _enrich_summaries(incidents)
+        summaries = [
+            _incident_to_summary(i, site_names, root_device_names) for i in incidents
+        ]
         return IncidentListResponse(incidents=summaries, total=total, page=1, page_size=limit)
     except Exception as e:
         logger.error(f"Error listing active incidents: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@router.get(
+    "/stats",
+    response_model=IncidentStats,
+    summary="Incident KPIs",
+    description=(
+        "Truthful incident aggregates computed in SQL — total, active, "
+        "by severity, distinct sites/devices, average confidence. Never "
+        "derived from a list page length."
+    ),
+)
+async def get_incident_stats() -> IncidentStats:
+    try:
+        return IncidentStats(**await incident_service.get_stats())
+    except Exception as e:
+        logger.error(f"Error computing incident stats: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
@@ -126,6 +198,80 @@ async def get_incident(incident_id: str) -> IncidentDetail:
         raise
     except Exception as e:
         logger.error(f"Error retrieving incident {incident_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@router.get(
+    "/{incident_id}/evidence",
+    summary="Get incident evidence timeline",
+    description=(
+        "Returns the compact telemetry snapshots captured at correlation time for each "
+        "event that contributed to this incident. Evidence is persisted permanently inside "
+        "the incident record (WP-2.6) and remains available even after raw events are pruned "
+        "by the 48-hour WP-2.4 retention window."
+    ),
+    response_model=List[Dict],
+)
+async def get_incident_evidence(incident_id: str) -> List[Dict]:
+    try:
+        incident = await incident_service.get_incident(incident_id)
+        if not incident:
+            raise HTTPException(status_code=404, detail=f"Incident not found: {incident_id}")
+        sorted_evidence = sorted(
+            incident.evidence,
+            key=lambda e: e.get("timestamp") or "",
+        )
+        return sorted_evidence
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error retrieving evidence for {incident_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@router.put(
+    "/{incident_id}/status",
+    summary="Update incident status (RBAC & Audit Log)",
+    description="Updates the incident status (open, investigating, mitigated, resolved). Requires operator or admin role.",
+)
+async def update_incident_status(
+    incident_id: str,
+    status_value: str = Query(..., description="New status (open, investigating, mitigated, resolved)"),
+    user: UserPrincipal = Depends(require_role(["operator", "admin"])),
+) -> Dict[str, str]:
+    try:
+        from shared.database.audit import log_audit_event
+        from shared.database.incidents import update_incident_status as db_update_status
+
+        updated = await db_update_status(incident_id, status_value)
+        if not updated:
+            await log_audit_event(
+                user_id=user.user_id,
+                username=user.username,
+                user_role=user.roles[0] if user.roles else "operator",
+                action="UPDATE_INCIDENT_STATUS",
+                resource_type="incident",
+                resource_id=incident_id,
+                status="failure",
+                details={"new_status": status_value, "reason": "Incident not found"},
+            )
+            raise HTTPException(status_code=404, detail=f"Incident not found: {incident_id}")
+
+        await log_audit_event(
+            user_id=user.user_id,
+            username=user.username,
+            user_role=user.roles[0] if user.roles else "operator",
+            action="UPDATE_INCIDENT_STATUS",
+            resource_type="incident",
+            resource_id=incident_id,
+            status="success",
+            details={"new_status": status_value},
+        )
+        return {"incident_id": incident_id, "status": status_value, "message": "Incident status updated"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating status for {incident_id}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Internal server error")
 
 

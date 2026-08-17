@@ -34,11 +34,18 @@ class Database:
     async def connect(self, min_size: int = 2, max_size: int = 10) -> None:
         if self.pool is not None:
             return
-        logger.info("Connecting to Postgres...")
+        ssl_mode = None
+        if os.getenv("POSTGRES_SSL", "false").lower() in ("true", "1", "yes", "require"):
+            ssl_mode = "require"
+        elif os.getenv("ENVIRONMENT", "development").lower() == "production":
+            ssl_mode = "require"
+
+        logger.info("Connecting to Postgres (ssl=%s)...", ssl_mode or "off")
         self.pool = await asyncpg.create_pool(
             _PG_URL,
             min_size=min_size,
             max_size=max_size,
+            ssl=ssl_mode,
         )
         logger.info("Postgres pool ready")
 

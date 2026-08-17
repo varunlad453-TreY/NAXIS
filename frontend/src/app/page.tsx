@@ -83,7 +83,7 @@ export default function HomePage() {
 
   return (
     <DashboardBackground>
-      <div className="relative mx-auto max-w-6xl space-y-16 px-6 py-20 lg:px-8">
+      <div className="relative mx-auto max-w-6xl space-y-12 px-6 py-16 lg:px-8">
         <HeroSection isOnline={isOnline} eventCount={eventCount} eventCountStale={eventCountStale} eventRange={eventRange} onEventRangeChange={setEventRange} siteCount={siteCount} vendorCount={vendorCount} />
         <CollectorHealthWidget />
         <PlatformObserverSection mistDeviceCount={mistDeviceCount} sdwanEdgeCount={sdwanEdgeCount} />

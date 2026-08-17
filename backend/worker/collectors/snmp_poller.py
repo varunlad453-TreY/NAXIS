@@ -43,6 +43,11 @@ from shared.models.event import (
     UnifiedEvent,
 )
 
+try:
+    from backend.shared.database.identity import IdentityResolver
+except ImportError:  # pragma: no cover - supports both entry-point styles
+    from shared.database.identity import IdentityResolver
+
 logger = logging.getLogger(__name__)
 
 # OID prefixes
@@ -82,6 +87,7 @@ class SnmpPoller:
         self._timeout = settings.snmp_timeout
         self._retries = settings.snmp_retries
         self._targets = settings.snmp_targets_list
+        self._resolver = IdentityResolver()
         # Track previous interface states to generate UP/DOWN events only on change
         self._prev_if_states: Dict[str, Dict[int, int]] = {}
 
@@ -148,15 +154,26 @@ class SnmpPoller:
         lldp_neighbours = await self._walk_lldp(engine, auth, transport, ctx)
         cdp_neighbours = await self._walk_cdp(engine, auth, transport, ctx)
 
+        # Resolve a canonical identity for this SNMP target
+        device_key = None
+        if self._resolver:
+            device_key = await self._resolver.resolve_device(
+                "snmp",
+                ip,
+                display_name=sys_name or ip,
+                device_type="switch",
+                ip_address=ip,
+            )
+
         # Persist topology data
         if if_data:
-            await self._upsert_topology_node(ip, sys_name, sys_descr, if_data)
+            await self._upsert_topology_node(ip, sys_name, sys_descr, if_data, device_key)
         neighbours = lldp_neighbours or cdp_neighbours
         if neighbours:
             await self._upsert_topology_edges(ip, sys_name, neighbours)
 
         # Generate events for interface state changes
-        events = self._generate_if_events(ip, sys_name, if_data)
+        events = self._generate_if_events(ip, sys_name, if_data, device_key)
         logger.info(
             "SNMP %s: %d interfaces, %d neighbours, %d state-change events",
             ip, len(if_data), len(neighbours), len(events),
@@ -309,7 +326,11 @@ class SnmpPoller:
     # ── Event generation ──────────────────────────────────────────────────────
 
     def _generate_if_events(
-        self, ip: str, sys_name: str, if_data: Dict[int, Dict]
+        self,
+        ip: str,
+        sys_name: str,
+        if_data: Dict[int, Dict],
+        device_key: Optional[str] = None,
     ) -> List[UnifiedEvent]:
         events: List[UnifiedEvent] = []
         prev = self._prev_if_states.get(ip, {})
@@ -333,7 +354,7 @@ class SnmpPoller:
                 continue
 
             if_name = info.get("name") or info.get("descr") or f"ifIndex.{idx}"
-            device_id = f"snmp-{ip.replace('.', '-')}"
+            device_id = device_key or f"snmp-{ip.replace('.', '-')}"
             went_down = (prev_oper == 1 and oper == 2)
 
             events.append(UnifiedEvent(
@@ -371,7 +392,12 @@ class SnmpPoller:
     # ── Topology persistence ──────────────────────────────────────────────────
 
     async def _upsert_topology_node(
-        self, ip: str, sys_name: str, sys_descr: str, if_data: Dict[int, Dict]
+        self,
+        ip: str,
+        sys_name: str,
+        sys_descr: str,
+        if_data: Dict[int, Dict],
+        device_key: Optional[str] = None,
     ) -> None:
         import json
         node_id = f"snmp-{ip.replace('.', '-')}"
@@ -388,15 +414,17 @@ class SnmpPoller:
         }
         await db.execute(
             """
-            INSERT INTO topology_nodes (node_id, node_type, name, ip_address, vendor, props, updated_at)
-            VALUES ($1, 'switch', $2, $3, 'snmp', $4::jsonb, NOW())
+            INSERT INTO topology_nodes
+                (node_id, node_type, name, ip_address, vendor, canonical_key, props, updated_at)
+            VALUES ($1, 'switch', $2, $3, 'snmp', NULLIF($4, ''), $5::jsonb, NOW())
             ON CONFLICT (node_id) DO UPDATE SET
-                name       = EXCLUDED.name,
-                ip_address = EXCLUDED.ip_address,
-                props      = EXCLUDED.props,
-                updated_at = NOW()
+                name          = EXCLUDED.name,
+                ip_address    = EXCLUDED.ip_address,
+                canonical_key = COALESCE(NULLIF(EXCLUDED.canonical_key,''), topology_nodes.canonical_key),
+                props         = EXCLUDED.props,
+                updated_at    = NOW()
             """,
-            node_id, sys_name or ip, ip, json.dumps(props),
+            node_id, sys_name or ip, ip, device_key or "", json.dumps(props),
         )
 
     async def _upsert_topology_edges(
@@ -431,7 +459,10 @@ class SnmpPoller:
                 "remote_ip": nbr.get("remote_ip", ""),
                 "discovered_by": f"snmp_{protocol}",
             })
-            # Use LEAST/GREATEST to avoid duplicate edges (A→B and B→A)
+            # Write to both tables: topology_edges for API backward-compat,
+            # links for cascade (explicit parent/child direction).
+            # Migration 009 treats dst_id as parent, src_id as child for
+            # topology_edges physical_link edges.
             await db.execute(
                 """
                 INSERT INTO topology_edges (src_id, dst_id, edge_type, props, updated_at)
@@ -440,4 +471,13 @@ class SnmpPoller:
                 DO UPDATE SET props = EXCLUDED.props, updated_at = NOW()
                 """,
                 local_node_id, remote_node_id, edge_props,
+            )
+            await db.execute(
+                """
+                INSERT INTO links (parent_node_id, child_node_id, link_type, props, updated_at)
+                VALUES ($1, $2, 'physical', $3::jsonb, NOW())
+                ON CONFLICT (parent_node_id, child_node_id, link_type)
+                DO UPDATE SET props = EXCLUDED.props, updated_at = NOW()
+                """,
+                remote_node_id, local_node_id, edge_props,
             )

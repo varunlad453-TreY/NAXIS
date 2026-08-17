@@ -31,7 +31,6 @@ from shared.database.health_history import get_health_history, get_health_summar
 from shared.database.topology import DatabaseTopologyProvider
 from shared.health import (
     compute_node_health,
-    extract_event_device_id,
     is_infrastructure_type,
 )
 
@@ -100,20 +99,28 @@ _SITE_NAME_QUERY = """
     WHERE site_id = ANY($1::text[])
 """
 
+_CANONICAL_KEYS_QUERY = """
+    SELECT node_id, COALESCE(NULLIF(canonical_key, ''), node_id) AS canonical_key
+    FROM topology_nodes
+    WHERE node_id = ANY($1::text[])
+"""
+
 _HEALTH_EVENTS_QUERY = """
-    SELECT device_id, severity, MAX(timestamp) AS latest_at
-    FROM events
-    WHERE device_id = ANY($1::text[])
-      AND timestamp > NOW() - INTERVAL '15 minutes'
-      AND severity IN ('critical', 'major')
-    GROUP BY device_id, severity
-    ORDER BY device_id, severity DESC
+    SELECT e.device_id, e.severity, MAX(e.timestamp) AS latest_at
+    FROM events e
+    JOIN topology_nodes tn ON tn.canonical_key = e.device_id
+    WHERE tn.node_id = ANY($1::text[])
+      AND e.timestamp > NOW() - INTERVAL '15 minutes'
+      AND e.severity IN ('critical', 'major')
+    GROUP BY e.device_id, e.severity
+    ORDER BY e.device_id, e.severity DESC
 """
 
 _HEALTH_INVENTORY_QUERY = """
-    SELECT device_id, reachability
-    FROM inventory
-    WHERE device_id = ANY($1::text[])
+    SELECT i.device_id, i.reachability
+    FROM inventory i
+    JOIN topology_nodes tn ON tn.canonical_key = i.device_id
+    WHERE tn.node_id = ANY($1::text[])
 """
 
 _HEALTH_NODE_PROPS_QUERY = """
@@ -167,13 +174,22 @@ _INTER_SITE_EDGES_QUERY = """
       AND n2.site_id IS NOT NULL AND n2.site_id != ''
       AND n1.site_id != n2.site_id
       AND e.edge_type != 'site_membership'
-    ORDER BY e.src_id ASC, e.dst_id ASC
+    UNION ALL
+    SELECT DISTINCT l.child_node_id AS src_id, l.parent_node_id AS dst_id,
+           'physical' AS edge_type, l.props, l.updated_at
+    FROM links l
+    JOIN topology_nodes n1 ON l.child_node_id = n1.node_id
+    JOIN topology_nodes n2 ON l.parent_node_id = n2.node_id
+    WHERE n1.site_id IS NOT NULL AND n1.site_id != ''
+      AND n2.site_id IS NOT NULL AND n2.site_id != ''
+      AND n1.site_id != n2.site_id
+    ORDER BY src_id ASC, dst_id ASC
 """
 
 _NODES_BY_SITE_QUERY = """
     SELECT node_id, node_type, name, ip_address, vendor, model, site_id, props, updated_at
     FROM topology_nodes
-    WHERE site_id = $1
+    WHERE site_id = ANY($1::text[])
     ORDER BY node_type ASC, name ASC
 """
 
@@ -182,14 +198,21 @@ _EDGES_FOR_SITE_IDS = """
     FROM topology_edges e
     JOIN topology_nodes n1 ON e.src_id = n1.node_id
     JOIN topology_nodes n2 ON e.dst_id = n2.node_id
-    WHERE (n1.site_id = $1 OR n2.site_id = $1)
-    ORDER BY e.src_id ASC, e.dst_id ASC
+    WHERE (n1.site_id = ANY($1::text[]) OR n2.site_id = ANY($1::text[]))
+    UNION ALL
+    SELECT l.child_node_id AS src_id, l.parent_node_id AS dst_id,
+           'physical' AS edge_type, l.props, l.updated_at
+    FROM links l
+    JOIN topology_nodes n1 ON l.child_node_id = n1.node_id
+    JOIN topology_nodes n2 ON l.parent_node_id = n2.node_id
+    WHERE (n1.site_id = ANY($1::text[]) OR n2.site_id = ANY($1::text[]))
+    ORDER BY src_id ASC, dst_id ASC
 """
 
 _SITE_DEVICE_TYPE_BREAKDOWN = """
     SELECT node_type, COUNT(*) AS cnt
     FROM topology_nodes
-    WHERE site_id = $1 AND node_type != 'site'
+    WHERE site_id = ANY($1::text[]) AND node_type != 'site'
     GROUP BY node_type
     ORDER BY cnt DESC
 """
@@ -197,10 +220,11 @@ _SITE_DEVICE_TYPE_BREAKDOWN = """
 _SITE_DEVICE_VENDOR_BREAKDOWN = """
     SELECT COALESCE(NULLIF(vendor, ''), 'unknown') AS vendor, COUNT(*) AS cnt
     FROM topology_nodes
-    WHERE site_id = $1 AND node_type != 'site'
+    WHERE site_id = ANY($1::text[]) AND node_type != 'site'
     GROUP BY vendor
     ORDER BY cnt DESC
 """
+
 
 
 
@@ -209,30 +233,37 @@ async def _enrich_health(nodes: List[TopologyNode]) -> None:
     if not nodes or not db.pool:
         return
 
-    device_map = {n.node_id: extract_event_device_id(n.node_id) for n in nodes}
-    unique_device_ids = list(set(device_map.values()))
-    if not unique_device_ids:
+    node_ids = [n.node_id for n in nodes]
+
+    # Fetch canonical keys from topology_nodes so we look up events and inventory
+    # by the actual canonical device_key — not a prefix-strip heuristic.
+    # Fixes SNMP nodes where node_id ("snmp-x-x-x-x") has no relation to the
+    # canonical UUID stored in events.device_id.
+    canonical_rows = await db.fetch(_CANONICAL_KEYS_QUERY, node_ids)
+    device_map = {row["node_id"]: row["canonical_key"] for row in canonical_rows}
+    unique_node_ids = list({r["node_id"] for r in canonical_rows})
+    if not unique_node_ids:
         return
 
     try:
-        # Query recent events
-        event_rows = await db.fetch(_HEALTH_EVENTS_QUERY, unique_device_ids)
+        # Query recent events by canonical key (via topology_nodes join)
+        event_rows = await db.fetch(_HEALTH_EVENTS_QUERY, unique_node_ids)
         worst_severity: dict = {}
         for row in event_rows:
-            dev_id = row["device_id"]
+            can_key = row["device_id"]
             sev = row["severity"]
-            existing = worst_severity.get(dev_id)
+            existing = worst_severity.get(can_key)
             if existing is None or (sev == "critical" and existing != "critical"):
-                worst_severity[dev_id] = sev
+                worst_severity[can_key] = sev
 
-        # Query inventory reachability
-        inventory_rows = await db.fetch(_HEALTH_INVENTORY_QUERY, unique_device_ids)
+        # Query inventory reachability by canonical key
+        inventory_rows = await db.fetch(_HEALTH_INVENTORY_QUERY, unique_node_ids)
         inv_reachability: dict = {}
         for row in inventory_rows:
             inv_reachability[row["device_id"]] = row["reachability"]
 
         # Query topology node props for reachability/connected
-        props_rows = await db.fetch(_HEALTH_NODE_PROPS_QUERY, list(device_map.keys()))
+        props_rows = await db.fetch(_HEALTH_NODE_PROPS_QUERY, node_ids)
         props_reachability: dict = {}
         props_connected: dict = {}
         for row in props_rows:
@@ -241,14 +272,15 @@ async def _enrich_health(nodes: List[TopologyNode]) -> None:
 
         # Compute health for each node using shared module
         for node in nodes:
-            dev_id = device_map.get(node.node_id, node.node_id)
+            nid = node.node_id
+            dev_id = device_map.get(nid, nid)
             status, label, _ = compute_node_health(
-                node_id=node.node_id,
+                node_id=nid,
                 device_id=dev_id,
                 worst_event_severity=worst_severity.get(dev_id),
                 inventory_reachability=inv_reachability.get(dev_id),
-                props_reachability=props_reachability.get(node.node_id),
-                props_connected=props_connected.get(node.node_id),
+                props_reachability=props_reachability.get(nid),
+                props_connected=props_connected.get(nid),
             )
             node.health_status = status
             node.health_label = label
@@ -422,7 +454,19 @@ async def get_topology_backbone() -> TopologyBackboneResponse:
             nodes.append(bn)
 
         await _enrich_site_names(nodes)
-        await _enrich_health(nodes)
+        for n in nodes:
+            if n.critical_count > 0:
+                n.health_status = "critical"
+                n.health_label = f"{n.critical_count} critical"
+            elif n.warning_count > 0:
+                n.health_status = "warning"
+                n.health_label = f"{n.warning_count} warning"
+            elif n.device_count > 0:
+                n.health_status = "healthy"
+                n.health_label = "All healthy"
+            else:
+                n.health_status = "unknown"
+                n.health_label = "No devices"
 
         edges_rows = await db.fetch(_INTER_SITE_EDGES_QUERY)
         edges = [_row_to_edge(e) for e in edges_rows]
@@ -436,6 +480,35 @@ async def get_topology_backbone() -> TopologyBackboneResponse:
     except Exception as exc:
         logger.error("Error fetching backbone topology: %s", exc, exc_info=True)
         raise HTTPException(status_code=500, detail="Internal server error")
+
+
+async def _resolve_site_ids(site_id: str) -> List[str]:
+    """Resolves a unified site_key or vendor_site_id to all matching vendor site IDs from DB."""
+    import json
+    site_ids = {site_id}
+    try:
+        if db.pool:
+            row = await db.fetchrow("SELECT site_key, vendor_ids FROM sites WHERE site_key = $1", site_id)
+            if row and row["vendor_ids"]:
+                v_ids = row["vendor_ids"]
+                if isinstance(v_ids, str):
+                    try:
+                        v_ids = json.loads(v_ids)
+                    except Exception:
+                        v_ids = {}
+                if isinstance(v_ids, dict):
+                    for v in v_ids.values():
+                        if v:
+                            site_ids.add(str(v))
+
+            map_rows = await db.fetch("SELECT vendor_site_id FROM location_mappings WHERE location_id = $1", site_id)
+            for mr in map_rows:
+                if mr["vendor_site_id"]:
+                    site_ids.add(str(mr["vendor_site_id"]))
+    except Exception as exc:
+        logger.warning("Error resolving site_ids for %s: %s", site_id, exc)
+
+    return list(site_ids)
 
 
 @router.get(
@@ -453,8 +526,50 @@ async def get_site_internal_topology(site_id: str) -> TopologyGraphResponse:
         if not db.pool:
             return TopologyGraphResponse()
 
-        node_rows = await db.fetch(_NODES_BY_SITE_QUERY, site_id)
+        site_ids = await _resolve_site_ids(site_id)
+        node_rows = await db.fetch(_NODES_BY_SITE_QUERY, site_ids)
+
         if not node_rows:
+            # Query inventory table directly if topology_nodes has not synced all site devices
+            inv_rows = await db.fetch(
+                """
+                SELECT device_id, hostname as name, platform as vendor, model, site_id, connected
+                FROM inventory
+                WHERE site_id = ANY($1::text[]);
+                """,
+                site_ids,
+            )
+            if inv_rows:
+                nodes = [
+                    TopologyNode(
+                        node_id=str(r["device_id"]),
+                        node_type="ap" if "AP" in str(r["name"] or "") or "WAP" in str(r["name"] or "") else "switch",
+                        name=str(r["name"] or f"Device-{str(r['device_id'])[:6]}"),
+                        vendor=str(r["vendor"] or "juniper_mist"),
+                        model=str(r["model"] or "Enterprise Asset"),
+                        site_id=str(r["site_id"]),
+                        health_status="healthy" if r.get("connected", True) else "degraded",
+                    )
+                    for r in inv_rows
+                ]
+                await _enrich_site_names(nodes)
+                await _enrich_health(nodes)
+
+                edges = [
+                    TopologyEdge(
+                        src_id=n.node_id,
+                        dst_id=site_ids[0],
+                        edge_type="physical",
+                    )
+                    for n in nodes
+                ]
+
+                return TopologyGraphResponse(
+                    nodes=nodes,
+                    edges=edges,
+                    total_nodes=len(nodes),
+                    total_edges=len(edges),
+                )
             return TopologyGraphResponse()
 
         nodes = [_row_to_node(r) for r in node_rows]
@@ -462,27 +577,27 @@ async def get_site_internal_topology(site_id: str) -> TopologyGraphResponse:
         await _enrich_health(nodes)
 
         node_ids_set = {n.node_id for n in nodes}
-        # Include the site node itself if it exists in topology_nodes
-        site_node_rows = await db.fetch(_NODE_BY_ID_QUERY, site_id)
-        if site_node_rows:
-            sn = _row_to_node(site_node_rows[0])
-            if sn.node_id not in node_ids_set:
-                await _enrich_site_names([sn])
-                await _enrich_health([sn])
-                nodes.append(sn)
-                node_ids_set.add(sn.node_id)
-        # Also try the mist-site- prefixed variant
-        mist_site_id = f"mist-site-{site_id}"
-        if mist_site_id not in node_ids_set:
-            mist_rows = await db.fetch(_NODE_BY_ID_QUERY, mist_site_id)
-            if mist_rows:
-                sn = _row_to_node(mist_rows[0])
-                await _enrich_site_names([sn])
-                await _enrich_health([sn])
-                nodes.append(sn)
-                node_ids_set.add(sn.node_id)
+        # Include site nodes for resolved site_ids
+        for sid in site_ids:
+            site_node_rows = await db.fetch(_NODE_BY_ID_QUERY, sid)
+            if site_node_rows:
+                sn = _row_to_node(site_node_rows[0])
+                if sn.node_id not in node_ids_set:
+                    await _enrich_site_names([sn])
+                    await _enrich_health([sn])
+                    nodes.append(sn)
+                    node_ids_set.add(sn.node_id)
+            mist_site_id = f"mist-site-{sid}"
+            if mist_site_id not in node_ids_set:
+                mist_rows = await db.fetch(_NODE_BY_ID_QUERY, mist_site_id)
+                if mist_rows:
+                    sn = _row_to_node(mist_rows[0])
+                    await _enrich_site_names([sn])
+                    await _enrich_health([sn])
+                    nodes.append(sn)
+                    node_ids_set.add(sn.node_id)
 
-        edges_rows = await db.fetch(_EDGES_FOR_SITE_IDS, site_id)
+        edges_rows = await db.fetch(_EDGES_FOR_SITE_IDS, site_ids)
         edges = [_row_to_edge(e) for e in edges_rows]
 
         return TopologyGraphResponse(
@@ -505,20 +620,27 @@ async def get_site_summary(site_id: str) -> SiteSummaryResponse:
     """Return a summary of devices within a site: type breakdown, vendor breakdown, health breakdown."""
     try:
         if not db.pool:
-            return SiteSummaryResponse(site_id=site_id)
+            return SiteSummaryResponse(
+                site_id=site_id,
+                total_devices=0,
+                health=SiteHealthCounts(healthy_count=0, warning_count=0, critical_count=0, unknown_count=0),
+                by_type=[],
+                by_vendor=[],
+            )
 
-        type_rows = await db.fetch(_SITE_DEVICE_TYPE_BREAKDOWN, site_id)
-        vendor_rows = await db.fetch(_SITE_DEVICE_VENDOR_BREAKDOWN, site_id)
+        site_ids = await _resolve_site_ids(site_id)
+        type_rows = await db.fetch(_SITE_DEVICE_TYPE_BREAKDOWN, site_ids)
+        vendor_rows = await db.fetch(_SITE_DEVICE_VENDOR_BREAKDOWN, site_ids)
 
         # Fetch child nodes and compute health in Python (health_status is not a DB column)
-        child_node_rows = await db.fetch(_NODES_BY_SITE_QUERY, site_id)
+        child_node_rows = await db.fetch(_NODES_BY_SITE_QUERY, site_ids)
         child_nodes = [_row_to_node(r) for r in child_node_rows if r["node_type"] != "site"]
         await _enrich_health(child_nodes)
 
         # Resolve site name
         site_name = None
         try:
-            name_rows = await db.fetch(_SITE_NAME_QUERY, [site_id])
+            name_rows = await db.fetch(_SITE_NAME_QUERY, site_ids)
             if name_rows:
                 site_name = name_rows[0]["site_name"] or site_id
         except Exception:
@@ -552,6 +674,7 @@ async def get_site_summary(site_id: str) -> SiteSummaryResponse:
             by_type=by_type,
             by_vendor=by_vendor,
         )
+
     except Exception as exc:
         logger.error("Error fetching site summary for %s: %s", site_id, exc, exc_info=True)
         raise HTTPException(status_code=500, detail="Internal server error")
@@ -803,3 +926,32 @@ async def get_blast_radius(incident_id: str) -> BlastRadiusResponse:
     except Exception as exc:
         logger.error("Error fetching blast radius for %s: %s", incident_id, exc, exc_info=True)
         raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@router.get("/links/history", summary="Get link state transition history")
+async def get_link_history(
+    link_key: Optional[str] = Query(None, description="Filter by link key"),
+    parent_node_id: Optional[str] = Query(None, description="Filter by parent node ID"),
+    child_node_id: Optional[str] = Query(None, description="Filter by child node ID"),
+    limit: int = Query(100, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
+):
+    """
+    Get permanent, diff-on-write link state transition history.
+
+    Returns chronological link transitions with duration_seconds metrics.
+    """
+    try:
+        from shared.database.state_history import get_link_state_history
+        history = await get_link_state_history(
+            link_key=link_key,
+            parent_node_id=parent_node_id,
+            child_node_id=child_node_id,
+            limit=limit,
+            offset=offset,
+        )
+        return [h.model_dump() if hasattr(h, "model_dump") else h.dict() for h in history]
+    except Exception as exc:
+        logger.error(f"Error fetching link state history: {exc}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
