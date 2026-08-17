@@ -19,9 +19,9 @@ export function buildStats(
   totalIncidents: number
 ): KpiValues {
   return {
-    critical: kpiData?.bySeverity.critical ?? 0,
-    major: kpiData?.bySeverity.major ?? 0,
-    minor: kpiData?.bySeverity.minor ?? 0,
+    critical: kpiData?.bySeverity?.critical ?? 0,
+    major: kpiData?.bySeverity?.major ?? 0,
+    minor: kpiData?.bySeverity?.minor ?? 0,
     total: kpiData?.total ?? totalIncidents,
     active: kpiData?.active ?? incidents.filter((i) => ACTIVE_STATUSES.includes(i.status)).length,
     avgConfidence:

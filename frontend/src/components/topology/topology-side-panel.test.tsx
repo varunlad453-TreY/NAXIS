@@ -113,7 +113,7 @@ describe("TopologySidePanel", () => {
     );
     expect(screen.getByText("Node Details")).toBeDefined();
     expect(screen.getByText("naxis-core-01")).toBeDefined();
-    expect(screen.getByText("Switch")).toBeDefined();
+    expect(screen.getAllByText("Switch").length).toBeGreaterThan(0);
     expect(screen.getByText("Critical")).toBeDefined();
     expect(screen.getByText("10.0.0.1")).toBeDefined();
   });

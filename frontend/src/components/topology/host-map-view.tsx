@@ -243,7 +243,7 @@ export function HostMapView({ data, onContextSelect }: HostMapViewProps) {
                       <tr
                         key={n.node_id}
                         onClick={() => onContextSelect(n.node_id, n.name || n.node_id)}
-                        data-testid={`hostmap-row-${n.node_id}`}
+                        data-testid={`hostmap-tile-${n.node_id}`}
                         className="group border-b border-slate-800/20 hover:bg-slate-800/30 transition-colors cursor-pointer"
                       >
                         <td className="py-2 px-1">

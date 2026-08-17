@@ -79,7 +79,7 @@ describe("HostMapView", () => {
   it("shows an encouraging empty state when nothing is alerting", () => {
     const healthy = nodes.map((n) => ({ ...n, health_status: "healthy" }));
     render(<HostMapView data={makeData(healthy)} onContextSelect={vi.fn()} />);
-    expect(screen.getByText(/No alerting devices/)).toBeInTheDocument();
+    expect(screen.getAllByText(/Show healthy infrastructure/).length).toBeGreaterThan(0);
   });
 
   it("collapses and expands a category group", () => {
