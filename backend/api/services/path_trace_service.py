@@ -50,6 +50,14 @@ class PathTraceService:
                 interface_name=f"Wi-Fi (VLAN {client_info.get('vlan', 10)})",
                 health_status="healthy",
                 latency_ms=2.5,
+                packet_loss_pct=0.0,
+                speed_duplex="802.11ax (Wi-Fi 6) 1200Mbps",
+                vlan_id="VLAN 10 (Corporate-WiFi)",
+                crc_errors=0,
+                input_drops=0,
+                output_drops=0,
+                rssi_dbm=client_info.get("rssi", -58.0),
+                snr_db=34.0,
                 details={
                     "rssi": client_info.get("rssi", -58),
                     "ssid": client_info.get("ssid", "Enterprise-Corporate"),
@@ -81,6 +89,13 @@ class PathTraceService:
                 interface_name="ge-0/0/0 (PoE+)",
                 health_status=ap_health,
                 latency_ms=3.1,
+                packet_loss_pct=0.0,
+                speed_duplex="1000Mbps Full Duplex",
+                vlan_id="VLAN 100 (Management)",
+                crc_errors=0,
+                input_drops=0,
+                output_drops=0,
+                poe_wattage=15.4,
                 details={"model": "AP43", "clients_connected": 18},
             )
         )
@@ -106,6 +121,13 @@ class PathTraceService:
                 interface_name=str(switch_node.get("port") or "ge-0/0/12"),
                 health_status=sw_health,
                 latency_ms=1.2,
+                packet_loss_pct=0.0,
+                speed_duplex="1000Mbps Full Duplex",
+                vlan_id="VLAN 100 (Trunk)",
+                crc_errors=0,
+                input_drops=0,
+                output_drops=0,
+                poe_wattage=30.0,
                 details={"model": "EX3400-48P", "poe_draw_watts": 15.4},
             )
         )
@@ -123,6 +145,12 @@ class PathTraceService:
                 interface_name="et-0/0/48 (10G Uplink)",
                 health_status="healthy",
                 latency_ms=0.8,
+                packet_loss_pct=0.0,
+                speed_duplex="10000Mbps Full Duplex",
+                vlan_id="VLAN Trunk (10,20,50,100)",
+                crc_errors=0,
+                input_drops=0,
+                output_drops=0,
                 details={"model": "Catalyst 9500", "vlan_trunk": [10, 20, 50]},
             )
         )
@@ -147,6 +175,12 @@ class PathTraceService:
                 interface_name="GE3 (WAN1 - Fiber)",
                 health_status=sdwan_health,
                 latency_ms=14.5,
+                packet_loss_pct=0.0,
+                speed_duplex="1000Mbps Full Duplex",
+                vlan_id="VLAN 500 (WAN Overlay)",
+                crc_errors=0,
+                input_drops=0,
+                output_drops=0,
                 details={"active_tunnels": 4, "wan_bandwidth_mbps": 500},
             )
         )

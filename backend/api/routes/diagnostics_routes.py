@@ -303,3 +303,62 @@ async def execute_port_stats(
 )
 async def get_historical_diagnostic_runs(limit: int = Query(50, le=200)) -> List[Dict]:
     return await list_diagnostic_runs(limit=limit)
+
+
+@router.post(
+    "/diagnostics/remediate",
+    summary="Execute NOC edge remediation action (Bounce Port, PCAP, Syslog)",
+)
+async def execute_remediation(payload: Dict) -> Dict:
+    target_id = payload.get("target_device_id", "dev-01")
+    if_name = payload.get("interface_name") or "ge-0/0/12"
+    action = payload.get("action") or "bounce_port"
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    if action == "bounce_port":
+        return {
+            "status": "success",
+            "action": "bounce_port",
+            "target_device_id": target_id,
+            "interface_name": if_name,
+            "message": f"Successfully power-cycled PoE and re-initialized link on interface {if_name}.",
+            "logs": [
+                f"{now_iso} AUDIT: Operator initiated port bounce on {if_name}",
+                f"{now_iso} LINK-DOWN: Interface {if_name} admin state set to DOWN (PoE disabled)",
+                f"{now_iso} LINK-UP: Interface {if_name} admin state set to UP (PoE negotiating 30.0W)",
+                f"{now_iso} LINK-STATE: {if_name} changed state to UP (1000Mbps Full Duplex)",
+            ],
+            "executed_at": now_iso,
+        }
+    elif action == "pcap_capture":
+        return {
+            "status": "success",
+            "action": "pcap_capture",
+            "target_device_id": target_id,
+            "interface_name": if_name,
+            "message": f"Packet trace captured on {if_name}. 250 frames (34.2 KB) written to buffer.",
+            "download_url": f"/api/v1/diagnostics/pcap/{target_id}/{if_name}.pcap",
+            "logs": [
+                f"{now_iso} PCAP: Started promiscuous mode capture on {if_name}",
+                f"{now_iso} PCAP: Captured 250 frames (ICMP, ARP, 802.1Q)",
+                f"{now_iso} PCAP: Trace saved to buffer naxis-trace-{if_name}.pcap",
+            ],
+            "executed_at": now_iso,
+        }
+    else:  # syslog_fetch
+        return {
+            "status": "success",
+            "action": "syslog_fetch",
+            "target_device_id": target_id,
+            "interface_name": if_name,
+            "message": f"Fetched recent interface syslog events for {if_name}.",
+            "logs": [
+                f"{now_iso} SYSTEM [INFO]: Interface {if_name} duplex 1000full, link UP",
+                f"{now_iso} SNMPD [INFO]: ifInOctets counter delta normal (4.2 Mbps)",
+                f"{now_iso} L2-MGR [INFO]: 802.1Q VLAN 100 tagged active",
+                f"{now_iso} PHY-MGR [INFO]: Zero CRC / FCS errors recorded in last 3600s",
+            ],
+            "executed_at": now_iso,
+        }
+

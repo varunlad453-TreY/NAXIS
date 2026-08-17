@@ -23,6 +23,14 @@ class PathHop(BaseModel):
     health_status: str = Field("healthy", description="Status: 'healthy' | 'degraded' | 'critical'")
     latency_ms: Optional[float] = Field(None, description="Hop or tunnel latency in milliseconds")
     packet_loss_pct: Optional[float] = Field(None, description="Packet loss percentage")
+    speed_duplex: Optional[str] = Field(None, description="Physical link speed and duplex mode")
+    vlan_id: Optional[str] = Field(None, description="Tagged/Untagged VLAN identifier")
+    crc_errors: Optional[int] = Field(0, description="Interface CRC frame error counter")
+    input_drops: Optional[int] = Field(0, description="Input packet drop counter")
+    output_drops: Optional[int] = Field(0, description="Output packet drop counter")
+    rssi_dbm: Optional[float] = Field(None, description="Wireless RSSI signal strength in dBm")
+    snr_db: Optional[float] = Field(None, description="Wireless Signal-to-Noise Ratio in dB")
+    poe_wattage: Optional[float] = Field(None, description="Power over Ethernet draw in Watts")
     details: Dict[str, Any] = Field(default_factory=dict, description="Metadata & evidence details")
 
 
@@ -56,3 +64,22 @@ class DiagnosticResponse(BaseModel):
     results: Dict[str, Any] = Field(default_factory=dict, description="Structured execution results & output")
     duration_ms: float = Field(..., description="Execution duration in milliseconds")
     executed_at: datetime = Field(default_factory=datetime.utcnow, description="Timestamp of test execution")
+
+
+class RemediationRequest(BaseModel):
+    """Request payload for a NOC edge remediation action."""
+    target_device_id: str = Field(..., description="Target device identifier")
+    interface_name: Optional[str] = Field(None, description="Target interface name (e.g. ge-0/0/12)")
+    action: str = Field(..., description="Action: 'bounce_port' | 'pcap_capture' | 'syslog_fetch'")
+
+
+class RemediationResponse(BaseModel):
+    """Response payload for a NOC remediation action."""
+    action: str = Field(..., description="Action executed")
+    target_device_id: str = Field(..., description="Target device identifier")
+    interface_name: Optional[str] = Field(None, description="Target interface name")
+    status: str = Field("success", description="Status: 'success' | 'error'")
+    message: str = Field(..., description="Operational feedback message")
+    logs: List[str] = Field(default_factory=list, description="Syslog lines or action trace output")
+    executed_at: datetime = Field(default_factory=datetime.utcnow, description="Timestamp")
+
