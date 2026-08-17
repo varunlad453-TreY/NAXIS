@@ -257,7 +257,7 @@ function PathTraceContent() {
     }
   };
 
-  const totalRtt = traceData?.hops.reduce((sum, h) => sum + (h.latency_ms || 0), 0) ?? 0;
+  const totalRtt = traceData?.hops.reduce((sum, h) => sum + (typeof h.latency_ms === "number" ? h.latency_ms : 0), 0) ?? 0;
 
   return (
     <div className="p-6 space-y-6 max-w-7xl mx-auto">
@@ -465,13 +465,13 @@ function PathTraceContent() {
                         {/* RTT Latency — STRICT RIGHT ALIGNED */}
                         <td className="py-2.5 px-2 font-mono text-right text-slate-200 font-medium text-[11px]">
                           <span className={isImpaired ? "text-rose-400 font-bold" : "text-slate-200"}>
-                            {hop.latency_ms !== undefined ? `${hop.latency_ms.toFixed(1)} ms` : "—"}
+                            {typeof hop.latency_ms === "number" ? `${hop.latency_ms.toFixed(1)} ms` : "—"}
                           </span>
                         </td>
 
                         {/* Packet Loss — STRICT RIGHT ALIGNED */}
                         <td className="py-2.5 px-2 font-mono text-right text-slate-400 text-[11px]">
-                          {hop.packet_loss_pct !== undefined ? `${hop.packet_loss_pct.toFixed(1)}%` : "0.0%"}
+                          {typeof hop.packet_loss_pct === "number" ? `${hop.packet_loss_pct.toFixed(1)}%` : "0.0%"}
                         </td>
 
                         {/* Action CTA */}
