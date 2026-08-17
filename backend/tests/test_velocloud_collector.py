@@ -159,6 +159,10 @@ class TestVeloCloudCollector:
             settings.velocloud_url = settings_overrides.get("url", "https://vco.example.com/")
             settings.velocloud_api_key = settings_overrides.get("api_key", "test-api-key")
             settings.velocloud_enabled = settings_overrides.get("enabled", True)
+            # MagicMock auto-attributes are truthy, which would silently enable the
+            # enterprise-ID override in every test. Set both explicitly.
+            settings.velocloud_enterprise_id = settings_overrides.get("enterprise_id", "")
+            settings.velocloud_verify_ssl = settings_overrides.get("verify_ssl", True)
             gs.return_value = settings
             return VeloCloudCollector()
 
@@ -247,23 +251,32 @@ class TestVeloCloudCollector:
         c = self._make_collector()
         client = _mock_http_client(_mock_response(200, {"id": 42}))
         eid = await c._get_enterprise_id(client)
-        assert eid == "42"
+        assert eid == 42
 
     @pytest.mark.asyncio
     async def test_get_enterprise_id_empty_dict(self):
-        """Empty dict returns empty string (falsy, handled downstream)."""
+        """Empty dict returns None."""
         c = self._make_collector()
         client = _mock_http_client(_mock_response(200, {}))
         eid = await c._get_enterprise_id(client)
-        assert eid == ""
+        assert eid is None
 
     @pytest.mark.asyncio
     async def test_get_enterprise_id_no_id_key(self):
-        """Dict without 'id' returns empty string."""
+        """Dict without 'id' returns None."""
         c = self._make_collector()
         client = _mock_http_client(_mock_response(200, {"name": "Acme"}))
         eid = await c._get_enterprise_id(client)
-        assert eid == ""
+        assert eid is None
+
+    @pytest.mark.asyncio
+    async def test_get_enterprise_id_override_skips_discovery(self):
+        """A configured override returns without an API call."""
+        c = self._make_collector(enterprise_id="424")
+        client = AsyncMock()
+        eid = await c._get_enterprise_id(client)
+        assert eid == 424
+        client.post.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_get_enterprise_id_api_error(self):
