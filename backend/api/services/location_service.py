@@ -173,16 +173,17 @@ class LocationService:
         is_valid_token = len(raw_token) >= 4 and raw_token.lower() not in ("site", "building", "floor", "region", "root", "unknown")
         search_pattern = f"%{raw_token.lower()}%" if is_valid_token else "___NONE___"
 
-        # Query site inventory or site token match, strictly limited to 4 APs per floorplan view
+        # Optimized query - check location mappings first, then fallback to direct site matching
         query = """
             SELECT i.device_id, COALESCE(i.hostname, i.device_id) AS name, i.mac AS mac_address,
                    i.ip_address, i.platform AS vendor, i.num_clients, i.connected, i.site_id, i.model
             FROM inventory i
             LEFT JOIN location_mappings lm ON lm.vendor = i.platform AND lm.vendor_site_id = i.site_id
-            WHERE (lm.location_id = $1 OR i.site_id = $1 OR i.site_id = ANY($2::text[])
-               OR ($3 != '___NONE___' AND (LOWER(i.site_name) LIKE $3 OR LOWER(i.hostname) LIKE $3 OR LOWER(i.site_id) LIKE $3)))
+            WHERE lm.location_id = $1
+               OR i.site_id = ANY($2::text[])
+               OR ($3 != '___NONE___' AND LOWER(i.site_name) LIKE $3)
             ORDER BY i.hostname ASC
-            LIMIT 4;
+            LIMIT 8;
         """
         placements: List[APPlacement] = []
         try:
