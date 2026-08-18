@@ -1577,3 +1577,117 @@ class TestIncidentIdentityMerge:
         assert base_id != rec_id
         assert rec_id.startswith("inc-")
 
+
+
+# ==============================================================================
+# Stage 2: inferred common parent (silent root cause)
+# ==============================================================================
+
+
+class TestInferredParentCascade:
+    """A switch that dies takes its APs with it and reports nothing itself.
+
+    Requiring the root device to emit its own event meant these cascades — the
+    majority in the live estate, where 962 of 1,109 switch->AP links have an
+    LLDP-only parent with no telemetry source at all — produced N unrelated
+    incidents instead of one.
+    """
+
+    @staticmethod
+    def _leaf(event_id: str, device_id: str, ts):
+        return make_event(
+            event_id=event_id,
+            severity=EventSeverity.CRITICAL,
+            title=f"{device_id} unreachable",
+            device_id=device_id,
+            device_name=device_id,
+            device_type="ap",
+            site_id="site-sfo-01",
+            site_name="SFO-01",
+            timestamp=ts,
+        )
+
+    @pytest.mark.asyncio
+    async def test_silent_parent_becomes_inferred_root(self, mock_topology_provider):
+        now = datetime.utcnow()
+        events = [
+            self._leaf("l1", "ap-sfo-101", now),
+            self._leaf("l2", "ap-sfo-102", now + timedelta(seconds=5)),
+            self._leaf("l3", "ap-sfo-103", now + timedelta(seconds=9)),
+        ]
+        rule = TopologyCascadeRule(
+            provider=mock_topology_provider,
+            config=CorrelationConfig(topology_cascade_enabled=True),
+        )
+
+        groups = await rule.evaluate(events)
+
+        assert len(groups) == 1
+        group = groups[0]
+        assert group.root_device_id == "core-switch-01"
+        assert group.inferred_root is True
+        assert group.root_events == [], "the root device reported nothing"
+        assert len(group.symptom_events) == 3
+
+    @pytest.mark.asyncio
+    async def test_single_affected_child_is_not_a_cascade(self, mock_topology_provider):
+        """One AP down is that AP's problem — blaming the switch would be wrong."""
+        now = datetime.utcnow()
+        events = [self._leaf("l1", "ap-sfo-101", now)]
+        rule = TopologyCascadeRule(
+            provider=mock_topology_provider,
+            config=CorrelationConfig(topology_cascade_enabled=True),
+        )
+
+        assert await rule.evaluate(events) == []
+
+    @pytest.mark.asyncio
+    async def test_real_root_event_wins_over_inference(
+        self, cascade_events_same_site, mock_topology_provider
+    ):
+        """When the switch does report, the incident is observed, not inferred."""
+        rule = TopologyCascadeRule(
+            provider=mock_topology_provider,
+            config=CorrelationConfig(topology_cascade_enabled=True),
+        )
+
+        groups = await rule.evaluate(cascade_events_same_site)
+
+        assert len(groups) == 1
+        assert groups[0].inferred_root is False
+        assert groups[0].root_events, "an observed root keeps its own evidence"
+
+    @pytest.mark.asyncio
+    async def test_unknown_parent_yields_nothing(self, mock_topology_provider):
+        """Leaves with no topology parent must not be invented one."""
+        now = datetime.utcnow()
+        events = [
+            self._leaf("l1", "ap-unknown-1", now),
+            self._leaf("l2", "ap-unknown-2", now + timedelta(seconds=3)),
+        ]
+        rule = TopologyCascadeRule(
+            provider=mock_topology_provider,
+            config=CorrelationConfig(topology_cascade_enabled=True),
+        )
+
+        assert await rule.evaluate(events) == []
+
+    @pytest.mark.asyncio
+    async def test_children_of_different_parents_split(self, mock_topology_provider):
+        now = datetime.utcnow()
+        events = [
+            self._leaf("a1", "ap-nyc-A1", now),
+            self._leaf("a2", "ap-nyc-A2", now + timedelta(seconds=2)),
+            self._leaf("b1", "ap-sfo-101", now + timedelta(seconds=4)),
+            self._leaf("b2", "ap-sfo-102", now + timedelta(seconds=6)),
+        ]
+        rule = TopologyCascadeRule(
+            provider=mock_topology_provider,
+            config=CorrelationConfig(topology_cascade_enabled=True),
+        )
+
+        groups = await rule.evaluate(events)
+
+        roots = {g.root_device_id for g in groups}
+        assert roots == {"core-switch-A", "core-switch-01"}
+        assert all(g.inferred_root for g in groups)

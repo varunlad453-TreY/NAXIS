@@ -528,6 +528,59 @@ class DatabaseTopologyProvider:
 
         return result
 
+    async def get_parent_map(self, device_ids: Set[str]) -> Dict[str, str]:
+        """
+        For each device_id, find its direct parent in the links table.
+
+        Returns { child_device_id: parent_device_id }, using the caller's own
+        device_id spelling as the key so the cascade rule can match events
+        without re-resolving. Parents are returned in device_id space.
+
+        This is what lets a cascade be rooted at a device that never emitted an
+        event — an LLDP-discovered switch has no telemetry of its own, so it can
+        only ever be identified as the shared parent of its children.
+        """
+        if not device_ids or not db.pool:
+            return {}
+
+        resolved = await self.batch_resolve_node_ids(device_ids)
+        node_ids = [nid for nid in resolved.values() if nid]
+        if not node_ids:
+            return {}
+
+        try:
+            rows = await db.fetch(
+                """
+                SELECT parent_node_id, child_node_id
+                FROM links
+                WHERE child_node_id = ANY($1)
+                """,
+                node_ids,
+            )
+        except Exception:
+            logger.warning("get_parent_map link query failed", exc_info=True)
+            return {}
+
+        if not rows:
+            return {}
+
+        parent_of_node: Dict[str, str] = {
+            row["child_node_id"]: row["parent_node_id"] for row in rows
+        }
+        node_to_device: Dict[str, str] = {
+            nid: dev_id for dev_id, nid in resolved.items() if nid
+        }
+
+        result: Dict[str, str] = {}
+        for device_id, node_id in resolved.items():
+            parent_node = parent_of_node.get(node_id) if node_id else None
+            if not parent_node:
+                continue
+            result[device_id] = node_to_device.get(
+                parent_node, node_id_to_device_id(parent_node)
+            )
+        return result
+
     async def get_all_descendants(
         self, device_id: str, max_depth: int = 5
     ) -> List[str]:

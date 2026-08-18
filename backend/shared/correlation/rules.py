@@ -487,6 +487,17 @@ class TopologyProvider(Protocol):
         """
         ...
 
+    async def get_parent_map(
+        self, device_ids: Set[str]
+    ) -> Dict[str, str]:
+        """
+        Given device_ids (from events), return {child_device_id: parent_device_id}.
+
+        Inverse of get_parent_child_map, and the only way to root a cascade at a
+        device that never reported for itself.
+        """
+        ...
+
 
 @dataclass
 class CascadeGroup:
@@ -497,11 +508,14 @@ class CascadeGroup:
       - root_events: events on the infrastructure device that failed
       - symptom_events: events on leaf devices that failed as a consequence
       - root_device_id: the infrastructure device causing the cascade
+      - inferred_root: the root device produced no event of its own; it was
+        identified purely as the common topology parent of the symptoms
     """
 
     root_events: List[UnifiedEvent]
     symptom_events: List[UnifiedEvent]
     root_device_id: str
+    inferred_root: bool = False
 
     @property
     def total_events(self) -> int:
@@ -573,17 +587,82 @@ class TopologyCascadeRule:
         # Separate infrastructure vs leaf events
         infra_events, leaf_events = self._separate_by_device_type(group_events)
 
-        if not infra_events:
+        # No provider configured — no cascade possible without data
+        if not self._provider:
             return []
 
-        # Topology-aware mode: only source of truth when provider is configured
-        if self._provider:
-            return await self._evaluate_with_topology(
+        if infra_events:
+            cascades = await self._evaluate_with_topology(
                 infra_events, leaf_events, group_events
             )
+            if cascades:
+                return cascades
 
-        # No provider configured — no cascade possible without data
-        return []
+        # Nothing rooted at a device that reported for itself. Fall back to the
+        # common parent of the symptoms: a switch that dies takes its APs with
+        # it and, being dead (or LLDP-only with no telemetry at all), never
+        # emits an event. Requiring a root event meant these — the majority of
+        # real cascades — produced N unrelated incidents instead of one.
+        return await self._evaluate_inferred_parents(group_events)
+
+    async def _evaluate_inferred_parents(
+        self, group_events: List[UnifiedEvent]
+    ) -> List[CascadeGroup]:
+        """Group events by their common topology parent when the parent is silent.
+
+        The resulting CascadeGroup has no root_events and is flagged
+        inferred_root, so downstream consumers can tell "the switch told us it
+        failed" from "we concluded the switch failed".
+        """
+        if not self._provider or not hasattr(self._provider, "get_parent_map"):
+            return []
+
+        device_ids = {
+            e.device.device_id
+            for e in group_events
+            if e.device and e.device.device_id
+        }
+        if len(device_ids) < 2:
+            return []
+
+        try:
+            parent_map = await self._provider.get_parent_map(device_ids)
+        except Exception:
+            logger.warning("get_parent_map failed", exc_info=True)
+            return []
+
+        if not parent_map:
+            return []
+
+        from collections import defaultdict
+
+        by_parent: Dict[str, List[UnifiedEvent]] = defaultdict(list)
+        for event in group_events:
+            dev_id = event.device.device_id if event.device else None
+            parent = parent_map.get(dev_id) if dev_id else None
+            # A device that is itself the parent must not become its own symptom.
+            if parent and parent != dev_id:
+                by_parent[parent].append(event)
+
+        cascades: List[CascadeGroup] = []
+        for parent_id, symptom_events in by_parent.items():
+            distinct_children = {
+                e.device.device_id for e in symptom_events if e.device and e.device.device_id
+            }
+            # One affected child is not a cascade — it is just that device's own
+            # problem, and blaming the upstream switch would be wrong.
+            if len(distinct_children) < 2:
+                continue
+            cascades.append(
+                CascadeGroup(
+                    root_events=[],
+                    symptom_events=symptom_events,
+                    root_device_id=parent_id,
+                    inferred_root=True,
+                )
+            )
+
+        return cascades
 
     async def _evaluate_with_topology(
         self,

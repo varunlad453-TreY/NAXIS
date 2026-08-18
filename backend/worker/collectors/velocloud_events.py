@@ -32,8 +32,16 @@ from shared.models.event import (
 
 try:
     from backend.shared.database.identity import IdentityResolver
+    from backend.worker.collectors.velocloud_errors import (
+        VeloCloudApiError,
+        raise_on_vco_error,
+    )
 except ImportError:  # pragma: no cover - supports both entry-point styles
     from shared.database.identity import IdentityResolver
+    from worker.collectors.velocloud_errors import (
+        VeloCloudApiError,
+        raise_on_vco_error,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -91,15 +99,11 @@ class VelocloudEventsCollector:
         return events
 
     async def _fetch_enterprise_id(self, client: httpx.AsyncClient) -> Optional[int]:
-        try:
-            r = await client.post(
-                f"{self._base_url}/portal/rest/enterprise/getEnterprise", json={}
-            )
-            r.raise_for_status()
-            return r.json().get("id")
-        except Exception as exc:
-            logger.error("VeloCloud events: failed to get enterprise ID: %s", exc)
-            return None
+        r = await client.post(
+            f"{self._base_url}/portal/rest/enterprise/getEnterprise", json={}
+        )
+        r.raise_for_status()
+        return raise_on_vco_error(r.json(), "getEnterprise").get("id")
 
     @retry(
         retry=retry_if_exception_type(httpx.TransportError),
@@ -135,7 +139,9 @@ class VelocloudEventsCollector:
                     json=payload,
                 )
                 r.raise_for_status()
-                body = r.json()
+                body = raise_on_vco_error(r.json(), "getEnterpriseEvents")
+            except VeloCloudApiError:
+                raise
             except Exception as exc:
                 logger.error("VeloCloud events fetch failed page %d: %s", page + 1, exc)
                 break

@@ -148,6 +148,10 @@ class Settings(BaseSettings):
     )
 
     # Correlation
+    incident_stale_hours: int = Field(
+        default=48,
+        description="Auto-resolve open incidents with no new evidence for this many hours (0 = never)",
+    )
     correlation_time_window: int = Field(default=300, description="Correlation time window in seconds")
     correlation_min_events: int = Field(default=2, description="Minimum events to form an incident")
     correlation_topology_cascade: bool = Field(

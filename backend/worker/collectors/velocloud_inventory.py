@@ -23,8 +23,10 @@ from shared.models.collector_outcome import CollectorOutcome
 
 try:
     from backend.shared.database.identity import IdentityResolver
+    from backend.worker.collectors.velocloud_errors import raise_on_vco_error
 except ImportError:  # pragma: no cover - supports both entry-point styles
     from shared.database.identity import IdentityResolver
+    from worker.collectors.velocloud_errors import raise_on_vco_error
 
 logger = logging.getLogger(__name__)
 
@@ -77,16 +79,14 @@ class VelocloudInventoryCollector:
         return outcome
 
     async def _fetch_enterprise(self, client: httpx.AsyncClient) -> Dict:
-        try:
-            resp = await client.post(
-                f"{self._base_url}/portal/rest/enterprise/getEnterprise",
-                json={},
-            )
-            resp.raise_for_status()
-            return resp.json()
-        except Exception as exc:
-            logger.error("Failed to fetch VeloCloud enterprise: %s", exc)
-            return {}
+        resp = await client.post(
+            f"{self._base_url}/portal/rest/enterprise/getEnterprise",
+            json={},
+        )
+        resp.raise_for_status()
+        # Propagates VeloCloudApiError on an auth failure so collect() reports
+        # error rather than success-with-zero-rows.
+        return raise_on_vco_error(resp.json(), "getEnterprise")
 
     @retry(
         retry=retry_if_exception_type(httpx.TransportError),
@@ -97,21 +97,17 @@ class VelocloudInventoryCollector:
     async def _fetch_edges(
         self, client: httpx.AsyncClient, enterprise_id: Any
     ) -> List[Dict]:
-        try:
-            payload: Dict[str, Any] = {"with": ["site", "recentLinks"]}
-            if enterprise_id is not None:
-                payload["enterpriseId"] = enterprise_id
+        payload: Dict[str, Any] = {"with": ["site", "recentLinks"]}
+        if enterprise_id is not None:
+            payload["enterpriseId"] = enterprise_id
 
-            resp = await client.post(
-                f"{self._base_url}/portal/rest/enterprise/getEnterpriseEdges",
-                json=payload,
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            return data if isinstance(data, list) else []
-        except Exception as exc:
-            logger.error("Failed to fetch VeloCloud edges: %s", exc)
-            return []
+        resp = await client.post(
+            f"{self._base_url}/portal/rest/enterprise/getEnterpriseEdges",
+            json=payload,
+        )
+        resp.raise_for_status()
+        data = raise_on_vco_error(resp.json(), "getEnterpriseEdges")
+        return data if isinstance(data, list) else []
 
 
 def _build_rows(edges: List[Dict]) -> List[Dict[str, Any]]:

@@ -36,7 +36,7 @@ from shared.database.correlation_telemetry import (
     save_correlation_telemetry,
 )
 from shared.database.events import insert_events, link_events_to_incident
-from shared.database.incidents import upsert_incident
+from shared.database.incidents import resolve_stale_incidents, upsert_incident
 from shared.database.redis import get_redis_client
 from shared.database.topology import DatabaseTopologyProvider
 from shared.models.collector_outcome import CollectorOutcome
@@ -262,6 +262,23 @@ class WorkerDaemon:
 
         # Data retention cleanup (every 24 hours)
         if (now_utc - self._last_retention).total_seconds() >= 86400:
+            # Stamp *before* running. run_retention() is batched but can still be
+            # cancelled by the pass watchdog on a large backlog; CancelledError is
+            # a BaseException, so a post-hoc stamp would be skipped and every
+            # subsequent pass would retry retention forever and time out.
+            self._last_retention = now_utc
+            # Sweep stale open incidents before pruning, so newly-resolved rows
+            # become eligible for the resolved-incident retention pass.
+            if _settings.incident_stale_hours > 0:
+                try:
+                    stale = await resolve_stale_incidents(_settings.incident_stale_hours)
+                    if stale:
+                        logger.info(
+                            "Auto-resolved %d stale incident(s) with no evidence for >%dh",
+                            stale, _settings.incident_stale_hours,
+                        )
+                except Exception:
+                    logger.exception("Stale incident sweep failed")
             try:
                 result = await run_retention(
                     days=7,
@@ -270,9 +287,11 @@ class WorkerDaemon:
                     raw_event_days=_settings.raw_event_debug_days,
                 )
                 logger.info("Retention cleanup: %s", result)
+                if isinstance(result, dict) and result.get("truncated"):
+                    # Work remains — retry on the next pass instead of waiting 24h.
+                    self._last_retention = now_utc - timedelta(seconds=86400)
             except Exception:
                 logger.exception("Retention cleanup failed")
-            self._last_retention = now_utc
 
         logger.debug("Worker pass complete")
 

@@ -7,7 +7,9 @@
 .graphify/
 graphify-out/
 docs/
-schemas/
-scripts/
+# schemas/ and scripts/ are deliberately NOT excluded: the image ships
+# scripts/migrate.py plus the SQL it applies, because
+# docker-entrypoint-initdb.d only fires on an empty data directory and does not
+# exist at all on a managed Postgres.
 .env
 nul

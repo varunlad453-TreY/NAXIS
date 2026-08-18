@@ -1,3 +1,13 @@
+> **Appendix (2026-08-18).** Hosting is **Azure with a managed PostgreSQL** — see
+> `AZURE_HOSTING.md`, which supersedes §8 wherever they disagree. §9's `/incidents/stats`
+> note below is now scoped: `by_severity`, `distinct_sites`, `distinct_devices` and
+> `avg_confidence` count **active** incidents only, because the KPI tiles sit beside
+> `active` and previously read "Critical 61,749" next to "Active 3,652". Test counts,
+> DB size, and the RDS-blocker list in the 08-04 appendix are all stale — the
+> measured table in `PLAN_GAP.md` §7 is authoritative.
+>
+> ---
+>
 > **Appendix (2026-08-04) — current-state bridge.** Appended by the Naxis team (original text untouched); see `PLAN_GAP.md` for the full gap map and execution plan.
 >
 > **Numbers that changed since this was written:**
@@ -463,17 +473,22 @@ TLS verification is on for all vendor HTTP clients, and datastore ports are boun
 to loopback rather than `0.0.0.0` so Postgres and Redis are not LAN-reachable.
 
 Outstanding and known:
-- Credentials live in a plaintext `config/.env`; moving to AWS Secrets Manager
+- Credentials live in a plaintext `config/.env`; moving to **Azure Key Vault** via the
+  VM's managed identity. Nothing reads Key Vault today.
 - A rotated development API key exists in git history and would need a history
   rewrite to remove
 - No rate limiting on the API
-- The database pool passes no `ssl=`, which must be fixed before RDS
+- ~~The database pool passes no `ssl=`~~ — fixed; `ssl='require'` when
+  `POSTGRES_SSL=true`. Note it does not verify the server certificate.
+- `raw_event` payloads inside the 7-day debug window still carry some PII
+  (`hostnames`, `user_agent`, `admin_name`); ingest-time redaction is still limited to
+  URL passwords
 
 ### What is the blast radius if the Naxis server is compromised?
 
 Read-only credentials to eight platforms — an attacker gets a complete map of the
 estate: every device, address, topology and weakness. That is why credentials move
-to Secrets Manager, why there is no public ingress, and why Phase 4's diagnostic
+to Key Vault, why there is no public ingress, and why Phase 4's diagnostic
 actions are RBAC-gated and audited.
 
 Naxis holds no configuration-change permission on any device in any phase, so the
@@ -493,6 +508,11 @@ a wrong answer can be checked against the row it claims to be based on.
 ---
 
 # 8. Network and hosting
+
+> Hosting is **Azure with a managed PostgreSQL**. `AZURE_HOSTING.md` is authoritative
+> for resources, SKUs, networking and cost; this section covers the reasoning that is
+> provider-independent. Where it still says RDS / Secrets Manager / CloudWatch, read
+> Flexible Server / Key Vault / Azure Monitor.
 
 ### Why cloud, given half the estate is on-prem?
 
@@ -514,8 +534,10 @@ Inbound: 443 from corporate CIDRs (UI/API), 22 from the bastion. Nothing else. N
 public ingress. Ports 8000 and 3000 stay on loopback behind the reverse proxy.
 
 Outbound: 443 to six cloud controllers, 443 to four on-prem controllers over
-multi-cloud connect, 5432 to RDS, 443 to Secrets Manager and CloudWatch, plus
-DNS 53, NTP 123, OS mirrors and registry.
+multi-cloud connect, 5432 to the managed database's private IP, 443 to Key Vault and
+Azure Monitor private endpoints, plus DNS 53, NTP 123, OS mirrors and registry. The
+cloud-controller egress needs a **stable source IP** (NAT Gateway) because several
+vendors allowlist it.
 
 Optional, only if we ingest device telemetry directly: syslog 514/UDP and
 1514/TCP, SNMP traps 162/UDP, SNMP polling 161/UDP.
@@ -528,23 +550,38 @@ incidents. It is a correctness dependency, not hygiene.
 
 ### Sizing?
 
-EC2 2 vCPU / 8 GB. Measured container usage: web 302 MB, worker 231 MB, api
-71 MB — ~600 MB total. Headroom is for eight concurrent pollers and the
-correlation cycle.
+**Azure, not AWS** — full requirement in `AZURE_HOSTING.md`.
 
-RDS db.t4g.small, 20 GB. That covers all five phases at ~400 MB steady state.
-Multi-AZ not required — this is an operations tool, not a revenue system; RTO of
+Azure VM Standard_B2ms, 2 vCPU / 8 GB. Measured container usage: web 302 MB, worker
+231 MB, api 71 MB — ~600 MB total. Headroom is for eight concurrent pollers and the
+correlation cycle. B2s (4 GB) will OOM the Next.js build.
+
+Azure Database for PostgreSQL Flexible Server, Burstable **B2s** (2 vCore / 4 GiB),
+32 GiB. Not B1ms: `api` runs `--workers 2` and each process opens its own pool of up
+to 10, plus the worker's pool and the migration job — 31 connections at peak against
+a B1ms ceiling of about 35, which leaves nothing for a `psql` session or a monitoring
+probe. HA disabled: this is an operations tool, not a revenue system, and an RTO of
 hours is acceptable.
 
-### Three blockers for the RDS move
+### Blockers for the managed-Postgres move
 
-1. `create_pool()` in `shared/database/client.py` passes no `ssl=`; RDS requires
-   TLS
-2. `dns: 8.8.8.8` is hardcoded on api and worker in compose, which breaks RDS
-   private DNS resolution
-3. Schema application is Docker-only (`docker-entrypoint-initdb.d`), which does
-   not exist on RDS; `003_telemetry_expansion.sql` has zero `IF NOT EXISTS`
-   guards so it cannot be re-run. Needs a migration runner.
+1. ~~`create_pool()` passes no `ssl=`~~ — **fixed.** `ssl='require'` when
+   `POSTGRES_SSL=true` or `ENVIRONMENT=production`. It encrypts but does not verify the
+   server certificate; acceptable behind a private endpoint, tighten with an
+   `ssl.SSLContext` if policy requires.
+2. `dns: 8.8.8.8` hardcoded in compose — **still open.** Present on `worker`/`web` in
+   `docker-compose.yml` and `worker`/`api`/`web` in `docker-compose.dev.yml`. Breaks
+   private-DNS resolution for the database FQDN and every on-prem controller name.
+3. ~~Schema application is Docker-only~~ — **fixed.** `scripts/migrate.py` tracks applied
+   files in `schema_migrations`, and it plus `schemas/` are copied into the image, so
+   `make migrate` works against a managed server.
+4. New: `NEXT_PUBLIC_API_URL` is inlined into the browser bundle at build time — a
+   hosted deployment must be **rebuilt** with the real URL.
+5. New: Key Vault is not wired into `settings.py`; credentials are still plaintext
+   `config/.env`.
+6. New: `DATABASE_URL` must be set explicitly. `client.py` reads it directly and never
+   consults `settings.postgres_url`, so setting only `POSTGRES_HOST` silently leaves the
+   pool pointed at localhost.
 
 ---
 
@@ -552,14 +589,20 @@ hours is acceptable.
 
 ### Does this scale to the full estate?
 
-Today: 2,731 topology nodes, 3,442 edges, 2,054 inventory rows across two live
-vendors. Eight vendors is roughly 3–4× that — still small for Postgres.
+Today (2026-08-18): 2,750 topology nodes, 2,258 edges, 1,110 switch→AP links, 2,059
+inventory rows, 2,059 canonical devices behind 4,021 vendor identities, 153 sites —
+across two live vendors. Eight vendors is roughly 3–4× that; still small for Postgres.
 
-The real constraint is not data volume but **API fan-out**. Collectors currently
-run sequentially; `mist-inventory` peaks at 252 s and `velocloud-links` at 163 s.
-Eight vendors serially risks the 600 s watchdog. Fix is concurrent execution
-inside the existing worker — `asyncio.gather` with a semaphore and per-collector
-timeouts. Same process, same image.
+The real constraint is not data volume but **API fan-out**. Collectors run
+sequentially; `mist-inventory` peaks at 252 s and `velocloud-links` at 163 s. Eight
+vendors serially risks the 600 s watchdog. Fix is concurrent execution inside the
+existing worker — `asyncio.gather` with a semaphore and per-collector timeouts. Same
+process, same image.
+
+Note the watchdog has already fired in anger, though not for fan-out: an unbounded
+retention statement could not complete inside the budget and, because cancellation
+skipped its own last-run stamp, it was retried every pass indefinitely. Anything that
+can take unbounded time inside `run_once()` needs a batch size and its own budget.
 
 ### What happens when a vendor API is down?
 
@@ -567,6 +610,15 @@ The collector returns an error outcome, the ledger records it, the other
 collectors continue. After three failures in 30 minutes an alert fires. The UI
 shows that vendor's data as stale with its last-success time. Nothing crashes and
 no partial state is written.
+
+This only holds if the collector actually reports the failure. The VeloCloud
+Orchestrator answers an invalid API token with **HTTP 200** and a JSON-RPC error
+envelope (`{"error": {"code": -32000, "message": "tokenError [Invalid API Token]"}}`),
+so `raise_for_status()` passed, every VeloCloud collector reported `success` with
+`rows_written=0`, and the alerting path above never fired despite the vendor being
+completely unreachable. Every VCO response now goes through an envelope check
+(`worker/collectors/velocloud_errors.py`). Treat "success with zero rows" as a smell
+worth checking for in any new vendor integration.
 
 ### What happens when Redis is down?
 
@@ -578,7 +630,7 @@ polling.
 
 `worker_heartbeat` per cycle, `collector_run_ledger` per collector run, a liveness
 file for the container healthcheck, `correlation_telemetry` for engine stats, and
-`/health` for the API. In AWS, CloudWatch alarms on worker liveness, disk, DB
+`/health` for the API. In Azure, Monitor alerts on worker liveness, disk, DB
 connections and API 5xx.
 
 The gap: a dead worker means silently stale data, which is why the liveness alarm
@@ -586,12 +638,23 @@ matters more than the API one.
 
 ### Test coverage?
 
-418 tests, 418 passing. Coverage is strongest where it matters — 103 tests on
-the correlation engine, 138 on VeloCloud normalisation, 19 on retention + event
-dedup + telemetry guards, 11 on the full collector→event→incident pipeline.
+542 tests: **540 passing, 2 failing** as of 2026-08-18. Both failures predate the
+current work — `test_rca_engine::test_generate_rca_enforces_citations` and
+`test_topology_api::TestGetSiteInternalTopology::test_not_found_returns_empty`.
+Coverage is strongest where it matters: 110 tests on the correlation engine, 138 on
+VeloCloud normalisation, retention batching + event dedup + telemetry guards, and the
+full collector→event→incident pipeline.
 
-Run with `PYTHONPATH=<repo>:<repo>/backend` — `conftest.py` imports
-`backend.shared.correlation`.
+Run them in the container — **host Python is 3.8 and cannot parse this code** (it uses
+`tuple[...]` builtin generics), and the tests are not in the runtime image:
+
+```
+docker run --rm -v "$PWD":/repo -w /repo -e PYTHONPATH=/repo:/repo/backend \
+  naxis-api python -m pytest backend/tests/ -q
+```
+
+`make test` does exactly this. `conftest.py` imports `backend.shared.correlation`, hence
+the two-entry `PYTHONPATH`.
 
 ---
 

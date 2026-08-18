@@ -888,6 +888,24 @@ def _raise_for_status(resp: httpx.Response) -> None:
             detail = resp.text
         raise VeloCloudApiError(resp.status_code, str(detail))
 
+    # The VCO answers an invalid or expired API token with HTTP 200 and a
+    # JSON-RPC error envelope. Without this check the caller sees an empty
+    # result, reports success with zero rows, and the outage stays invisible
+    # in the collector ledger.
+    try:
+        body = resp.json()
+    except Exception:
+        return
+    if isinstance(body, dict):
+        error = body.get("error")
+        if isinstance(error, dict):
+            raise VeloCloudApiError(
+                resp.status_code,
+                f"[{error.get('code')}] {error.get('message') or error}",
+            )
+        if error:
+            raise VeloCloudApiError(resp.status_code, str(error))
+
 
 def _map_vc_severity(level: str) -> EventSeverity:
     """Map VeloCloud event level to EventSeverity."""

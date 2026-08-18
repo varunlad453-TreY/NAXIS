@@ -94,6 +94,14 @@ class Incident(BaseModel):
         default_factory=list,
         description="Leaf device IDs that failed as downstream consequences of the root cause",
     )
+    inferred_root: bool = Field(
+        default=False,
+        description=(
+            "True when the root device produced no event of its own and was identified "
+            "purely as the common topology parent of the symptoms. Operators must be "
+            "able to distinguish a reported failure from a deduced one."
+        ),
+    )
 
     # Correlation
     related_event_ids: List[str] = Field(
@@ -301,6 +309,7 @@ class Incident(BaseModel):
             "affected_clients": list(self.affected_clients),
             "root_device_ids": list(self.root_device_ids),
             "symptom_device_ids": list(self.symptom_device_ids),
+            "inferred_root": bool(self.inferred_root),
             "related_event_ids": list(self.related_event_ids),
             "probable_cause": self.probable_cause,
             "confidence_score": float(self.confidence_score),

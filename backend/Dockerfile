@@ -24,6 +24,11 @@ COPY backend/api /app/api
 COPY backend/worker /app/worker
 COPY backend/config /app/config
 COPY backend/main.py /app/main.py
+# The migration runner and the SQL it applies. docker-entrypoint-initdb.d only
+# fires on an empty data directory and does not exist on a managed Postgres, so
+# the schema has to be applicable from inside the image.
+COPY scripts /app/scripts
+COPY schemas /app/schemas
 
 EXPOSE 8000
 
@@ -55,6 +60,11 @@ COPY backend/api /app/api
 COPY backend/worker /app/worker
 COPY backend/config /app/config
 COPY backend/main.py /app/main.py
+# The migration runner and the SQL it applies. docker-entrypoint-initdb.d only
+# fires on an empty data directory and does not exist on a managed Postgres, so
+# the schema has to be applicable from inside the image.
+COPY scripts /app/scripts
+COPY schemas /app/schemas
 
 RUN useradd -m -u 1000 naxis && chown -R naxis:naxis /app
 USER naxis

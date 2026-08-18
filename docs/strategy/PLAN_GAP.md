@@ -215,7 +215,16 @@ Each work package lists: goal, tasks (with files), the gate that means "done", a
 - **4.2 Roles viewer / operator / admin** enforced **server-side** — **DONE** (`require_role` FastAPI dependency injection).
 - **4.3 `audit_log`** on every gear-touching call — **DONE** (`013_audit_log.sql` schema + `audit.py` database service).
 - **4.4 Shared `X-API-Key` demotes to machine clients only** — **DONE** (OIDC Bearer tokens enforced for user sessions, API key for machine clients).
-- **4.5 AWS:** — **DONE** (`ssl='require'` on `client.py`, removed `dns:` from compose, `build:` added to compose `api`, `scripts/migrate.py` idempotent migration runner).
+- **4.5 Hosting:** — **PARTIAL, and the target changed to Azure** (see `AZURE_HOSTING.md`).
+  Done: `ssl='require'` on `client.py`, `build:` added to compose `api`,
+  `scripts/migrate.py` idempotent runner (now also copied into the image, so
+  `make migrate` works against a managed server).
+  **Not done — this claim was wrong:** `dns:` was NOT removed. `docker-compose.yml`
+  still sets `dns: 8.8.8.8 / 1.1.1.1` on `worker` and `web`; `docker-compose.dev.yml`
+  sets it on `worker`, `api` and `web`. Hardcoded public DNS cannot resolve a managed
+  database's private FQDN or any on-prem controller name.
+  Also outstanding: Key Vault is not wired into `settings.py`, and
+  `NEXT_PUBLIC_API_URL` is baked into the browser bundle at build time.
 - **Gate:** reachable by internal DNS over TLS; every controller reachable; Keycloak login + roles verified server-side; audit rows present; nothing publicly exposed. **(PASSED - WP-4 IS COMPLETE)**
 
 ---
@@ -269,7 +278,37 @@ Each work package lists: goal, tasks (with files), the gate that means "done", a
 
 ---
 
-## 7. Current-numbers snapshot (measured 2026-08-05)
+## 7. Current-numbers snapshot
+
+### Measured 2026-08-18
+
+The 08-05 column below did not survive contact with a running system. Several values
+were point-in-time results of a manual truncation rather than steady state, and the
+mechanisms meant to hold them there were not working.
+
+| Fact | Claimed 08-05 | Measured 08-18 (before this pass) | After this pass |
+|---|---|---|---|
+| Backend tests | 432/432 pass | 531 collected, **3 failing** | **540 pass, 2 fail** (both pre-existing: `test_rca_engine`, `test_topology_api`) |
+| Database size | < 1 GB | **28 GB** | **1.87 GB** |
+| Events | 0 | **4,583,542** (4.28M older than 48h) | **311,097** (2-day window) |
+| `raw_event` | 0 MB | populated on **every** row | inside the 7-day debug window |
+| Incidents | 0 | **61,744, all `open`, none ever resolved** | 61,749 total / **3,652 open** |
+| Identity resolution | ~100% | **0%** for current events (Mist's third id form was registered nowhere) | **~99.8%** (1,069/1,071) |
+| `devices` | — | **4,021 rows for 1,966 distinct MACs** | **2,059** + 4,021 vendor aliases, `uq_devices_mac` enforced |
+| `sites` | — | **2,055 rows for 153 real sites**, still growing (one site: 345 rows) | **153**, `site_identities` enforces `UNIQUE (vendor, vendor_site_id)` |
+| `links` (switch→AP) | 009_links applied | **0 ever built** from the collector path — the query read two non-existent columns and the failure was swallowed at DEBUG | **1,109** |
+| `inventory.props` | WP-2.9 "independent of events" | **empty on all 1,966 Mist rows**; 1,109 LLDP uplinks were fetched every pass and discarded | **1,106 persisted**, so the events fallback is now genuinely a fallback |
+| Cascade incidents | gate PASSED | **0** — three stacked defects, see `ROADMAP.md` appendix | mechanism verified on real data; still 0 live, pending a real simultaneous outage |
+| Worker stability | — | **600 s watchdog cancelled every pass**; topology sync failed every pass | clean passes, 0 FK/watchdog errors |
+
+Vendors actually enabled: Mist and VeloCloud only. **The VeloCloud API token is invalid**
+(`tokenError [Invalid API Token]`) — every VeloCloud collector reported `success` with
+`rows_written=0` until the HTTP-200-plus-error-envelope case was handled, so the outage
+was invisible in the ledger. DNAC, Arista WLC, Aruba Central, ClearPass, Cloudflare,
+Netskope, SNMP and syslog are all disabled, so WP-3.2/3.5's "every platform reporting"
+gate is not demonstrable on the live system.
+
+### Original snapshot (measured 2026-08-05)
 
 | Fact | Manager doc (07-31) | WP-0/WP-1 state (08-05) | Next WP |
 |---|---|---|---|
