@@ -22,6 +22,7 @@ import sys
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
+from typing import List
 
 from config.settings import get_settings
 from shared.correlation import CorrelationConfig, CorrelationEngine
