@@ -73,15 +73,27 @@ class LocationService:
         self._rrm_overrides: Dict[str, Dict[str, Any]] = {}
 
     async def get_location_tree(self) -> List[LocationNode]:
-        """Constructs recursive tree of physical locations with aggregated health scores."""
+        """Constructs recursive tree of physical locations with aggregated health scores.
+
+        Health and device counts are resolved with two set-based queries rather
+        than per-location lookups. The previous version awaited
+        `_get_location_health` + `_get_location_device_count` inside the loop,
+        and `_get_location_health` itself fanned out into AP placement lookups
+        with a per-AP event query — roughly nine sequential round-trips per
+        location. Across 153 locations the endpoint took over 40 seconds, so the
+        NOC page's fetch never resolved and the UI showed nothing at all.
+        """
         all_locs = await get_all_locations()
+        loc_ids = [l["location_id"] for l in all_locs if l.get("location_id")]
+
+        health_by_id = await self._get_location_health_bulk(loc_ids)
+        counts_by_id = await self._get_location_device_counts_bulk(loc_ids)
 
         nodes_by_id: Dict[str, LocationNode] = {}
         for l in all_locs:
             loc_id = l["location_id"]
-            raw_name = l.get("name") or ""
-            health = await self._get_location_health(loc_id, loc_name=raw_name)
-            dev_count = await self._get_location_device_count(loc_id)
+            health = health_by_id.get(loc_id, "healthy")
+            dev_count = counts_by_id.get(loc_id, 0)
             nodes_by_id[loc_id] = LocationNode(
                 location_id=loc_id,
                 name=_clean_location_name(l["name"]),
@@ -348,19 +360,93 @@ class LocationService:
 
 
 
-    async def _get_location_device_count(self, location_id: str) -> int:
-        query = """
-            SELECT COUNT(*) as cnt
-            FROM topology_nodes
-            WHERE site_id = $1 OR raw_event->>'site_id' = $1;
+    async def _get_location_health_bulk(self, location_ids: List[str]) -> Dict[str, str]:
+        """Worst recent event severity per location, in one query.
+
+        Matches on the canonical site_key and on every vendor site id mapped to
+        it, so a location resolves whether events carry the canonical key or the
+        vendor's own id.
         """
+        result: Dict[str, str] = {}
+        if not location_ids or not db.pool:
+            return result
         try:
-            row = await db.fetchrow(query, location_id)
-            if row:
-                return int(row["cnt"])
-        except Exception:
-            pass
-        return 12
+            rows = await db.fetch(
+                """
+                WITH wanted AS (
+                    SELECT unnest($1::text[]) AS location_id
+                ),
+                keys AS (
+                    SELECT w.location_id, w.location_id AS match_id FROM wanted w
+                    UNION
+                    SELECT w.location_id, si.vendor_site_id
+                      FROM wanted w
+                      JOIN site_identities si ON si.site_key = w.location_id
+                )
+                SELECT k.location_id,
+                       MAX(CASE lower(e.severity)
+                             WHEN 'critical' THEN 3
+                             WHEN 'major'    THEN 2
+                             WHEN 'warning'  THEN 2
+                             ELSE 1
+                           END) AS rank
+                FROM keys k
+                JOIN events e ON e.site_id = k.match_id
+                WHERE e.received_at > NOW() - INTERVAL '24 hours'
+                GROUP BY k.location_id
+                """,
+                location_ids,
+            )
+        except Exception as exc:
+            logger.warning("Bulk location health lookup failed: %s", exc)
+            return result
+
+        for row in rows:
+            rank = int(row["rank"] or 1)
+            result[row["location_id"]] = (
+                "critical" if rank >= 3 else "degraded" if rank == 2 else "healthy"
+            )
+        return result
+
+    async def _get_location_device_counts_bulk(self, location_ids: List[str]) -> Dict[str, int]:
+        """Device count per location, in one query.
+
+        The per-location version referenced `topology_nodes.raw_event`, a column
+        that does not exist, so it raised on every call, was swallowed by a bare
+        `except`, and returned a hardcoded 12 — every location reported twelve
+        devices regardless of reality.
+        """
+        result: Dict[str, int] = {}
+        if not location_ids or not db.pool:
+            return result
+        try:
+            rows = await db.fetch(
+                """
+                WITH wanted AS (
+                    SELECT unnest($1::text[]) AS location_id
+                ),
+                keys AS (
+                    SELECT w.location_id, w.location_id AS match_id FROM wanted w
+                    UNION
+                    SELECT w.location_id, si.vendor_site_id
+                      FROM wanted w
+                      JOIN site_identities si ON si.site_key = w.location_id
+                )
+                SELECT k.location_id, COUNT(DISTINCT n.node_id) AS cnt
+                FROM keys k
+                JOIN topology_nodes n ON n.site_id = k.match_id
+                WHERE n.node_type <> 'site'
+                GROUP BY k.location_id
+                """,
+                location_ids,
+            )
+        except Exception as exc:
+            logger.warning("Bulk location device count failed: %s", exc)
+            return result
+
+        for row in rows:
+            result[row["location_id"]] = int(row["cnt"] or 0)
+        return result
 
     async def _get_device_health(self, device_id: str) -> str:
         query = """
