@@ -58,7 +58,16 @@ _COUNT_QUERY = """
 
 def _row_to_summary(row) -> DeviceSummary:
     raw_props = row["props"]
-    props = json.loads(raw_props) if isinstance(raw_props, str) else (raw_props or None)
+    if isinstance(raw_props, str):
+        try:
+            props = json.loads(raw_props)
+        except Exception:
+            props = {}
+    elif isinstance(raw_props, dict):
+        props = raw_props
+    else:
+        props = {}
+
     return DeviceSummary(
         device_id=row["device_id"] or "",
         platform=row["platform"] or "",

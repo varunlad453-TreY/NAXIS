@@ -26,8 +26,8 @@ router = APIRouter(
 # Freshness thresholds (seconds)
 # ---------------------------------------------------------------------------
 # These determine when a collector is considered "stale" or "critical".
-_STALE_THRESHOLD = 300   # 5 minutes without a successful run
-_CRITICAL_THRESHOLD = 900  # 15 minutes
+_STALE_THRESHOLD = 600   # 10 minutes without a successful run
+_CRITICAL_THRESHOLD = 1800  # 30 minutes
 _MAX_FAILURES = 3        # consecutive failures before alerting
 
 

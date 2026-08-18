@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
-    "postgresql://naxis:naxis_password@localhost:5432/naxis",
+    "postgresql://naxis:naxis_dev@localhost:5432/naxis",
 )
 
 # asyncpg doesn't accept the SQLAlchemy-style +asyncpg scheme prefix

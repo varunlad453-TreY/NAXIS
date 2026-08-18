@@ -1,3 +1,32 @@
+> **Appendix (2026-08-18) — gate status, measured.**
+>
+> | Gate | Claimed | Measured 2026-08-18 |
+> |---|---|---|
+> | 1b identity ≥95% of device refs resolve | CLOSED | **~99.8%** (1,069/1,071) — but only after fixing MAC reconciliation; it was effectively **0%** for current events, since Mist events carry a third id form registered nowhere |
+> | 1a ingest <100 MB/day | CLOSED | Retention had never once completed; DB was back to **28 GB** / 4.58M events. Now 1.87 GB / 311k |
+> | Phase 2 "one incident with N suppressed symptoms" | PASSED | **Not met in production.** Mechanism verified on real data (a real switch with 2 real sibling APs yields 1 incident, `inferred_root=true`, 2 symptoms), but live cascade count is still 0 — see below |
+> | 1f AWS | DONE | Superseded by Azure; 2 of 3 blockers fixed, `dns:` still hardcoded |
+> | Test suite | 432/432 | **540 passing, 2 failing** (`test_rca_engine::test_generate_rca_enforces_citations`, `test_topology_api::test_not_found_returns_empty`) — both pre-existing |
+>
+> **Why the Phase 2 gate is still open.** Three defects were fixed in sequence, each
+> hidden behind the last: (1) site nodes wrote a `site_key` into `topology_nodes.canonical_key`,
+> which is FK'd to `devices`, so the whole graph rebuild aborted every pass; (2) the
+> physical-link query read `inventory.attributes` and `inventory.raw_data`, neither of
+> which exists, and the failure was swallowed at DEBUG — no switch→AP link had **ever**
+> been built from that path, now 1,109 are; (3) the cascade requires the root device to
+> emit its own event, but 962 of 1,109 links have an LLDP-only switch parent with no
+> telemetry at all, so it could never fire — an inferred-common-parent mode now roots an
+> incident at the shared parent and flags `inferred_root`.
+>
+> What remains is data, not code: eligible (`major`+) events currently arrive spread
+> across a **24-hour vendor-time window**, so only one same-site pair on different
+> devices falls inside a single 300 s correlation window. The cascade will fire on a
+> genuine simultaneous multi-AP outage. Note also that Mist's "Device Down" mapped to
+> `warning`, below the `MAJOR` correlation threshold — the single most important signal
+> in the estate never reached Stage 1 at all until it was raised to `MAJOR`.
+>
+> ---
+>
 > **Appendix (2026-08-05) — current-state bridge.** Full gap map + step-by-step execution plan: see `PLAN_GAP.md`.
 >
 > **Verified today (2026-08-05):**
@@ -95,17 +124,24 @@ need to know who pressed the button.
 
 **Gate:** Keycloak login works, roles enforced server-side, audit rows written.
 
-### 1f — AWS
+### 1f — Azure
 
-- RDS Postgres, Secrets Manager for 8 vendors' credentials, EC2 running the
+Hosting is Azure with a managed PostgreSQL, not AWS. Full requirement — SKUs,
+networking, Key Vault, cost, and the remaining code deltas — in `AZURE_HOSTING.md`.
+
+- Azure Database for PostgreSQL Flexible Server (Burstable B2s; B1ms cannot carry the
+  31 peak connections), Key Vault for 8 vendors' credentials, one VM running the
   existing compose file, reverse proxy terminating TLS.
-- Add `ssl=` to `create_pool()` in `backend/shared/database/client.py` — RDS
-  requires TLS and the pool passes none.
-- Remove `dns: 8.8.8.8` from `docker-compose.yml` — breaks RDS private DNS.
-- Real migration runner. `docker-entrypoint-initdb.d` does not exist on RDS and
-  `003_telemetry_expansion.sql` has zero `IF NOT EXISTS` guards.
-- Egress allowlist to 6 cloud controllers; on-prem reach over existing
-  multi-cloud connect.
+- ~~Add `ssl=` to `create_pool()`~~ — **done** (`ssl='require'` when `POSTGRES_SSL=true`).
+- ~~Real migration runner~~ — **done** (`scripts/migrate.py`, idempotent, in the image).
+- **Remove `dns: 8.8.8.8`** — still present on `worker`/`web` in `docker-compose.yml`
+  and `worker`/`api`/`web` in `docker-compose.dev.yml`. Breaks private DNS for the
+  database FQDN and every on-prem controller name.
+- **Rebuild the frontend with the real `NEXT_PUBLIC_API_URL`** — it is inlined into the
+  browser bundle at build time, so a runtime value never reaches the browser.
+- Wire Key Vault into `settings.py` (nothing reads it today).
+- Egress allowlist to 6 cloud controllers behind a NAT Gateway for a stable source IP;
+  on-prem reach over multi-cloud connect — **confirm the circuit terminates in Azure**.
 
 **Gate:** reachable at an internal DNS name over TLS, every controller reachable,
 nothing publicly exposed.

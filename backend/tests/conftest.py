@@ -486,6 +486,20 @@ class MockTopologyProvider:
     ) -> List[str]:
         return list(self._map.get(device_id, []))
 
+    async def get_parent_map(self, device_ids: Set[str]) -> Dict[str, str]:
+        """Inverse of the parent→children map.
+
+        Unlike get_parent_child_map this does NOT require the parent itself to
+        appear in device_ids — the whole point is to name a parent that never
+        emitted an event.
+        """
+        result: Dict[str, str] = {}
+        for parent, children in self._map.items():
+            for child in children:
+                if child in device_ids:
+                    result[child] = parent
+        return result
+
 
 @pytest.fixture
 def mock_topology_provider() -> MockTopologyProvider:

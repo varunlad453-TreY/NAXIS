@@ -1,3 +1,34 @@
+> **Appendix (2026-08-18) — measured corrections.**
+>
+> The retention numbers in the 2026-08-04 appendix below were aspirational, not actual.
+> Measured on 2026-08-18 **before** this pass: the database had grown back to **28 GB**
+> with **4,583,542 events**, 4,283,338 of them older than 48 hours, `raw_event`
+> populated on every row, and **61,744 incidents all `open`, none ever resolved**.
+>
+> Root cause: the daily retention pass issued one unbounded `UPDATE` over 4.28M
+> `raw_event` blobs. It could not finish inside the worker's 600 s per-pass watchdog,
+> and because `CancelledError` is a `BaseException` the "last run" timestamp was never
+> stamped — so every subsequent pass retried the same doomed statement, timed out, and
+> retention never completed once. `EVENT_RETENTION_DAYS` was also still `90`, which
+> contradicts the 24–48h buffer this document specifies, and `RAW_EVENT_DEBUG_DAYS` was
+> absent from `config/.env` entirely.
+>
+> Fixed: retention is batched (20k rows) under a 120 s budget that reports `truncated`
+> and resumes next pass; the timestamp is stamped *before* the attempt so a failure
+> cannot spin. `EVENT_RETENTION_DAYS=2`, `RAW_EVENT_DEBUG_DAYS=7`,
+> `INCIDENT_STALE_HOURS=48` are now set.
+>
+> Also added: incidents had **no way to close**. Auto-close was purely event-driven —
+> only a recovery event on the root device resolved one — so an incident whose recovery
+> event never arrived, or had aged out of the buffer, was immortal, and retention prunes
+> only `resolved` rows. `resolve_stale_incidents()` now sweeps open incidents with no
+> new evidence for `INCIDENT_STALE_HOURS`.
+>
+> **State after this pass:** DB **1.87 GB**, 311k events (2-day window), 3,652 open
+> incidents from 61,749 total, `devices` 2,059 / `sites` 153 after deduplication.
+>
+> ---
+>
 > **Appendix (2026-08-04) — current-state bridge.** Appended by the Naxis team (original text untouched); see `PLAN_GAP.md` for the gap map + execution plan.
 >
 > **Verified today:**
@@ -87,10 +118,17 @@ localization only — no trending, permanently.
 Steady state: ~400 MB, from 10 GB today. Ingest under 100 MB/day at eight
 vendors, from 2.5 GB/day at four.
 
-`EVENT_RETENTION_DAYS=90` is wired in `settings.py` and passed to the daily
-retention pass. `INCIDENT_RETENTION_DAYS=180` (resolved incidents only) and
-`RAW_EVENT_DEBUG_DAYS=7` are also wired. The `created_at` bug in
-`retention.py` is fixed.
+Configured values (`config/.env`, typed in `settings.py`): `EVENT_RETENTION_DAYS=2` —
+the 48h buffer this table specifies, not the 90 that was set for months —
+`INCIDENT_RETENTION_DAYS=180` (resolved incidents only), `RAW_EVENT_DEBUG_DAYS=7`, and
+`INCIDENT_STALE_HOURS=48`.
+
+The event passes are batched and share a wall-clock budget. This is not an
+optimisation: an unbounded `DELETE`/`UPDATE` over a multi-million-row backlog cannot
+finish inside the worker's per-pass watchdog, and being cancelled mid-statement rolls
+the whole thing back, so the backlog never shrinks. Batching makes progress monotonic.
+Retention also stamps its own last-run time before doing the work, so a cancelled pass
+cannot cause an infinite retry loop.
 
 ## Never stored
 

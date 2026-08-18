@@ -392,6 +392,10 @@ class CorrelationEngine:
 
         logger.debug("Found %d new events to process", len(new_events))
 
+        # Correct device_type from the canonical record before grouping. Stage 2
+        # splits events on this field, and collectors hardcode "ap".
+        await self._enrich_device_types(new_events)
+
         # Stage 1: Group events by site and time window
         groups = group_events_by_site_and_time(new_events, self.config)
         logger.info(
@@ -509,6 +513,45 @@ class CorrelationEngine:
         )
         return incidents
 
+    async def _enrich_device_types(self, events: List[UnifiedEvent]) -> None:
+        """Overwrite reported device_type with the canonical one where they differ.
+
+        Only promotes to an infrastructure type — a device the canonical record
+        knows is a switch must not stay labelled 'ap' — and never demotes, so a
+        missing or stale canonical row cannot silently disable a cascade that the
+        reported type would have allowed.
+        """
+        refs = [e.device.device_id for e in events if e.device and e.device.device_id]
+        if not refs:
+            return
+        try:
+            from ..database.identity import resolve_device_types
+
+            canonical = await resolve_device_types(refs)
+        except Exception:
+            logger.warning("device_type enrichment failed — using reported types", exc_info=True)
+            return
+
+        if not canonical:
+            return
+
+        promoted = 0
+        infra_types = self.config.infrastructure_device_types
+        for event in events:
+            if not event.device or not event.device.device_id:
+                continue
+            actual = canonical.get(event.device.device_id)
+            if not actual or actual == (event.device.device_type or "").lower():
+                continue
+            if actual in infra_types:
+                event.device.device_type = actual
+                promoted += 1
+
+        if promoted:
+            logger.info(
+                "Corrected device_type to an infrastructure type on %d event(s)", promoted
+            )
+
     async def _resolve_recovered_devices(
         self, recovery_events: List[UnifiedEvent]
     ) -> None:
@@ -556,11 +599,17 @@ class CorrelationEngine:
 
         If the computed incident ID already exists and is in a terminal
         state, a new incident is created via epoch-hour suffix.
+
+        An inferred-root cascade has no root events at all — the root device was
+        identified as the common parent of the symptoms and never reported for
+        itself — so severity is derived from the symptoms instead.
         """
-        if not cascade.root_events:
+        if not cascade.root_events and not cascade.inferred_root:
             raise ValueError("Cannot create incident from empty cascade root")
 
-        severity = self._determine_severity(cascade.root_events)
+        severity = self._determine_severity(
+            cascade.root_events or cascade.symptom_events
+        )
         all_events = cascade.root_events + cascade.symptom_events
         all_event_ids = cascade.all_event_ids()
 
@@ -614,6 +663,7 @@ class CorrelationEngine:
             root_device_ids=[cascade.root_device_id],
             symptom_device_ids=symptom_device_ids,
             related_event_ids=all_event_ids,
+            inferred_root=cascade.inferred_root,
         )
 
         confidence = calculate_confidence_score(
@@ -621,6 +671,15 @@ class CorrelationEngine:
         )
         incident.confidence_score = confidence.total
         incident.confidence_breakdown = confidence.to_dict()
+
+        if cascade.inferred_root:
+            # State the reasoning plainly: the root device has no evidence of its
+            # own, so an operator must be able to see this was a deduction.
+            incident.probable_cause = (
+                f"Inferred: {len(symptom_device_ids)} downstream devices sharing upstream "
+                f"{cascade.root_device_id} failed together. That device reported no event "
+                f"of its own — it is either down or has no telemetry source."
+            )
 
         for ev in all_events:
             incident.add_evidence(ev)
@@ -633,7 +692,7 @@ class CorrelationEngine:
             severity.value,
             len(cascade.root_events),
             symptom_count,
-            confidence,
+            confidence.total,
         )
 
         return incident
@@ -704,7 +763,7 @@ class CorrelationEngine:
             severity.value,
             len(events),
             len(affected_devices),
-            confidence,
+            confidence.total,
         )
 
         return incident

@@ -1,12 +1,13 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Activity,
   Brain,
   Clock,
   MapPin,
+  Radio,
   Search,
   Server,
   Shield,
@@ -14,6 +15,7 @@ import {
   X,
 } from "lucide-react";
 import { api } from "@/lib/api";
+import { useIncidentStream } from "@/hooks/use-incident-stream";
 import { buildStats } from "@/lib/incident-stats";
 import { groupByRootCause } from "@/lib/alerts";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -38,11 +40,13 @@ function KpiCell({ value, label, tone }: { value: number | string; label: string
 export default function AlertsPage() {
   const [search, setSearch] = useState("");
   const [severityFilter, setSeverityFilter] = useState<IncidentSeverity | "all">("all");
+  const queryClient = useQueryClient();
 
   const { data, isLoading } = useQuery({
     queryKey: ["correlation-incidents"],
     queryFn: () => api.listIncidents({ limit: 500 }),
-    refetchInterval: 15000,
+    // Real-time push (SSE) drives updates; this is a slow safety-net poll.
+    refetchInterval: 60000,
   });
 
   const { data: kpiData } = useQuery({
@@ -55,6 +59,11 @@ export default function AlertsPage() {
     queryKey: ["correlation-stats"],
     queryFn: () => api.getCorrelationStats(),
     refetchInterval: 30000,
+  });
+
+  const { status: streamStatus } = useIncidentStream(() => {
+    queryClient.invalidateQueries({ queryKey: ["correlation-incidents"] });
+    queryClient.invalidateQueries({ queryKey: ["correlation-stats"] });
   });
 
   const engineHealth = engineStats as { status?: string; stats?: Record<string, unknown> } | undefined;
@@ -93,9 +102,30 @@ export default function AlertsPage() {
 
         {/* Header */}
         <div className="border-b border-border/60 pb-8">
-          <div className="inline-flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.2em] text-primary">
-            <Sparkles className="h-3 w-3" />
-            Naxis Intelligence
+          <div className="flex items-center gap-3">
+            <div className="inline-flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.2em] text-primary">
+              <Sparkles className="h-3 w-3" />
+              Naxis Intelligence
+            </div>
+            <span
+              className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] ${
+                streamStatus === "live"
+                  ? "bg-emerald-500/10 text-emerald-400"
+                  : streamStatus === "connecting"
+                  ? "bg-amber-500/10 text-amber-400"
+                  : "bg-foreground/5 text-foreground-muted"
+              }`}
+              title={
+                streamStatus === "live"
+                  ? "Real-time incident stream connected"
+                  : streamStatus === "connecting"
+                  ? "Connecting to incident stream…"
+                  : "Live stream disconnected — falling back to polling"
+              }
+            >
+              <Radio className={`h-3 w-3 ${streamStatus === "live" ? "animate-pulse" : ""}`} />
+              {streamStatus === "live" ? "Live" : streamStatus === "connecting" ? "Connecting" : "Polling"}
+            </span>
           </div>
           <h1 className="mt-1 text-3xl font-semibold tracking-tight text-foreground">Alerts</h1>
           <p className="mt-1 text-sm text-foreground-muted max-w-2xl">

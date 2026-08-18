@@ -178,6 +178,11 @@ def _build_rows(
 
         rows.append({
             "device_id": ap_id,
+            # The per-site stats object carries Mist's site-device UUID, which is
+            # the id form that EVENTS reference. /inventory returns the
+            # '00000000-0000-0000-1000-<mac>' form instead, so without capturing
+            # this the event ids resolve against nothing.
+            "vendor_uuid": str(stats.get("id", "") or ""),
             "platform": "mist",
             "hostname": d.get("name", "") or mac,
             "mac": mac,
@@ -275,5 +280,13 @@ async def _sync_identities(rows: List[Dict[str, Any]]) -> None:
             mac_hints = dict(hints)
             mac_hints["vendor_display_name"] = f"{row['hostname'] or row['device_id']} (mac)"
             pairs.append(("mist", row["mac"], mac_hints))
+        # Register the site-device UUID too. Mist references the same AP by at
+        # least three ids depending on endpoint, and events use this one; all
+        # three must alias to one canonical device_key.
+        vendor_uuid = row.get("vendor_uuid") or ""
+        if vendor_uuid and vendor_uuid not in (row["device_id"], row["mac"]):
+            uuid_hints = dict(hints)
+            uuid_hints["vendor_display_name"] = row["hostname"] or vendor_uuid
+            pairs.append(("mist", vendor_uuid, uuid_hints))
 
     await resolver.resolve_devices(pairs)

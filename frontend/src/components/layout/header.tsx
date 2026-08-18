@@ -14,21 +14,30 @@ export function Header() {
 
   const isOnline = health?.status === "healthy";
 
+  const { data: summary } = useQuery({
+    queryKey: ["topology-summary", "header"],
+    queryFn: () => api.getTopologySummary(),
+    refetchInterval: 60000,
+  });
+
+  const byType = summary?.by_type;
+  const counts = byType
+    ? [
+        { icon: ShieldCheck, tone: "text-emerald-500", label: `${byType.site ?? 0} Sites` },
+        { icon: Activity, tone: "text-slate-500", label: `${byType.ap ?? 0} APs` },
+        { icon: Cpu, tone: "text-slate-500", label: `${byType.edge ?? 0} Edges` },
+      ]
+    : [];
+
   return (
     <header className="sticky top-0 z-40 flex h-14 items-center justify-between gap-4 border-b border-slate-800/60 bg-slate-950/90 px-5 backdrop-blur-md">
       <div className="hidden md:flex items-center gap-6 text-xs text-slate-500">
-        <div className="flex items-center gap-1.5 font-mono text-[11px]">
-          <ShieldCheck className="w-3.5 h-3.5 text-emerald-500" />
-          <span className="text-slate-400">153 Sites</span>
-        </div>
-        <div className="flex items-center gap-1.5 font-mono text-[11px]">
-          <Activity className="w-3.5 h-3.5 text-slate-500" />
-          <span className="text-slate-400">1,880 APs</span>
-        </div>
-        <div className="flex items-center gap-1.5 font-mono text-[11px]">
-          <Cpu className="w-3.5 h-3.5 text-slate-500" />
-          <span className="text-slate-400">93 Edges</span>
-        </div>
+        {counts.map(({ icon: Icon, tone, label }) => (
+          <div key={label} className="flex items-center gap-1.5 font-mono text-[11px]">
+            <Icon className={cn("w-3.5 h-3.5", tone)} />
+            <span className="text-slate-400">{label}</span>
+          </div>
+        ))}
       </div>
 
       <div className="flex items-center gap-4 ml-auto">

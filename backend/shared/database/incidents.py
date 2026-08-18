@@ -51,6 +51,7 @@ def _row_to_incident(row) -> Incident:
         affected_clients=list(row["affected_clients"] or []),
         root_device_ids=list(row.get("root_device_ids") or []),
         symptom_device_ids=list(row.get("symptom_device_ids") or []),
+        inferred_root=bool(row.get("inferred_root") or False),
         related_event_ids=list(row["related_event_ids"] or []),
         probable_cause=row["probable_cause"],
         evidence=evidence,
@@ -73,23 +74,23 @@ async def insert_incident(incident: Incident) -> None:
         INSERT INTO incidents (
             incident_id, title, severity, status,
             affected_sites, affected_devices, affected_clients,
-            root_device_ids, symptom_device_ids,
+            root_device_ids, symptom_device_ids, inferred_root,
             related_event_ids, probable_cause, confidence_score,
             confidence_breakdown, evidence,
             created_at, updated_at
         ) VALUES (
             $1, $2, $3, $4,
             $5, $6, $7,
-            $8, $9,
-            $10, $11, $12,
-            $13, $14::jsonb,
-            $15, $16
+            $8, $9, $10,
+            $11, $12, $13,
+            $14, $15::jsonb,
+            $16, $17
         )
         ON CONFLICT (incident_id) DO NOTHING
         """,
         d["incident_id"], d["title"], d["severity"], d["status"],
         d["affected_sites"], d["affected_devices"], d["affected_clients"],
-        d["root_device_ids"], d["symptom_device_ids"],
+        d["root_device_ids"], d["symptom_device_ids"], d["inferred_root"],
         d["related_event_ids"], d["probable_cause"], d["confidence_score"],
         confidence_breakdown, evidence_json,
         d["created_at"], d["updated_at"],
@@ -121,17 +122,17 @@ async def upsert_incident(incident: Incident) -> None:
         INSERT INTO incidents (
             incident_id, title, severity, status,
             affected_sites, affected_devices, affected_clients,
-            root_device_ids, symptom_device_ids,
+            root_device_ids, symptom_device_ids, inferred_root,
             related_event_ids, probable_cause, confidence_score,
             confidence_breakdown, evidence,
             created_at, updated_at
         ) VALUES (
             $1, $2, $3, $4,
             $5, $6, $7,
-            $8, $9,
-            $10, $11, $12,
-            $13, $14::jsonb,
-            $15, $16
+            $8, $9, $10,
+            $11, $12, $13,
+            $14, $15::jsonb,
+            $16, $17
         )
         ON CONFLICT (incident_id) DO UPDATE SET
             title                = EXCLUDED.title,
@@ -164,6 +165,9 @@ async def upsert_incident(incident: Incident) -> None:
             symptom_device_ids   = (SELECT COALESCE(array_agg(DISTINCT x), '{}') FROM unnest(
                                       incidents.symptom_device_ids || EXCLUDED.symptom_device_ids) AS x
                                     WHERE x IS NOT NULL),
+            -- Once the root device reports for itself the root stops being a
+            -- deduction, so this only ever goes true -> false.
+            inferred_root        = incidents.inferred_root AND EXCLUDED.inferred_root,
             related_event_ids    = (SELECT COALESCE(array_agg(DISTINCT x), '{}') FROM unnest(
                                       incidents.related_event_ids || EXCLUDED.related_event_ids) AS x
                                     WHERE x IS NOT NULL),
@@ -233,6 +237,42 @@ async def resolve_open_incidents_for_devices(device_ids: List[str]) -> int:
         IncidentStatus.RESOLVED.value,
         IncidentStatus.OPEN.value,
         device_ids,
+    )
+    return len(rows)
+
+
+async def resolve_stale_incidents(stale_hours: int = 48) -> int:
+    """
+    Resolve OPEN incidents that have received no new evidence for
+    ``stale_hours``.
+
+    Auto-close is otherwise purely event-driven: an incident only resolves
+    when a recovery event arrives for its root device
+    (``resolve_open_incidents_for_devices``). A device that recovered before
+    the incident was raised — or whose recovery event has since rolled out of
+    the 24-48h event buffer — leaves an incident that can never be closed by
+    any future event. Retention only prunes ``resolved`` rows, so those
+    incidents accumulate forever.
+
+    Once an incident's evidence has aged past the event buffer there is
+    nothing left to re-confirm it against, so it stops being an active claim.
+
+    Only OPEN is swept — operator-managed states are left alone, matching
+    ``resolve_open_incidents_for_devices``.
+
+    Returns the number of incidents resolved.
+    """
+    rows = await db.fetch(
+        """
+        UPDATE incidents
+        SET status = $1, updated_at = NOW()
+        WHERE status = $2
+          AND updated_at < NOW() - ($3 || ' hours')::interval
+        RETURNING incident_id
+        """,
+        IncidentStatus.RESOLVED.value,
+        IncidentStatus.OPEN.value,
+        str(stale_hours),
     )
     return len(rows)
 
@@ -477,12 +517,17 @@ async def get_incident_stats() -> dict:
     Single-pass SQL aggregates for incident KPIs.
 
     Returns truthful totals regardless of any page size:
-      total           — all incidents
+      total           — all incidents, every status, all time
       active          — incidents in an actionable (non-terminal) state
-      by_severity     — counts per severity
-      distinct_sites  — distinct site_ids across all affected_sites arrays
-      distinct_devices— distinct device_ids across all affected_devices arrays
-      avg_confidence  — mean confidence_score (0.0 when no incidents)
+      by_severity     — counts per severity, ACTIVE only
+      distinct_sites  — distinct site_ids across active affected_sites arrays
+      distinct_devices— distinct device_ids across active affected_devices arrays
+      avg_confidence  — mean confidence_score across active incidents (0.0 when none)
+
+    Everything except ``total`` is scoped to active incidents. These feed NOC
+    KPI tiles that sit next to ``active``, so counting resolved history in them
+    renders the panel self-contradictory — it read "Critical 61,749" beside
+    "Active 3,652" once the stale-incident sweep began resolving a backlog.
     """
     row = await db.fetchrow(
         """
@@ -490,17 +535,21 @@ async def get_incident_stats() -> dict:
             COUNT(*)                                          AS total,
             COUNT(*) FILTER (WHERE status = ANY($1::text[]))  AS active,
             (SELECT COUNT(DISTINCT s)
-               FROM incidents AS i2, unnest(i2.affected_sites) AS s)   AS distinct_sites,
+               FROM incidents AS i2, unnest(i2.affected_sites) AS s
+              WHERE i2.status = ANY($1::text[]))                       AS distinct_sites,
             (SELECT COUNT(DISTINCT d)
-               FROM incidents AS i2, unnest(i2.affected_devices) AS d) AS distinct_devices,
-            COALESCE(AVG(confidence_score), 0.0)              AS avg_confidence
+               FROM incidents AS i2, unnest(i2.affected_devices) AS d
+              WHERE i2.status = ANY($1::text[]))                       AS distinct_devices,
+            COALESCE(AVG(confidence_score) FILTER (WHERE status = ANY($1::text[])), 0.0)
+                                                              AS avg_confidence
         FROM incidents
         """,
         ACTIVE_STATUS_VALUES,
     )
 
     severity_rows = await db.fetch(
-        "SELECT severity, COUNT(*) AS cnt FROM incidents GROUP BY severity"
+        "SELECT severity, COUNT(*) AS cnt FROM incidents WHERE status = ANY($1::text[]) GROUP BY severity",
+        ACTIVE_STATUS_VALUES,
     )
     by_severity = {s.value: 0 for s in IncidentSeverity}
     for r in severity_rows:

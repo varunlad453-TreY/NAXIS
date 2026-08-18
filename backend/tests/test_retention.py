@@ -82,3 +82,64 @@ async def test_failure_is_recorded_per_table():
     with patch.object(retention.db, "execute", execute):
         result = await retention.run_retention()
     assert all(isinstance(v, str) for v in result.values())
+
+
+@pytest.mark.asyncio
+async def test_events_are_deleted_in_batches_until_drained():
+    """A backlog larger than one batch must loop, not issue one unbounded DELETE.
+
+    An unbounded DELETE over millions of rows cannot finish inside the worker's
+    per-pass watchdog, and cancellation rolls it back — so the backlog never
+    shrinks.
+    """
+    retention.db.pool = object()
+    # Two full batches of events, then a partial one; everything else empty.
+    responses = {
+        "DELETE FROM events": ["DELETE 10", "DELETE 10", "DELETE 3"],
+        "UPDATE events": ["UPDATE 10", "UPDATE 2"],
+    }
+
+    async def _execute(query, *args):
+        for marker, queue in responses.items():
+            if marker in query:
+                return queue.pop(0) if queue else "DELETE 0"
+        return "DELETE 0"
+
+    with patch.object(retention.db, "execute", AsyncMock(side_effect=_execute)):
+        result = await retention.run_retention(batch_size=10)
+
+    assert result["events"] == 23
+    assert result["raw_event_strip"] == 12
+    assert "truncated" not in result
+
+
+@pytest.mark.asyncio
+async def test_batch_budget_stops_work_and_reports_truncation():
+    """With the budget exhausted, retention stops and says so instead of
+    running until the pass watchdog kills it."""
+    retention.db.pool = object()
+
+    async def _always_full(query, *args):
+        return "DELETE 10" if "events" in query else "DELETE 0"
+
+    with patch.object(retention.db, "execute", AsyncMock(side_effect=_always_full)):
+        result = await retention.run_retention(batch_size=10, max_seconds=0)
+
+    assert result["truncated"] == ["events", "raw_event_strip"]
+    assert result["events"] == 10
+
+
+@pytest.mark.asyncio
+async def test_batched_queries_are_bounded_by_limit():
+    retention.db.pool = object()
+    execute = AsyncMock(return_value="DELETE 0")
+    with patch.object(retention.db, "execute", execute):
+        await retention.run_retention(batch_size=500)
+
+    queries = {call.args[0]: call.args for call in execute.call_args_list}
+    events_q = next(q for q in queries if "DELETE FROM events" in q)
+    strip_q = next(q for q in queries if "UPDATE events" in q)
+    assert "LIMIT $2" in events_q
+    assert "LIMIT $2" in strip_q
+    assert queries[events_q][2] == 500
+    assert queries[strip_q][2] == 500

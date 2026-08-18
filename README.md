@@ -98,7 +98,7 @@ naxis/
 ├── schemas/               # PostgreSQL SQL files
 │   └── postgres/          # Migration scripts (NNN_*.sql)
 ├── config/                # .env
-└── docs/                  # All documentation
+└── docs/                  # strategy/ (architecture, roadmap, data policy) + handoff logs
 ```
 
 ## Development
@@ -141,10 +141,6 @@ REDIS_ENABLED=false
 ## Documentation
 
 - **[docs/strategy/](docs/strategy/)** — Current strategic direction: `ARCHITECTURE.md` (target state), `ROADMAP.md` (phases), `DATA_POLICY.md` (what we store), `TECHNICAL_QA.md` (measured reality), `PLAN_GAP.md` (what exists vs what's missing + execution plan).
-- **[docs/DEVELOPER_GUIDE.md](docs/DEVELOPER_GUIDE.md)** — Start here. Onboarding, architecture walkthrough, collector system, testing guide.
-- **[docs/TELEMETRY_ARCHITECTURE.md](docs/TELEMETRY_ARCHITECTURE.md)** — Collector → ledger → UI health architecture.
-- **[docs/CORRELATION_ARCHITECTURE.md](docs/CORRELATION_ARCHITECTURE.md)** — Correlation engine (Stage 1 + Stage 2) design.
-- **[docs/FRONTEND_ARCHITECTURE.md](docs/FRONTEND_ARCHITECTURE.md)** — Frontend structure and patterns.
 - **[docs/handoff docs/](docs/handoff%20docs/)** — Per-session change logs (49 sessions).
 
 ## License

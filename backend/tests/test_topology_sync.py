@@ -458,3 +458,72 @@ class TestMistPhysicalLinks:
         # No link inserts should happen
         link_calls = [c for c in mock_exec.call_args_list if "INSERT INTO links" in str(c)]
         assert len(link_calls) == 0
+
+
+class TestSiteNodeCanonicalKey:
+    """topology_nodes.canonical_key is a FK to devices(device_key).
+
+    Site nodes were passing a site_key into that column, which raised
+    ForeignKeyViolationError on every pass. sync() had no per-vendor isolation,
+    so the first bad site aborted the whole graph rebuild: canonical_key stayed
+    NULL on all nodes, `links` was never written, and the correlation cascade
+    had nothing to traverse.
+    """
+
+    @pytest.mark.asyncio
+    async def test_site_node_does_not_write_site_key_as_canonical_key(self):
+        ts = _make_topology_sync(mist_enabled=True, velo_enabled=False)
+        ap_rows = [
+            {
+                "device_id": "ap-001",
+                "hostname": "sfo-ap-01",
+                "ip_address": "10.0.1.10",
+                "model": "AP43",
+                "site_id": "site-101",
+                "site_name": "SFO-DC",
+                "connected": True,
+                "num_clients": 12,
+                "firmware_version": "0.14.1",
+                "mac": "aa:bb:cc:dd:ee:01",
+            }
+        ]
+        with patch("backend.worker.collectors.topology_sync.db.fetch",
+                   AsyncMock(side_effect=[ap_rows, []])):
+            with patch("backend.worker.collectors.topology_sync.db.execute",
+                       AsyncMock()) as mock_exec:
+                await ts.sync()
+
+        node_inserts = [
+            c.args for c in mock_exec.call_args_list
+            if "INSERT INTO topology_nodes" in str(c.args[0])
+        ]
+        assert node_inserts, "expected topology_nodes upserts"
+
+        # canonical_key is positional arg 8 in _upsert_node's parameter list.
+        site_inserts = [a for a in node_inserts if a[2] == "site"]
+        assert site_inserts, "expected a site node upsert"
+        for args in site_inserts:
+            assert args[8] == "", (
+                "site nodes must leave canonical_key empty — it is FK'd to "
+                "devices(device_key) and a site_key is not a device_key"
+            )
+
+        # Device nodes still carry their canonical device key.
+        device_inserts = [a for a in node_inserts if a[2] == "ap"]
+        assert device_inserts, "expected an AP node upsert"
+        assert device_inserts[0][8] == "ap-001"
+
+    @pytest.mark.asyncio
+    async def test_one_vendor_failure_does_not_strand_the_others(self):
+        ts = _make_topology_sync(mist_enabled=True, velo_enabled=True)
+
+        async def _boom():
+            raise RuntimeError("mist exploded")
+
+        with patch.object(ts, "_sync_mist_topology", side_effect=_boom):
+            with patch.object(ts, "_sync_velocloud_topology", AsyncMock()) as velo:
+                with patch.object(ts, "_sync_cross_vendor_links", AsyncMock()) as cross:
+                    await ts.sync()
+
+        velo.assert_awaited_once()
+        cross.assert_awaited_once()

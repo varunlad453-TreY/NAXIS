@@ -43,8 +43,8 @@ from shared.database.collector_telemetry import list_collector_telemetry
 
 logger = logging.getLogger(__name__)
 
-_STALE_THRESHOLD = 300
-_CRITICAL_THRESHOLD = 900
+_STALE_THRESHOLD = 600
+_CRITICAL_THRESHOLD = 1800
 _MAX_FAILURES = 3
 
 

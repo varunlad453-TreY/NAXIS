@@ -23,6 +23,9 @@ class EventSource(str, Enum):
     CLEARPASS = "clearpass"
     CLOUDFLARE = "cloudflare"
     NETSKOPE = "netskope"
+    SNMP = "snmp"
+    SNMP_TRAP = "snmp_trap"
+    SYSLOG = "syslog"
     SYSTEM = "system"
     OTHER = "other"
 

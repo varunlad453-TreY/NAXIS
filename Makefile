@@ -1,69 +1,96 @@
-.PHONY: help setup build up dev down logs clean rebuild ollama test init-db
+.PHONY: help setup build up dev down logs clean rebuild prune test typecheck migrate init-db
+
+# Every compose invocation needs --env-file: docker-compose.yml interpolates
+# POSTGRES_PASSWORD/REDIS_PASSWORD with the `:?` operator, so without it even
+# `docker compose down` aborts with an interpolation error.
+COMPOSE := docker compose --env-file config/.env -f docker-compose.yml -f docker-compose.dev.yml
+
+# Backend tests are NOT in the runtime image — the Dockerfile copies only
+# shared/, api/, worker/, config/ and main.py. They run against a bind-mounted
+# checkout instead. Host python is 3.8 and cannot parse this code.
+PYTEST := docker run --rm -v "$(CURDIR)":/repo -w /repo \
+	-e PYTHONPATH=/repo:/repo/backend naxis-api python -m pytest
 
 help:
 	@echo "Naxis Development Commands:"
-	@echo "  make setup     - Create .env file from .env.example"
-	@echo "  make build     - Build the backend Docker image"
-	@echo "  make up        - Start all services"
-	@echo "  make dev       - Start the full dev stack with hot reload"
+	@echo "  make setup     - Create config/.env from config/.env.example"
+	@echo "  make build     - Build the backend and frontend images"
+	@echo "  make up        - Start all services (detached)"
+	@echo "  make dev       - Build then start the full dev stack in the foreground"
 	@echo "  make down      - Stop all services"
 	@echo "  make logs      - View logs (all services)"
-	@echo "  make clean     - Remove all containers and volumes"
-	@echo "  make rebuild   - Rebuild and restart services"
-	@echo "  make ollama    - Pull Llama 3.1 8B model"
-	@echo "  make test      - Run all tests"
-	@echo "  make init-db   - Manually re-run database schema (auto on first start)"
+	@echo "  make clean     - Remove all containers AND volumes (destroys the database)"
+	@echo "  make rebuild   - Rebuild from scratch and restart services"
+	@echo "  make prune     - Delete dangling images + build cache (safe, keeps volumes)"
+	@echo "  make test      - Run backend + frontend tests"
+	@echo "  make typecheck - Run the frontend TypeScript check"
+	@echo "  make migrate   - Apply pending SQL migrations (idempotent)"
 
 setup:
-	@if [ ! -f .env ]; then \
-		cp config/.env.example .env; \
-		echo "Created .env file. Update with your configuration."; \
+	@if [ ! -f config/.env ]; then \
+		cp config/.env.example config/.env; \
+		echo "Created config/.env — set POSTGRES_PASSWORD, REDIS_PASSWORD and vendor credentials."; \
 	else \
-		echo ".env file already exists."; \
+		echo "config/.env already exists."; \
 	fi
 
 build:
-	docker compose build
+	$(COMPOSE) build
+	@$(MAKE) --no-print-directory prune
 
 up:
-	docker compose --env-file config/.env -f docker-compose.yml -f docker-compose.dev.yml up -d
+	$(COMPOSE) up -d
 	@echo "Services starting... Check logs with: make logs"
 	@echo "API:      http://localhost:8000"
 	@echo "Frontend: http://localhost:3000"
 	@echo "Adminer:  http://localhost:8080"
 
+# Build + prune before `up` because `up` runs in the foreground — pruning after it
+# would only fire on Ctrl-C.
 dev:
-	docker compose --env-file config/.env -f docker-compose.yml -f docker-compose.dev.yml up --build
+	$(COMPOSE) build
+	@$(MAKE) --no-print-directory prune
+	$(COMPOSE) up
 
 down:
-	docker compose down
+	$(COMPOSE) down
 
 logs:
-	docker compose logs -f
+	$(COMPOSE) logs -f
 
 clean:
-	docker compose down -v
+	$(COMPOSE) down -v
 	@echo "All containers and volumes removed."
 
 rebuild:
-	docker compose down
-	docker compose build --no-cache
-	docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+	$(COMPOSE) down
+	$(COMPOSE) build --no-cache
+	@$(MAKE) --no-print-directory prune
+	$(COMPOSE) up -d
 
-ollama:
-	@echo "Pulling Llama 3.1 8B model..."
-	docker compose exec ollama ollama pull llama3.1:8b
-	@echo "Model ready!"
+# Only untagged (superseded) images and unused build cache. Never -a or --volumes:
+# those would take the Postgres data volume and images for stopped services.
+prune:
+	@echo "Removing superseded images and build cache..."
+	-docker image prune -f
+	-docker builder prune -f
+	@docker system df
 
 test:
 	@echo "Running backend tests..."
-	docker compose exec api pytest tests/
+	$(PYTEST) backend/tests/ -q
 	@echo "Running frontend tests..."
-	docker compose exec web npm test
+	cd frontend && npm test
 
-init-db:
-	@echo "Applying Postgres schema..."
-	docker compose exec postgres psql -U naxis -d naxis -f /docker-entrypoint-initdb.d/001_init.sql
-	@echo "Schema applied."
+typecheck:
+	cd frontend && npx tsc --noEmit
+
+# docker-entrypoint-initdb.d only runs on an empty data directory, and does not
+# exist at all on a managed Postgres, so schema changes go through the runner.
+migrate:
+	@echo "Applying pending migrations..."
+	$(COMPOSE) exec -T api python /app/scripts/migrate.py
+
+init-db: migrate
 
 .DEFAULT_GOAL := help

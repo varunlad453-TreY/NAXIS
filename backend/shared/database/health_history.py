@@ -38,7 +38,7 @@ async def record_health_snapshots_batch(
     i = 1
     placeholders = []
     for snap in snapshots:
-        placeholders.append(f"($${i}, $${i+1}, $${i+2}, $${i+3})")
+        placeholders.append(f"(${i}, ${i+1}, ${i+2}, ${i+3})")
         params.extend([
             snap["node_id"],
             snap["health_status"],

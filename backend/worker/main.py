@@ -36,7 +36,7 @@ from shared.database.correlation_telemetry import (
     save_correlation_telemetry,
 )
 from shared.database.events import insert_events, link_events_to_incident
-from shared.database.incidents import upsert_incident
+from shared.database.incidents import resolve_stale_incidents, upsert_incident
 from shared.database.redis import get_redis_client
 from shared.database.topology import DatabaseTopologyProvider
 from shared.models.collector_outcome import CollectorOutcome
@@ -58,6 +58,7 @@ from worker.collectors.netskope_segment import NetskopePathSegmentCollector
 from shared.monitoring.collector_health import check_collector_health
 from shared.monitoring.notifier import dispatch_alerts
 from shared.database.retention import run_retention
+from shared.utils.redaction import redact_url_password
 
 logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO").upper(),
@@ -68,6 +69,10 @@ logger = logging.getLogger(__name__)
 
 _settings = get_settings()
 COLLECTOR_INTERVAL = _settings.collector_interval
+# Hard ceiling on a single pass. A legitimate cycle (Mist + VeloCloud, ~5min)
+# fits well under this; anything longer is a stalled network read or stuck
+# query, so we cancel and recover on the next interval rather than hang forever.
+RUN_ONCE_TIMEOUT = max(COLLECTOR_INTERVAL * 10, 600)
 
 
 class WorkerDaemon:
@@ -123,7 +128,7 @@ class WorkerDaemon:
         if _settings.redis_enabled:
             logger.info(
                 "Redis pub/sub: enabled (channel=naxis:incidents, url=%s)",
-                _settings.redis_url,
+                redact_url_password(_settings.redis_url),
             )
         else:
             logger.info(
@@ -150,6 +155,13 @@ class WorkerDaemon:
             message += f", {len(failures)} failed"
 
         await record_worker_heartbeat(self._worker_id, cycle_status, message)
+
+        # Liveness marker for the container healthcheck (`ps` is absent from the image).
+        try:
+            with open("/tmp/naxis-worker-alive", "w") as fh:
+                fh.write(str(int(time.time())))
+        except OSError:
+            logger.debug("Could not write liveness marker")
 
         # Persist events
         all_events = []
@@ -250,6 +262,23 @@ class WorkerDaemon:
 
         # Data retention cleanup (every 24 hours)
         if (now_utc - self._last_retention).total_seconds() >= 86400:
+            # Stamp *before* running. run_retention() is batched but can still be
+            # cancelled by the pass watchdog on a large backlog; CancelledError is
+            # a BaseException, so a post-hoc stamp would be skipped and every
+            # subsequent pass would retry retention forever and time out.
+            self._last_retention = now_utc
+            # Sweep stale open incidents before pruning, so newly-resolved rows
+            # become eligible for the resolved-incident retention pass.
+            if _settings.incident_stale_hours > 0:
+                try:
+                    stale = await resolve_stale_incidents(_settings.incident_stale_hours)
+                    if stale:
+                        logger.info(
+                            "Auto-resolved %d stale incident(s) with no evidence for >%dh",
+                            stale, _settings.incident_stale_hours,
+                        )
+                except Exception:
+                    logger.exception("Stale incident sweep failed")
             try:
                 result = await run_retention(
                     days=7,
@@ -258,9 +287,11 @@ class WorkerDaemon:
                     raw_event_days=_settings.raw_event_debug_days,
                 )
                 logger.info("Retention cleanup: %s", result)
+                if isinstance(result, dict) and result.get("truncated"):
+                    # Work remains — retry on the next pass instead of waiting 24h.
+                    self._last_retention = now_utc - timedelta(seconds=86400)
             except Exception:
                 logger.exception("Retention cleanup failed")
-            self._last_retention = now_utc
 
         logger.debug("Worker pass complete")
 
@@ -467,7 +498,18 @@ class WorkerDaemon:
 
             while self._running:
                 try:
-                    await self.run_once()
+                    await asyncio.wait_for(self.run_once(), timeout=RUN_ONCE_TIMEOUT)
+                except asyncio.TimeoutError:
+                    logger.error(
+                        "Worker pass exceeded %ds and was cancelled — recovering next interval",
+                        RUN_ONCE_TIMEOUT,
+                    )
+                    try:
+                        await record_worker_heartbeat(
+                            self._worker_id, "error", f"Worker pass timed out (>{RUN_ONCE_TIMEOUT}s)"
+                        )
+                    except Exception:
+                        logger.exception("Failed to record timeout heartbeat")
                 except Exception:
                     logger.exception("Worker pass failed — will retry next interval")
                     try:

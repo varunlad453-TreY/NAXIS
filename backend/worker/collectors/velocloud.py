@@ -731,15 +731,29 @@ class VeloCloudCollector:
         settings = get_settings()
         self._base_url = settings.velocloud_url.rstrip("/")
         self._api_key = settings.velocloud_api_key
+        self._enterprise_id_override = (settings.velocloud_enterprise_id or "").strip()
         self._enabled = settings.velocloud_enabled
+        self._verify_ssl = settings.velocloud_verify_ssl
         self._client: Optional[httpx.AsyncClient] = None
 
     @property
     def is_configured(self) -> bool:
         return bool(self._base_url and self._api_key and self._enabled)
 
-    async def _get_enterprise_id(self, client: httpx.AsyncClient) -> Optional[str]:
-        """Fetch the enterprise ID from the VeloCloud API."""
+    async def _get_enterprise_id(self, client: httpx.AsyncClient) -> Optional[int]:
+        """Return the enterprise ID as int: prefer the configured override, else discover.
+
+        Using the override avoids a per-cycle discovery call that would
+        otherwise be a recurring failure point if the VCO is transiently slow.
+        The RPC methods reject a string enterpriseId with "invalid enterprise
+        context", so the value must be a JSON integer.
+        """
+        if self._enterprise_id_override:
+            try:
+                return int(self._enterprise_id_override)
+            except ValueError:
+                logger.error("VELOCLOUD_ENTERPRISE_ID is not a valid integer: %r", self._enterprise_id_override)
+                return None
         try:
             resp = await client.post(
                 f"{self._base_url}/portal/rest/enterprise/getEnterprise",
@@ -747,8 +761,8 @@ class VeloCloudCollector:
             )
             _raise_for_status(resp)
             data = resp.json()
-            if isinstance(data, dict):
-                return str(data.get("id", ""))
+            if isinstance(data, dict) and data.get("id") is not None:
+                return int(data["id"])
         except Exception:
             logger.exception("Failed to fetch VeloCloud enterprise ID")
         return None
@@ -844,7 +858,7 @@ class VeloCloudCollector:
             async with httpx.AsyncClient(
                 headers={"Authorization": f"Token {self._api_key}", "Content-Type": "application/json"},
                 timeout=httpx.Timeout(15.0),
-                verify=False,
+                verify=self._verify_ssl,
             ) as client:
                 eid = await self._get_enterprise_id(client)
                 return bool(eid)
@@ -873,6 +887,24 @@ def _raise_for_status(resp: httpx.Response) -> None:
         except Exception:
             detail = resp.text
         raise VeloCloudApiError(resp.status_code, str(detail))
+
+    # The VCO answers an invalid or expired API token with HTTP 200 and a
+    # JSON-RPC error envelope. Without this check the caller sees an empty
+    # result, reports success with zero rows, and the outage stays invisible
+    # in the collector ledger.
+    try:
+        body = resp.json()
+    except Exception:
+        return
+    if isinstance(body, dict):
+        error = body.get("error")
+        if isinstance(error, dict):
+            raise VeloCloudApiError(
+                resp.status_code,
+                f"[{error.get('code')}] {error.get('message') or error}",
+            )
+        if error:
+            raise VeloCloudApiError(resp.status_code, str(error))
 
 
 def _map_vc_severity(level: str) -> EventSeverity:

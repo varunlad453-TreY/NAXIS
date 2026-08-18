@@ -7,8 +7,8 @@ Polls the Mist REST API for:
   - Per-site device stats     (/api/v1/sites/{site_id}/stats/devices)
 
 Auth: Bearer token in Authorization header (MIST_API_KEY).
-All responses are normalized to UnifiedEvent via the same logic used by
-MistMockGenerator so the rest of the pipeline stays vendor-agnostic.
+All responses are normalized to UnifiedEvent so the rest of the pipeline
+stays vendor-agnostic.
 """
 
 import logging
@@ -295,6 +295,18 @@ class MistCollector:
             or raw.get("group", "unknown")
         )
         event_type, category = _map_event_type(event_type_str, raw)
+
+        # A device losing reachability is a connectivity fault, not a warning.
+        # Mist tags these as group='infrastructure'/severity absent, which mapped
+        # to WARNING — below the correlation engine's MAJOR threshold — so the
+        # single most important signal in the estate ("Device Down") never
+        # reached Stage 1 and no cascade could ever form. The wired-uplink
+        # collector already emits LINK_DOWN as MAJOR; this aligns the two.
+        if event_type == EventType.LINK_DOWN and severity in (
+            EventSeverity.INFO,
+            EventSeverity.WARNING,
+        ):
+            severity = EventSeverity.MAJOR
 
         title = event_type_str.replace("_", " ").title()
         description = raw.get("text") or raw.get("message") or title

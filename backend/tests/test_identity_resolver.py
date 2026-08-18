@@ -140,7 +140,11 @@ async def test_resolve_site_creates_when_missing(resolver, mocked_db):
     mocked_db.fetchrow.return_value = None
     key = await resolver.resolve_site("site-101", site_name="Pimpri", vendor="mist")
     assert key
-    mocked_db.execute.assert_called_once()
+    statements = [c.args[0] for c in mocked_db.execute.call_args_list]
+    # The canonical row plus the identity row that claims the vendor id, plus the
+    # locations mirror. The identity row is what makes the vendor id unique.
+    assert any("INSERT INTO sites" in s for s in statements)
+    assert any("INSERT INTO site_identities" in s for s in statements)
 
 
 @pytest.mark.asyncio
@@ -153,8 +157,16 @@ async def test_resolve_site_returns_existing_key(resolver, mocked_db):
 
 @pytest.mark.asyncio
 async def test_resolve_sites_bulk(resolver, mocked_db):
-    mocked_db.fetch.return_value = [
-        {"site_key": "site-key-1", "vendor_ids": {"mist": "site-101"}},
+    mocked_db.fetch.side_effect = [
+        # site_identities lookup resolves site-101 only
+        [{"vendor": "mist", "vendor_site_id": "site-101", "site_key": "site-key-1"}],
+        # legacy vendor_ids fallback finds nothing for site-202
+        [],
+        # post-create winner re-check
+        [
+            {"vendor": "mist", "vendor_site_id": "site-101", "site_key": "site-key-1"},
+            {"vendor": "mist", "vendor_site_id": "site-202", "site_key": "site-key-2"},
+        ],
     ]
     specs = [
         ("site-101", "Pimpri", "mist", None),
@@ -162,7 +174,144 @@ async def test_resolve_sites_bulk(resolver, mocked_db):
     ]
     result = await resolver.resolve_sites(specs)
     assert result[("mist", "site-101")] == "site-key-1"
-    assert result[("mist", "site-202")]
-    # One bulk find, one bulk create for the missing site
-    assert mocked_db.fetch.call_count == 1
-    assert mocked_db.executemany.call_count == 1
+    # The identity table is authoritative, so a concurrent winner is adopted.
+    assert result[("mist", "site-202")] == "site-key-2"
+    # sites insert + site_identities claim
+    assert mocked_db.executemany.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_resolve_sites_dedupes_repeated_specs(resolver, mocked_db):
+    """Callers pass one spec per DEVICE, so the same site repeats many times.
+
+    Each repeat used to be treated as a distinct missing site and, because the
+    bulk create minted a fresh uuid per row with a never-firing
+    ON CONFLICT (site_key), produced one duplicate `sites` row per device.
+    """
+    mocked_db.fetch.side_effect = [
+        [],  # site_identities: nothing known
+        [],  # legacy fallback: nothing known
+        [{"vendor": "mist", "vendor_site_id": "site-101", "site_key": "site-key-1"}],
+    ]
+    specs = [("site-101", "Pimpri", "mist", None)] * 345
+
+    result = await resolver.resolve_sites(specs)
+
+    assert result[("mist", "site-101")] == "site-key-1"
+    sites_insert = next(
+        c for c in mocked_db.executemany.call_args_list if "INSERT INTO sites" in c.args[0]
+    )
+    assert len(sites_insert.args[1]) == 1, "345 repeats of one site must create one row"
+
+
+# ---------------------------------------------------------------------------
+# MAC reconciliation — one physical device, many vendor id forms
+# ---------------------------------------------------------------------------
+
+class TestMacReconciliation:
+    """Mist emits three id forms for the same AP: '00000000-0000-0000-1000-<mac>'
+    (inventory), a bare MAC (LLDP/topology), and a site-device UUID (events).
+
+    Exact-match-only lookup minted a separate canonical device per form, so
+    `devices` held 4,021 rows for 1,966 distinct MACs and current events
+    resolved against none of them.
+    """
+
+    @pytest.mark.asyncio
+    async def test_find_device_falls_back_to_mac_and_registers_alias(self, resolver, mocked_db):
+        # No identity row for the bare-MAC form, but a device with that MAC exists.
+        mocked_db.fetchrow.side_effect = [None, {"device_key": "dev-key-1"}]
+
+        key = await resolver.find_device("mist", "a8:53:7d:81:d7:4f")
+
+        assert key == "dev-key-1", "must reconcile to the existing canonical device"
+        aliases = [
+            c for c in mocked_db.execute.call_args_list
+            if "INSERT INTO device_identities" in c.args[0]
+        ]
+        assert aliases, "the new id form must be registered as an alias"
+        assert aliases[0].args[3] == "a8:53:7d:81:d7:4f", "alias keeps the raw vendor id"
+
+    @pytest.mark.asyncio
+    async def test_non_mac_id_does_not_reconcile(self, resolver, mocked_db):
+        """A UUID that is not a MAC must not be coerced into a MAC lookup."""
+        mocked_db.fetchrow.return_value = None
+        key = await resolver.find_device("mist", "05a6aa52-c525-4491-9be9-2c08489c3686")
+        assert key is None
+        # Only the exact identity lookup ran; no devices.mac probe.
+        assert mocked_db.fetchrow.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_bulk_create_reuses_device_for_known_mac(self, resolver, mocked_db):
+        """A second id form for a known MAC adds an alias, not a second device."""
+        mocked_db.fetch.side_effect = [
+            [],  # no existing identities for these vendor ids
+            [{"mac": "a8537d81d74f", "device_key": "dev-key-1"}],  # but the MAC is known
+        ]
+
+        result = await resolver.resolve_devices(
+            [("mist", "00000000-0000-0000-1000-a8537d81d74f", {"mac": "a8537d81d74f"})]
+        )
+
+        assert result[("mist", "00000000-0000-0000-1000-a8537d81d74f")] == "dev-key-1"
+        device_inserts = [
+            c for c in mocked_db.executemany.call_args_list
+            if "INSERT INTO devices" in c.args[0]
+        ]
+        assert not device_inserts, "must not mint a second canonical device"
+
+    @pytest.mark.asyncio
+    async def test_bulk_create_collapses_same_mac_within_one_batch(self, resolver, mocked_db):
+        """Two id forms of one AP arriving in the same batch share one device_key."""
+        # identity lookup, MAC fallback for misses, MAC probe inside create,
+        # post-insert winner adoption
+        mocked_db.fetch.side_effect = [[], [], [], []]
+
+        result = await resolver.resolve_devices([
+            ("mist", "00000000-0000-0000-1000-a8537d81d74f", {"mac": "a8537d81d74f"}),
+            ("mist", "a8537d81d74f", {"mac": "a8537d81d74f"}),
+        ])
+
+        keys = set(result.values())
+        assert len(keys) == 1, f"one physical AP must yield one device_key, got {keys}"
+        device_inserts = next(
+            c for c in mocked_db.executemany.call_args_list if "INSERT INTO devices" in c.args[0]
+        )
+        assert len(device_inserts.args[1]) == 1
+        identity_inserts = next(
+            c for c in mocked_db.executemany.call_args_list
+            if "INSERT INTO device_identities" in c.args[0]
+        )
+        assert len(identity_inserts.args[1]) == 2, "both forms must be registered as aliases"
+
+    @pytest.mark.asyncio
+    async def test_adopts_concurrently_created_device(self, resolver, mocked_db):
+        """Two collectors racing on the same MAC must converge on one device_key.
+
+        Each collector holds its own resolver cache, so on a cold start both mint
+        a key for the same MAC. The MAC uniqueness index means one INSERT is
+        skipped; returning the skipped key produced FK violations downstream on
+        topology_nodes.canonical_key.
+        """
+        # Only three queries run: the '00000000-...' id is 32 hex chars, so it is
+        # not a MAC and the bulk MAC fallback short-circuits without querying.
+        mocked_db.fetch.side_effect = [
+            [],  # no identities
+            [],  # MAC not known when create begins
+            [{"mac": "a8537d81d74f", "device_key": "winner-key"}],  # another writer won
+        ]
+
+        result = await resolver.resolve_devices(
+            [("mist", "00000000-0000-0000-1000-a8537d81d74f", {"mac": "a8537d81d74f"})]
+        )
+
+        key = result[("mist", "00000000-0000-0000-1000-a8537d81d74f")]
+        assert key == "winner-key", "must adopt the persisted device, not the lost one"
+
+        identity_insert = next(
+            c for c in mocked_db.executemany.call_args_list
+            if "INSERT INTO device_identities" in c.args[0]
+        )
+        assert identity_insert.args[1][0][0] == "winner-key", (
+            "the alias must attach to the surviving device"
+        )
