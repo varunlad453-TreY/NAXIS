@@ -264,131 +264,134 @@ class WorkerDaemon:
 
         logger.debug("Worker pass complete")
 
+    async def _safe_collect_task(self, name: str, coro, timeout: float = 45.0) -> List[CollectorOutcome]:
+        try:
+            res = await asyncio.wait_for(coro, timeout=timeout)
+            if isinstance(res, CollectorOutcome):
+                return [res]
+            elif isinstance(res, list):
+                return [item for item in res if isinstance(item, CollectorOutcome)]
+            return []
+        except asyncio.TimeoutError:
+            logger.warning("Collector '%s' timed out after %.1fs — skipping pass", name, timeout)
+            return []
+        except Exception:
+            logger.exception("Collector '%s' failed", name)
+            return []
+
     async def _collect_all(self) -> list[CollectorOutcome]:
-        """Run each collector and record outcomes to the telemetry ledger."""
+        """Run each collector concurrently with timeouts and record outcomes to the telemetry ledger."""
         since = self._last_collected
         now = datetime.now(timezone.utc)
-        outcomes: list[CollectorOutcome] = []
+        tasks = []
 
         # Mist events
-        mist_outcome = await self._run_collector(self._mist, since)
-        outcomes.append(mist_outcome)
+        tasks.append(self._safe_collect_task("mist_events", self._run_collector(self._mist, since)))
 
         # Mist inventory
-        inv_outcome = await self._run_collector_inventory(self._mist_inventory)
-        outcomes.append(inv_outcome)
+        tasks.append(self._safe_collect_task("mist_inventory", self._run_collector_inventory(self._mist_inventory)))
 
-        # DNAC sub-collectors (devices, alarms, topology, clients, interfaces)
+        # DNAC sub-collectors
         if self._dnac.is_configured:
-            try:
-                dnac_outcomes = await self._dnac.collect_all()
-                for o in dnac_outcomes:
+            async def _dnac_run():
+                outcomes = await self._dnac.collect_all()
+                for o in outcomes:
                     try:
                         await record_collector_run(o)
                     except Exception:
                         logger.exception("Failed to record DNAC run for %s", o.collector_id)
-                outcomes.extend(dnac_outcomes)
-            except Exception:
-                logger.exception("DNAC collection failed")
+                return outcomes
+            tasks.append(self._safe_collect_task("dnac", _dnac_run()))
 
-        # Mist topology sub-collectors (AP history, RF, client topology, wired uplinks, radio neighbors)
+        # Mist topology sub-collectors
         if self._mist_topology.is_configured:
-            try:
-                topo_outcomes = await self._mist_topology.collect_all()
-                for o in topo_outcomes:
+            async def _mist_topo_run():
+                outcomes = await self._mist_topology.collect_all()
+                for o in outcomes:
                     try:
                         await record_collector_run(o)
                     except Exception:
                         logger.exception("Failed to record Mist topology run for %s", o.collector_id)
-                outcomes.extend(topo_outcomes)
-            except Exception:
-                logger.exception("Mist topology collection failed")
+                return outcomes
+            tasks.append(self._safe_collect_task("mist_topology", _mist_topo_run()))
 
-        # VeloCloud SD-WAN sub-collectors (edges, links, tunnels, events, apps)
+        # VeloCloud SD-WAN sub-collectors & inventory
         if self._velocloud.is_configured:
-            try:
-                vc_outcomes = await self._velocloud.collect_all()
-                for o in vc_outcomes:
+            async def _velo_run():
+                outcomes = await self._velocloud.collect_all()
+                for o in outcomes:
                     try:
                         await record_collector_run(o)
                     except Exception:
                         logger.exception("Failed to record VeloCloud run for %s", o.collector_id)
-                outcomes.extend(vc_outcomes)
-            except Exception:
-                logger.exception("VeloCloud collection failed")
+                try:
+                    inv_outcome = await self._run_collector_inventory(self._velocloud_inventory)
+                    if inv_outcome:
+                        outcomes.append(inv_outcome)
+                except Exception:
+                    logger.exception("VeloCloud inventory collection failed")
+                return outcomes
+            tasks.append(self._safe_collect_task("velocloud", _velo_run()))
 
-            # VeloCloud inventory → populates inventory table for topology sync
-            try:
-                inv_outcome = await self._run_collector_inventory(self._velocloud_inventory)
-                outcomes.append(inv_outcome)
-            except Exception:
-                logger.exception("VeloCloud inventory collection failed")
-
-        # Arista WLC sub-collectors (clients, APs, radios, events)
+        # Arista WLC sub-collectors
         if self._arista_wlc.is_configured:
-            try:
-                awlc_outcomes = await self._arista_wlc.collect_all()
-                for o in awlc_outcomes:
+            async def _arista_run():
+                outcomes = await self._arista_wlc.collect_all()
+                for o in outcomes:
                     try:
                         await record_collector_run(o)
                     except Exception:
                         logger.exception("Failed to record Arista WLC run for %s", o.collector_id)
-                outcomes.extend(awlc_outcomes)
-            except Exception:
-                logger.exception("Arista WLC collection failed")
+                return outcomes
+            tasks.append(self._safe_collect_task("arista_wlc", _arista_run()))
 
-        # HPE Aruba Central collector (WP-3.5)
+        # HPE Aruba Central
         if self._aruba_central.is_configured:
-            try:
+            async def _aruba_run():
                 aruba_outcome = await self._aruba_central.collect()
                 await record_collector_run(aruba_outcome)
-                outcomes.append(aruba_outcome)
-            except Exception:
-                logger.exception("Aruba Central collection failed")
+                return [aruba_outcome]
+            tasks.append(self._safe_collect_task("aruba_central", _aruba_run()))
 
-        # Aruba ClearPass collector (WP-3.5)
+        # Aruba ClearPass
         if self._clearpass.is_configured:
-            try:
+            async def _cp_run():
                 cp_outcome = await self._clearpass.collect()
                 await record_collector_run(cp_outcome)
-                outcomes.append(cp_outcome)
-            except Exception:
-                logger.exception("ClearPass collection failed")
+                return [cp_outcome]
+            tasks.append(self._safe_collect_task("clearpass", _cp_run()))
 
-        # Cloudflare Path Segment collector (WP-3.5)
+        # Cloudflare Path Segment
         if self._cloudflare_segment.is_configured:
-            try:
+            async def _cf_run():
                 cf_outcome = await self._cloudflare_segment.collect()
                 await record_collector_run(cf_outcome)
-                outcomes.append(cf_outcome)
-            except Exception:
-                logger.exception("Cloudflare path segment collection failed")
+                return [cf_outcome]
+            tasks.append(self._safe_collect_task("cloudflare", _cf_run()))
 
-        # Netskope Path Segment collector (WP-3.5)
+        # Netskope Path Segment
         if self._netskope_segment.is_configured:
-            try:
+            async def _ns_run():
                 ns_outcome = await self._netskope_segment.collect()
                 await record_collector_run(ns_outcome)
-                outcomes.append(ns_outcome)
-            except Exception:
-                logger.exception("Netskope path segment collection failed")
+                return [ns_outcome]
+            tasks.append(self._safe_collect_task("netskope", _ns_run()))
 
-        # Vendor-Neutral SD-WAN Adapter (WP-3.6)
+        # Vendor-Neutral SD-WAN Adapter
         if self._sdwan_adapter.is_configured:
-            try:
-                sdwan_outcomes = await self._sdwan_adapter.collect_all()
-                for o in sdwan_outcomes:
+            async def _sdwan_adapter_run():
+                outcomes = await self._sdwan_adapter.collect_all()
+                for o in outcomes:
                     try:
                         await record_collector_run(o)
                     except Exception:
                         logger.exception("Failed to record SD-WAN adapter run for %s", o.collector_id)
-                outcomes.extend(sdwan_outcomes)
-            except Exception:
-                logger.exception("SD-WAN adapter collection failed")
+                return outcomes
+            tasks.append(self._safe_collect_task("sdwan_adapter", _sdwan_adapter_run()))
 
-        # SNMP Poller — discovers LLDP/CDP topology edges and interface events
+        # SNMP Poller
         if self._snmp_poller._enabled and self._snmp_poller._targets:
-            try:
+            async def _snmp_run():
                 snmp_events = await self._snmp_poller.collect()
                 if snmp_events:
                     snmp_outcome = CollectorOutcome(
@@ -402,9 +405,17 @@ class WorkerDaemon:
                         await record_collector_run(snmp_outcome)
                     except Exception:
                         logger.exception("Failed to record SNMP poller run")
-                    outcomes.append(snmp_outcome)
-            except Exception:
-                logger.exception("SNMP polling failed")
+                    return [snmp_outcome]
+                return []
+            tasks.append(self._safe_collect_task("snmp_poller", _snmp_run()))
+
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        outcomes: list[CollectorOutcome] = []
+        for r in results:
+            if isinstance(r, list):
+                outcomes.extend(r)
+            elif isinstance(r, Exception):
+                logger.error("Error during concurrent collection task: %s", r)
 
         self._last_collected = now
         return outcomes

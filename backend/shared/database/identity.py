@@ -293,9 +293,10 @@ class IdentityResolver:
             return None
         row = await db.fetchrow(
             """
-            SELECT device_key
-            FROM device_identities
-            WHERE vendor = $1 AND vendor_device_id = $2
+            SELECT di.device_key
+            FROM device_identities di
+            JOIN devices d ON di.device_key = d.device_key
+            WHERE di.vendor = $1 AND di.vendor_device_id = $2
             """,
             vendor,
             vendor_device_id,
@@ -551,6 +552,7 @@ class IdentityResolver:
             """
             SELECT i.vendor, i.vendor_device_id, i.device_key
             FROM device_identities i
+            JOIN devices d ON i.device_key = d.device_key
             JOIN (SELECT * FROM unnest($1::text[], $2::text[]) AS t(vendor, vendor_device_id)) q
               ON i.vendor = q.vendor AND i.vendor_device_id = q.vendor_device_id
             """,

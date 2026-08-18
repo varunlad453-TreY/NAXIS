@@ -790,24 +790,47 @@ async def _upsert_node(
     canonical_key: str = "",
     props: Dict[str, Any] = None,
 ) -> None:
-    await db.execute(
-        """
-        INSERT INTO topology_nodes
-            (node_id, node_type, name, ip_address, vendor, model, site_id, canonical_key, props, updated_at)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, NULLIF($8, ''), $9::jsonb, NOW())
-        ON CONFLICT (node_id) DO UPDATE SET
-            name          = EXCLUDED.name,
-            ip_address    = COALESCE(NULLIF(EXCLUDED.ip_address,''), topology_nodes.ip_address),
-            vendor        = EXCLUDED.vendor,
-            model         = COALESCE(NULLIF(EXCLUDED.model,''), topology_nodes.model),
-            site_id       = COALESCE(NULLIF(EXCLUDED.site_id,''), topology_nodes.site_id),
-            canonical_key = COALESCE(NULLIF(EXCLUDED.canonical_key,''), topology_nodes.canonical_key),
-            props         = EXCLUDED.props,
-            updated_at    = NOW()
-        """,
-        node_id, node_type, name, ip_address, vendor, model, site_id, canonical_key,
-        json.dumps(props or {}),
-    )
+    try:
+        await db.execute(
+            """
+            INSERT INTO topology_nodes
+                (node_id, node_type, name, ip_address, vendor, model, site_id, canonical_key, props, updated_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, NULLIF($8, ''), $9::jsonb, NOW())
+            ON CONFLICT (node_id) DO UPDATE SET
+                name          = EXCLUDED.name,
+                ip_address    = COALESCE(NULLIF(EXCLUDED.ip_address,''), topology_nodes.ip_address),
+                vendor        = EXCLUDED.vendor,
+                model         = COALESCE(NULLIF(EXCLUDED.model,''), topology_nodes.model),
+                site_id       = COALESCE(NULLIF(EXCLUDED.site_id,''), topology_nodes.site_id),
+                canonical_key = COALESCE(NULLIF(EXCLUDED.canonical_key,''), topology_nodes.canonical_key),
+                props         = EXCLUDED.props,
+                updated_at    = NOW()
+            """,
+            node_id, node_type, name, ip_address, vendor, model, site_id, canonical_key,
+            json.dumps(props or {}),
+        )
+    except Exception as exc:
+        if "foreign key" in str(exc).lower() or "canonical_key" in str(exc).lower():
+            logger.warning("ForeignKeyViolation on node %s canonical_key '%s'. Falling back to NULL canonical_key.", node_id, canonical_key)
+            await db.execute(
+                """
+                INSERT INTO topology_nodes
+                    (node_id, node_type, name, ip_address, vendor, model, site_id, canonical_key, props, updated_at)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, NULL, $8::jsonb, NOW())
+                ON CONFLICT (node_id) DO UPDATE SET
+                    name          = EXCLUDED.name,
+                    ip_address    = COALESCE(NULLIF(EXCLUDED.ip_address,''), topology_nodes.ip_address),
+                    vendor        = EXCLUDED.vendor,
+                    model         = COALESCE(NULLIF(EXCLUDED.model,''), topology_nodes.model),
+                    site_id       = COALESCE(NULLIF(EXCLUDED.site_id,''), topology_nodes.site_id),
+                    props         = EXCLUDED.props,
+                    updated_at    = NOW()
+                """,
+                node_id, node_type, name, ip_address, vendor, model, site_id,
+                json.dumps(props or {}),
+            )
+        else:
+            raise
 
 
 async def _upsert_edge(
