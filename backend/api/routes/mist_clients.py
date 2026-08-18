@@ -376,3 +376,109 @@ async def get_client_timeline_csv(
         media_type="text/csv",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+async def _get_timeline_cached(normalized: str, start: int, end: int) -> Dict[str, Any]:
+    cache_key = (normalized, start, end)
+    now = time.time()
+    if cache_key in _cache:
+        cached_at, data = _cache[cache_key]
+        if now - cached_at < _CACHE_TTL_S:
+            return data
+    data = await _build_timeline(normalized, start, end)
+    _cache[cache_key] = (now, data)
+    return data
+
+
+async def _fetch_all_clients() -> List[Dict[str, Any]]:
+    """Fetch current active clients from all Mist sites."""
+    mc = MistClient()
+    if not mc.enabled():
+        raise HTTPException(status_code=503, detail="Mist integration not configured")
+
+    async with httpx.AsyncClient(headers=mc._headers, timeout=httpx.Timeout(30.0)) as client:
+        # Get all sites first
+        try:
+            sites_data = await mc._get(client, f"/api/v1/orgs/{mc._org_id}/sites")
+            sites = [{
+                "id": s["id"],
+                "name": s["name"]
+            } for s in sites_data]
+        except Exception as e:
+            logger.error("Failed to fetch Mist sites: %s", e)
+            return []
+
+        if not sites:
+            return []
+
+        # Fetch clients from all sites concurrently
+        async def get_site_clients(site: Dict[str, str]) -> List[Dict[str, Any]]:
+            try:
+                # Get current active clients for this site
+                clients_data = await mc._get(
+                    client,
+                    f"/api/v1/sites/{site['id']}/clients/search",
+                    {"limit": 1000}  # Get up to 1000 clients per site
+                )
+
+                results = clients_data.get("results", []) if isinstance(clients_data, dict) else clients_data or []
+
+                # Shape the client data for the frontend
+                shaped_clients = []
+                for c in results:
+                    # Only include currently connected clients
+                    if c.get("last_seen", 0) > (time.time() - 300):  # Active in last 5 minutes
+                        shaped_clients.append({
+                            "client_mac": c.get("mac", ""),
+                            "mac": c.get("mac", ""),
+                            "hostname": c.get("hostname", ""),
+                            "username": c.get("username", ""),
+                            "host_name": c.get("hostname", ""),
+                            "ip_address": c.get("ip", ""),
+                            "ip": c.get("ip", ""),
+                            "ssid": c.get("ssid", ""),
+                            "ap_mac": c.get("ap_mac", ""),
+                            "ap_name": c.get("ap_name", ""),
+                            "rssi": c.get("rssi", 0),
+                            "rssi_dbm": c.get("rssi", 0),
+                            "snr": c.get("snr", 0),
+                            "snr_db": c.get("snr", 0),
+                            "auth_type": c.get("auth_type", ""),
+                            "roaming_latency_ms": 18,  # Default value
+                            "device_type": "laptop" if "laptop" in str(c.get("hostname", "")).lower() else
+                                         "mobile" if any(x in str(c.get("hostname", "")).lower() for x in ["phone", "android", "ios"]) else "iot",
+                            "status": "excellent" if c.get("rssi", 0) > -65 else "fair" if c.get("rssi", 0) > -75 else "poor",
+                            "site_id": site["id"],
+                            "site_name": site["name"],
+                            "last_seen": c.get("last_seen", 0),
+                            "band": c.get("band", ""),
+                        })
+
+                return shaped_clients
+            except Exception as e:
+                logger.debug("Failed to fetch clients from site %s: %s", site["name"], e)
+                return []
+
+        # Fetch clients from all sites in parallel
+        site_client_lists = await asyncio.gather(*[get_site_clients(site) for site in sites])
+
+        # Flatten and return all clients
+        all_clients = []
+        for client_list in site_client_lists:
+            all_clients.extend(client_list)
+
+        # Sort by signal strength (best first)
+        all_clients.sort(key=lambda c: c.get("rssi", -100), reverse=True)
+
+        return all_clients
+
+
+@router.get("")
+@cached_api_route(ttl_seconds=_CACHE_TTL_S, key_prefix="mist_all_clients")
+async def get_all_clients(
+    response: Response,
+    limit: Optional[int] = Query(1000, le=5000),
+) -> List[Dict[str, Any]]:
+    """Get all currently active Mist clients across all sites."""
+    clients = await _fetch_all_clients()
+    return clients[:limit] if limit else clients
