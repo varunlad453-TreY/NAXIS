@@ -159,6 +159,10 @@ class TestVeloCloudCollector:
             settings.velocloud_url = settings_overrides.get("url", "https://vco.example.com/")
             settings.velocloud_api_key = settings_overrides.get("api_key", "test-api-key")
             settings.velocloud_enabled = settings_overrides.get("enabled", True)
+            # MagicMock auto-attributes are truthy, which would silently enable the
+            # enterprise-ID override in every test. Set both explicitly.
+            settings.velocloud_enterprise_id = settings_overrides.get("enterprise_id", "")
+            settings.velocloud_verify_ssl = settings_overrides.get("verify_ssl", True)
             gs.return_value = settings
             return VeloCloudCollector()
 
@@ -247,23 +251,32 @@ class TestVeloCloudCollector:
         c = self._make_collector()
         client = _mock_http_client(_mock_response(200, {"id": 42}))
         eid = await c._get_enterprise_id(client)
-        assert eid == "42"
+        assert eid == 42
 
     @pytest.mark.asyncio
     async def test_get_enterprise_id_empty_dict(self):
-        """Empty dict returns empty string (falsy, handled downstream)."""
+        """Empty dict returns None."""
         c = self._make_collector()
         client = _mock_http_client(_mock_response(200, {}))
         eid = await c._get_enterprise_id(client)
-        assert eid == ""
+        assert eid is None
 
     @pytest.mark.asyncio
     async def test_get_enterprise_id_no_id_key(self):
-        """Dict without 'id' returns empty string."""
+        """Dict without 'id' returns None."""
         c = self._make_collector()
         client = _mock_http_client(_mock_response(200, {"name": "Acme"}))
         eid = await c._get_enterprise_id(client)
-        assert eid == ""
+        assert eid is None
+
+    @pytest.mark.asyncio
+    async def test_get_enterprise_id_override_skips_discovery(self):
+        """A configured override returns without an API call."""
+        c = self._make_collector(enterprise_id="424")
+        client = AsyncMock()
+        eid = await c._get_enterprise_id(client)
+        assert eid == 424
+        client.post.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_get_enterprise_id_api_error(self):
@@ -1138,7 +1151,8 @@ class TestVelocloudInventoryCollector:
         assert outcome.rows_written == 0
 
     @pytest.mark.asyncio
-    async def test_collect_enterprise_api_fails_still_fetches_edges(self):
+    async def test_collect_enterprise_api_failure_is_an_error(self):
+        """A 5xx on getEnterprise must not be reported as a successful run."""
         c = self._make_collector()
         resp_enterprise = _mock_response(500, "error")
         resp_edges = _mock_response(200, [_make_edge_raw()])
@@ -1152,11 +1166,11 @@ class TestVelocloudInventoryCollector:
                        AsyncMock()):
                 outcome = await c.collect()
 
-        assert outcome.status == "success"
+        assert outcome.status == "error"
 
     @pytest.mark.asyncio
-    async def test_collect_edges_api_fails_gracefully(self):
-        """Fetch failures are handled internally; outcome is success with 0 rows."""
+    async def test_collect_edges_api_failure_is_an_error(self):
+        """A fetch failure must surface in the ledger, not read as 0 rows written."""
         c = self._make_collector()
         resp_enterprise = _mock_response(200, {"id": 1})
         resp_edges = _mock_response(500, "error")
@@ -1168,8 +1182,30 @@ class TestVelocloudInventoryCollector:
                    _mock_async_client_cm(mock_client)):
             outcome = await c.collect()
 
-        assert outcome.status == "success"
+        assert outcome.status == "error"
         assert outcome.rows_written == 0
+
+    @pytest.mark.asyncio
+    async def test_collect_invalid_token_envelope_is_an_error(self):
+        """The VCO answers an invalid token with HTTP 200 + an error envelope.
+
+        raise_for_status() passes, so without envelope detection the collector
+        reported success with zero rows and the outage stayed invisible.
+        """
+        c = self._make_collector()
+        resp_enterprise = _mock_response(
+            200, {"error": {"code": -32000, "message": "tokenError [Invalid API Token]"}}
+        )
+
+        mock_client = AsyncMock()
+        mock_client.post.side_effect = [resp_enterprise]
+
+        with patch("backend.worker.collectors.velocloud_inventory.httpx.AsyncClient",
+                   _mock_async_client_cm(mock_client)):
+            outcome = await c.collect()
+
+        assert outcome.status == "error"
+        assert "tokenError" in (outcome.error_text or "")
 
     @pytest.mark.asyncio
     async def test_collect_upsert_called(self):

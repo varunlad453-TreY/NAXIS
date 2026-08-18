@@ -24,6 +24,11 @@ COPY backend/api /app/api
 COPY backend/worker /app/worker
 COPY backend/config /app/config
 COPY backend/main.py /app/main.py
+# The migration runner and the SQL it applies. docker-entrypoint-initdb.d only
+# fires on an empty data directory and does not exist on a managed Postgres, so
+# the schema has to be applicable from inside the image.
+COPY scripts /app/scripts
+COPY schemas /app/schemas
 
 EXPOSE 8000
 
@@ -55,6 +60,11 @@ COPY backend/api /app/api
 COPY backend/worker /app/worker
 COPY backend/config /app/config
 COPY backend/main.py /app/main.py
+# The migration runner and the SQL it applies. docker-entrypoint-initdb.d only
+# fires on an empty data directory and does not exist on a managed Postgres, so
+# the schema has to be applicable from inside the image.
+COPY scripts /app/scripts
+COPY schemas /app/schemas
 
 RUN useradd -m -u 1000 naxis && chown -R naxis:naxis /app
 USER naxis
@@ -63,7 +73,9 @@ ENV PYTHONPATH=/app
 
 EXPOSE 8000
 
+# /health, not /health/live — the latter is not a route, so this healthcheck
+# always failed. It went unnoticed because compose overrides it with its own.
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-    CMD curl -f http://localhost:8000/health/live || exit 1
+    CMD curl -f http://localhost:8000/health || exit 1
 
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]

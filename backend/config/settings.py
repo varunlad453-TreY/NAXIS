@@ -69,7 +69,9 @@ class Settings(BaseSettings):
     # VeloCloud & SD-WAN Adapter (WP-3.6)
     velocloud_url: str = Field(default="", description="VeloCloud orchestrator URL")
     velocloud_api_key: str = Field(default="", description="VeloCloud API key")
+    velocloud_enterprise_id: str = Field(default="", description="VeloCloud enterprise ID (skip auto-discover)")
     velocloud_enabled: bool = Field(default=False, description="Enable VeloCloud integration")
+    velocloud_verify_ssl: bool = Field(default=True, description="Verify SSL for VeloCloud requests")
     sdwan_provider: str = Field(default="velocloud", description="Active SD-WAN provider ('velocloud' | 'silverpeak')")
     silverpeak_host: str = Field(default="", description="Silver Peak Orchestrator URL")
     silverpeak_api_key: str = Field(default="", description="Silver Peak API Key")
@@ -120,6 +122,17 @@ class Settings(BaseSettings):
         """Parse comma-separated SNMP target IPs from env var."""
         return [ip.strip() for ip in self.snmp_targets.split(",") if ip.strip()]
 
+    # SNMP trap receiver
+    snmp_trap_enabled: bool = Field(default=False, description="Enable SNMP trap receiver")
+    snmp_trap_host: str = Field(default="0.0.0.0", description="SNMP trap listener bind address")
+    snmp_trap_port: int = Field(default=162, description="SNMP trap listener UDP port")
+
+    # Syslog receiver
+    syslog_enabled: bool = Field(default=False, description="Enable syslog receiver")
+    syslog_host: str = Field(default="0.0.0.0", description="Syslog listener bind address")
+    syslog_udp_port: int = Field(default=514, description="Syslog UDP listener port")
+    syslog_tcp_port: int = Field(default=1514, description="Syslog TCP listener port (non-privileged)")
+
     # Collectors
     collector_interval: int = Field(default=60, description="Worker collection interval in seconds")
 
@@ -135,6 +148,10 @@ class Settings(BaseSettings):
     )
 
     # Correlation
+    incident_stale_hours: int = Field(
+        default=48,
+        description="Auto-resolve open incidents with no new evidence for this many hours (0 = never)",
+    )
     correlation_time_window: int = Field(default=300, description="Correlation time window in seconds")
     correlation_min_events: int = Field(default=2, description="Minimum events to form an incident")
     correlation_topology_cascade: bool = Field(

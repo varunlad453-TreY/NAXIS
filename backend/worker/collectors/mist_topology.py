@@ -18,7 +18,9 @@ Entry point: called by the worker daemon every collection cycle.
 """
 
 import asyncio
+import json
 import logging
+import re
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
@@ -59,11 +61,19 @@ except ImportError:  # pragma: no cover - supports both entry-point styles
 try:
     from backend.shared.database.events import latest_event_states
     from backend.shared.database.identity import IdentityResolver
+    from backend.shared.database.client import db
 except ImportError:  # pragma: no cover - supports both entry-point styles
     from shared.database.events import latest_event_states
     from shared.database.identity import IdentityResolver
+    from shared.database.client import db
 
 logger = logging.getLogger(__name__)
+
+
+def _normalize_mac_str(value: str) -> str:
+    """Lowercase, separator-free MAC, or '' if it is not one."""
+    cleaned = re.sub(r"[^0-9a-fA-F]", "", value or "").lower()
+    return cleaned if len(cleaned) == 12 else ""
 
 _SOURCE_SYSTEM = "mist"
 _MAX_PAGES = 10
@@ -748,6 +758,15 @@ class MistWiredUplinkCollector:
                 devices = site_devices.get(site_id, [])
                 uplinks.extend(self._extract_uplinks(site_id, devices))
 
+            # Persist current uplink state before diffing. These LLDP readings are
+            # the only source of AP->switch adjacency, and they were previously
+            # kept ONLY as diff-on-write events: a steady-state pass emitted
+            # nothing and the adjacency was thrown away, so topology_sync could
+            # rebuild physical links only by mining the event buffer. Writing
+            # them to inventory.props is what makes topology independent of
+            # events (WP-2.9).
+            await self._persist_uplinks(uplinks)
+
             states = await latest_event_states([self._state_key(u) for u in uplinks])
 
             events: List[UnifiedEvent] = []
@@ -777,6 +796,49 @@ class MistWiredUplinkCollector:
             outcome.mark_error(str(exc))
             logger.exception("Mist wired uplink collection failed")
         return outcome
+
+    @staticmethod
+    async def _persist_uplinks(uplinks: List[Dict[str, Any]]) -> int:
+        """Write each AP's current uplink into inventory.props->'uplink'.
+
+        Matched on MAC because inventory keys Mist APs by
+        '00000000-0000-0000-1000-<mac>' while LLDP reports the bare MAC.
+        Merges into props so other writers' keys survive.
+        """
+        if not db.pool:
+            return 0
+
+        rows = []
+        for u in uplinks:
+            ap_mac = _normalize_mac_str(u.get("uplink_mac", ""))
+            switch_mac = u.get("switch_mac", "") or ""
+            if not ap_mac or not switch_mac:
+                continue
+            rows.append((
+                ap_mac,
+                json.dumps({
+                    "mac": switch_mac,
+                    "port_id": u.get("port_id", "") or "",
+                    "system_name": u.get("lldp_system_name", "") or "",
+                    "up": bool(u.get("up", True)),
+                }),
+            ))
+
+        if not rows:
+            return 0
+
+        await db.executemany(
+            """
+            UPDATE inventory
+               SET props = COALESCE(props, '{}'::jsonb) || jsonb_build_object('uplink', $2::jsonb),
+                   updated_at = NOW()
+             WHERE platform = 'mist'
+               AND REPLACE(LOWER(mac), ':', '') = $1
+            """,
+            rows,
+        )
+        logger.info("Mist wired uplinks: persisted %d uplink(s) to inventory.props", len(rows))
+        return len(rows)
 
     @staticmethod
     def _state_key(raw: Dict[str, Any]) -> str:

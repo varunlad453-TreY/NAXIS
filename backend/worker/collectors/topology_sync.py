@@ -65,19 +65,40 @@ class TopologySync:
         self._identity = IdentityResolver()
 
     async def sync(self) -> None:
-        if self._mist_enabled:
-            await self._sync_mist_topology()
-        if self._velo_enabled:
-            await self._sync_velocloud_topology()
-        if self._dnac_enabled:
-            await self._sync_dnac_topology()
-        if self._arista_enabled:
-            await self._sync_arista_wlc_topology()
-        if self._aruba_enabled:
-            await self._sync_aruba_topology()
-        if self._mist_enabled or self._velo_enabled or self._dnac_enabled or self._arista_enabled or self._aruba_enabled:
-            await self._sync_cross_vendor_links()
-        logger.info("Topology sync complete")
+        # Each vendor is isolated: one vendor's failure must not strand the
+        # others, or a single bad row leaves the whole graph stale and the
+        # correlation cascade with nothing to traverse.
+        stages = [
+            (self._mist_enabled, "mist", self._sync_mist_topology),
+            (self._velo_enabled, "velocloud", self._sync_velocloud_topology),
+            (self._dnac_enabled, "dnac", self._sync_dnac_topology),
+            (self._arista_enabled, "arista_wlc", self._sync_arista_wlc_topology),
+            (self._aruba_enabled, "aruba_central", self._sync_aruba_topology),
+        ]
+
+        any_enabled = False
+        failed: list[str] = []
+        for enabled, name, fn in stages:
+            if not enabled:
+                continue
+            any_enabled = True
+            try:
+                await fn()
+            except Exception:
+                failed.append(name)
+                logger.exception("Topology sync failed for %s — continuing", name)
+
+        if any_enabled:
+            try:
+                await self._sync_cross_vendor_links()
+            except Exception:
+                failed.append("cross_vendor_links")
+                logger.exception("Cross-vendor link sync failed — continuing")
+
+        if failed:
+            logger.warning("Topology sync complete with %d failed stage(s): %s", len(failed), ", ".join(failed))
+        else:
+            logger.info("Topology sync complete")
 
     # ── Mist topology ─────────────────────────────────────────────────────────
 
@@ -122,7 +143,9 @@ class TopologySync:
         ]
         device_map = await self._identity.resolve_devices(device_pairs)
 
-        # Upsert site nodes (canonical keys)
+        # Upsert site nodes. canonical_key is FK'd to devices(device_key) — a
+        # site_key belongs to sites, so it must not go in that column; the
+        # site_key is carried in node_id instead.
         for site_id, site_name in {(row["site_id"], row["site_name"] or row["site_id"]) for row in rows if row["site_id"]}:
             site_key = site_map.get(("mist", site_id))
             if not site_key:
@@ -133,8 +156,7 @@ class TopologySync:
                 name=site_name,
                 vendor="mist",
                 site_id=site_id,
-                canonical_key=site_key,
-                props={"platform": "mist", "vendor_site_id": site_id},
+                props={"platform": "mist", "vendor_site_id": site_id, "site_key": site_key},
             )
 
         # Upsert AP and Switch nodes + site_membership edges
@@ -190,10 +212,23 @@ class TopologySync:
         self, ap_node_ids: Dict[str, str]
     ) -> None:
         """
-        Build physical links (switch → AP) in the links table directly from
-        inventory state (WP-2.9), with events fallback.
+        Build physical links (switch → AP) in the links table from inventory
+        state where the collector records an uplink (WP-2.9), falling back to
+        `link_up` event metadata.
 
-        Guarantees topology links survive raw event pruning after 48 hours.
+        NOTE: the Mist inventory collector currently writes an empty `props`
+        for every AP, so in practice every link resolves through the events
+        fallback. WP-2.9's "independent of the events table" only holds once
+        the collector persists uplink data into `inventory.props`.
+
+        The previous version of this query read `i.attributes` and
+        `i.raw_data` — neither column exists on `inventory` — so it raised on
+        every pass and the failure was swallowed at DEBUG with no detail. No
+        physical link has ever been built from this path.
+
+        The events join is on a normalised MAC, not device_id: Mist events
+        carry a bare MAC (`a8f7d904471e`) while inventory keys APs as
+        `00000000-0000-0000-1000-<mac>`, so an id-to-id join matches nothing.
         """
         try:
             rows = await db.fetch(
@@ -201,32 +236,32 @@ class TopologySync:
                 SELECT DISTINCT ON (i.device_id)
                     i.device_id,
                     COALESCE(
-                        NULLIF(i.attributes->>'mist_switch_mac', ''),
-                        NULLIF(i.raw_data->'uplink'->>'mac', ''),
-                        NULLIF(i.raw_data->>'switch_mac', ''),
+                        NULLIF(i.props->'uplink'->>'mac', ''),
+                        NULLIF(i.props->>'switch_mac', ''),
                         NULLIF(e.metadata->>'mist_switch_mac', '')
                     ) AS switch_mac,
                     COALESCE(
-                        NULLIF(i.attributes->>'mist_port_id', ''),
-                        NULLIF(i.raw_data->'uplink'->>'port_id', ''),
+                        NULLIF(i.props->'uplink'->>'port_id', ''),
                         NULLIF(e.metadata->>'mist_port_id', '')
                     ) AS port_id,
                     i.site_id
                 FROM inventory i
-                LEFT JOIN events e ON e.device_id = i.device_id 
-                    AND e.source = 'mist' 
+                LEFT JOIN events e
+                    ON lower(replace(e.device_id, ':', '')) = lower(replace(i.mac, ':', ''))
+                    AND e.source = 'mist'
                     AND e.event_type = 'link_up'
-                    AND e.metadata->>'mist_switch_mac' IS NOT NULL 
-                    AND e.metadata->>'mist_switch_mac' != ''
-                WHERE i.attributes->>'mist_switch_mac' IS NOT NULL 
-                   OR i.raw_data->'uplink'->>'mac' IS NOT NULL
-                   OR i.raw_data->>'switch_mac' IS NOT NULL
-                   OR e.metadata->>'mist_switch_mac' IS NOT NULL
-                ORDER BY i.device_id
+                    AND NULLIF(e.metadata->>'mist_switch_mac', '') IS NOT NULL
+                WHERE i.platform = 'mist'
+                  AND (
+                      NULLIF(i.props->'uplink'->>'mac', '') IS NOT NULL
+                      OR NULLIF(i.props->>'switch_mac', '') IS NOT NULL
+                      OR NULLIF(e.metadata->>'mist_switch_mac', '') IS NOT NULL
+                  )
+                ORDER BY i.device_id, e.timestamp DESC NULLS LAST
                 """
             )
         except Exception:
-            logger.debug("Inventory/events query failed for physical links")
+            logger.exception("Physical-link query failed — no switch→AP links built this pass")
             return
 
         if not rows:
@@ -243,12 +278,17 @@ class TopologySync:
             if not ap_device_key or not switch_mac:
                 continue
 
-            # AP node ID — resolve by canonical key
-            ap_node_row = await db.fetchrow(
-                "SELECT node_id FROM topology_nodes WHERE canonical_key = $1 AND node_type = 'ap'",
-                ap_device_key,
-            )
-            ap_node_id = ap_node_row["node_id"] if ap_node_row else ap_node_ids.get(ap_device_key)
+            # AP node ID — the in-memory map built by _sync_mist_topology is
+            # keyed by this same inventory device_id, so check it before
+            # spending a query per AP. The DB lookup is by canonical_key, which
+            # an inventory device_id never matches anyway.
+            ap_node_id = ap_node_ids.get(ap_device_key)
+            if not ap_node_id:
+                ap_node_row = await db.fetchrow(
+                    "SELECT node_id FROM topology_nodes WHERE canonical_key = $1 AND node_type = 'ap'",
+                    ap_device_key,
+                )
+                ap_node_id = ap_node_row["node_id"] if ap_node_row else None
             if not ap_node_id:
                 continue
 
@@ -347,8 +387,7 @@ class TopologySync:
                 name=site_name,
                 vendor="velocloud",
                 site_id=site_id,
-                canonical_key=site_key,
-                props={"platform": "velocloud", "vendor_site_id": site_id},
+                props={"platform": "velocloud", "vendor_site_id": site_id, "site_key": site_key},
             )
 
         for row in rows:
@@ -627,8 +666,7 @@ class TopologySync:
                 name=site_name,
                 vendor="aruba",
                 site_id=site_id,
-                canonical_key=site_key,
-                props={"platform": "aruba", "vendor_site_id": site_id},
+                props={"platform": "aruba", "vendor_site_id": site_id, "site_key": site_key},
             )
 
         for row in rows:
@@ -791,46 +829,49 @@ async def _upsert_node(
     props: Dict[str, Any] = None,
 ) -> None:
     try:
-        await db.execute(
-            """
-            INSERT INTO topology_nodes
-                (node_id, node_type, name, ip_address, vendor, model, site_id, canonical_key, props, updated_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, NULLIF($8, ''), $9::jsonb, NOW())
-            ON CONFLICT (node_id) DO UPDATE SET
-                name          = EXCLUDED.name,
-                ip_address    = COALESCE(NULLIF(EXCLUDED.ip_address,''), topology_nodes.ip_address),
-                vendor        = EXCLUDED.vendor,
-                model         = COALESCE(NULLIF(EXCLUDED.model,''), topology_nodes.model),
-                site_id       = COALESCE(NULLIF(EXCLUDED.site_id,''), topology_nodes.site_id),
-                canonical_key = COALESCE(NULLIF(EXCLUDED.canonical_key,''), topology_nodes.canonical_key),
-                props         = EXCLUDED.props,
-                updated_at    = NOW()
-            """,
-            node_id, node_type, name, ip_address, vendor, model, site_id, canonical_key,
-            json.dumps(props or {}),
+        await _upsert_node_stmt(
+            node_id, node_type, name, ip_address, vendor, model, site_id,
+            canonical_key, props,
         )
     except Exception as exc:
-        if "foreign key" in str(exc).lower() or "canonical_key" in str(exc).lower():
-            logger.warning("ForeignKeyViolation on node %s canonical_key '%s'. Falling back to NULL canonical_key.", node_id, canonical_key)
-            await db.execute(
-                """
-                INSERT INTO topology_nodes
-                    (node_id, node_type, name, ip_address, vendor, model, site_id, canonical_key, props, updated_at)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, NULL, $8::jsonb, NOW())
-                ON CONFLICT (node_id) DO UPDATE SET
-                    name          = EXCLUDED.name,
-                    ip_address    = COALESCE(NULLIF(EXCLUDED.ip_address,''), topology_nodes.ip_address),
-                    vendor        = EXCLUDED.vendor,
-                    model         = COALESCE(NULLIF(EXCLUDED.model,''), topology_nodes.model),
-                    site_id       = COALESCE(NULLIF(EXCLUDED.site_id,''), topology_nodes.site_id),
-                    props         = EXCLUDED.props,
-                    updated_at    = NOW()
-                """,
-                node_id, node_type, name, ip_address, vendor, model, site_id,
-                json.dumps(props or {}),
-            )
-        else:
-            raise
+        # Name the offending node and key. A bare FK message here cost two
+        # separate debugging rounds because the canonical_key involved was
+        # invisible in the log.
+        raise RuntimeError(
+            f"topology_nodes upsert failed for node_id={node_id!r} "
+            f"type={node_type!r} canonical_key={canonical_key!r}: {exc}"
+        ) from exc
+
+
+async def _upsert_node_stmt(
+    node_id: str,
+    node_type: str,
+    name: str,
+    ip_address: str,
+    vendor: str,
+    model: str,
+    site_id: str,
+    canonical_key: str,
+    props: Dict[str, Any] = None,
+) -> None:
+    await db.execute(
+        """
+        INSERT INTO topology_nodes
+            (node_id, node_type, name, ip_address, vendor, model, site_id, canonical_key, props, updated_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, NULLIF($8, ''), $9::jsonb, NOW())
+        ON CONFLICT (node_id) DO UPDATE SET
+            name          = EXCLUDED.name,
+            ip_address    = COALESCE(NULLIF(EXCLUDED.ip_address,''), topology_nodes.ip_address),
+            vendor        = EXCLUDED.vendor,
+            model         = COALESCE(NULLIF(EXCLUDED.model,''), topology_nodes.model),
+            site_id       = COALESCE(NULLIF(EXCLUDED.site_id,''), topology_nodes.site_id),
+            canonical_key = COALESCE(NULLIF(EXCLUDED.canonical_key,''), topology_nodes.canonical_key),
+            props         = EXCLUDED.props,
+            updated_at    = NOW()
+        """,
+        node_id, node_type, name, ip_address, vendor, model, site_id, canonical_key,
+        json.dumps(props or {}),
+    )
 
 
 async def _upsert_edge(

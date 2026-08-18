@@ -32,8 +32,16 @@ from shared.models.event import (
 
 try:
     from backend.shared.database.identity import IdentityResolver
+    from backend.worker.collectors.velocloud_errors import (
+        VeloCloudApiError,
+        raise_on_vco_error,
+    )
 except ImportError:  # pragma: no cover - supports both entry-point styles
     from shared.database.identity import IdentityResolver
+    from worker.collectors.velocloud_errors import (
+        VeloCloudApiError,
+        raise_on_vco_error,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +63,7 @@ class VelocloudEventsCollector:
         self._base_url = settings.velocloud_url.rstrip("/")
         self._api_key = settings.velocloud_api_key
         self._enabled = settings.velocloud_enabled
+        self._verify_ssl = settings.velocloud_verify_ssl
         self._resolver = IdentityResolver()
         self._headers = {
             "Authorization": f"Token {self._api_key}",
@@ -72,7 +81,7 @@ class VelocloudEventsCollector:
             headers=self._headers,
             timeout=httpx.Timeout(30.0),
             follow_redirects=True,
-            verify=False,
+            verify=self._verify_ssl,
         ) as client:
             enterprise_id = await self._fetch_enterprise_id(client)
             if not enterprise_id:
@@ -90,15 +99,11 @@ class VelocloudEventsCollector:
         return events
 
     async def _fetch_enterprise_id(self, client: httpx.AsyncClient) -> Optional[int]:
-        try:
-            r = await client.post(
-                f"{self._base_url}/portal/rest/enterprise/getEnterprise", json={}
-            )
-            r.raise_for_status()
-            return r.json().get("id")
-        except Exception as exc:
-            logger.error("VeloCloud events: failed to get enterprise ID: %s", exc)
-            return None
+        r = await client.post(
+            f"{self._base_url}/portal/rest/enterprise/getEnterprise", json={}
+        )
+        r.raise_for_status()
+        return raise_on_vco_error(r.json(), "getEnterprise").get("id")
 
     @retry(
         retry=retry_if_exception_type(httpx.TransportError),
@@ -134,7 +139,9 @@ class VelocloudEventsCollector:
                     json=payload,
                 )
                 r.raise_for_status()
-                body = r.json()
+                body = raise_on_vco_error(r.json(), "getEnterpriseEvents")
+            except VeloCloudApiError:
+                raise
             except Exception as exc:
                 logger.error("VeloCloud events fetch failed page %d: %s", page + 1, exc)
                 break

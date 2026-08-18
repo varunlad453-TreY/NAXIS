@@ -7,7 +7,6 @@ import type { TopologyGraphResponse, DeviceCategory, TopologyNode, HealthStatus 
 import { AGGREGATED_VIEW_THRESHOLD, HEALTH_STATUS_META, CATEGORY_META } from "@/types/topology";
 import { aggregateByCategory, getDeviceCategory } from "@/lib/topology-utils";
 import { TypeClusterNode, CLUSTER_NODE_WIDTH, CLUSTER_NODE_HEIGHT } from "./type-cluster-node";
-import { DeviceBrowser } from "./device-browser";
 import { ClusterTopologyView } from "./cluster-topology-view";
 import { ContextGraph } from "./context-graph";
 import { AlertTriangle, CheckCircle, HelpCircle, Search, X, List, Expand } from "lucide-react";
@@ -146,7 +145,7 @@ export function AggregatedView({ data, onContextSelect, onFlatView }: Aggregated
     }
   }, [layoutNodes.length]);
 
-  // Escape key to close DeviceBrowser
+  // Escape key to close the cluster panel
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.key === "Escape" && selectedCategory) {

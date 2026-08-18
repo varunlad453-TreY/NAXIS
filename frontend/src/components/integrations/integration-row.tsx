@@ -1,6 +1,7 @@
 "use client";
 
-import { ChevronDown, ChevronUp, Cloud, Network, RefreshCw, Settings2, ShieldCheck } from "lucide-react";
+import { useEffect, useState } from "react";
+import { AlertCircle, CheckCircle2, ChevronDown, ChevronUp, Cloud, Network, RefreshCw, Settings2, ShieldCheck } from "lucide-react";
 
 import { cn, formatTimestamp } from "@/lib/utils";
 import type { Integration, IntegrationActionResponse } from "@/types/integration";
@@ -51,7 +52,38 @@ export function IntegrationRow({
 }: IntegrationRowProps) {
   const icon = getIntegrationIcon(item.id);
   const hasLastSync = Boolean(item.lastSync);
-  const primaryActionLabel = item.status === "connected" ? "Re-sync" : "Connect";
+  const isConnected = item.status === "connected";
+  const [actionFeedback, setActionFeedback] = useState<{ ok: boolean; message: string } | null>(null);
+
+  useEffect(() => {
+    if (!actionFeedback) return;
+    const timer = setTimeout(() => setActionFeedback(null), 6000);
+    return () => clearTimeout(timer);
+  }, [actionFeedback]);
+
+  const runSync = async () => {
+    try {
+      const result = await onSync(item.id);
+      setActionFeedback({ ok: result.success, message: result.message });
+    } catch (err) {
+      setActionFeedback({
+        ok: false,
+        message: err instanceof Error ? err.message : "Sync failed",
+      });
+    }
+  };
+
+  const runTest = async () => {
+    try {
+      const result = await onTest(item.id);
+      setActionFeedback({ ok: result.success, message: result.message });
+    } catch (err) {
+      setActionFeedback({
+        ok: false,
+        message: err instanceof Error ? err.message : "Connection test failed",
+      });
+    }
+  };
 
   return (
     <div className="group border-b border-border/40 py-5 transition-colors hover:bg-background-elevated/40 last:border-b-0">
@@ -110,29 +142,30 @@ export function IntegrationRow({
         <div className="flex flex-wrap items-center justify-start gap-3 lg:justify-end">
           <button
             onClick={() => {
-              void onTest(item.id).catch(() => undefined);
+              void runSync();
             }}
-            disabled={isTesting}
+            disabled={isSyncing || !isConnected}
+            title={!isConnected ? "Connect the integration before syncing" : undefined}
             className={cn(
               "inline-flex items-center gap-1.5 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-60",
-              item.status === "connected"
+              isConnected
                 ? "text-foreground hover:text-primary"
                 : "text-primary hover:text-primary-hover"
             )}
           >
-            {isTesting ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Cloud className="h-4 w-4" />}
-            {isTesting ? "Testing" : primaryActionLabel}
+            {isSyncing ? <RefreshCw className="h-4 w-4 animate-spin" /> : <ShieldCheck className="h-4 w-4" />}
+            {isSyncing ? "Syncing" : "Re-sync"}
           </button>
 
           <button
             onClick={() => {
-              void onSync(item.id).catch(() => undefined);
+              void runTest();
             }}
-            disabled={isSyncing}
+            disabled={isTesting}
             className="inline-flex items-center gap-1.5 text-sm font-medium text-foreground transition-colors hover:text-primary disabled:cursor-not-allowed disabled:opacity-60"
           >
-            {isSyncing ? <RefreshCw className="h-4 w-4 animate-spin" /> : <ShieldCheck className="h-4 w-4" />}
-            {isSyncing ? "Syncing" : "Re-sync"}
+            {isTesting ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Cloud className="h-4 w-4" />}
+            {isTesting ? "Testing" : "Test connection"}
           </button>
 
           {item.collectors.length > 0 && (
@@ -164,6 +197,24 @@ export function IntegrationRow({
           </button>
         </div>
       </div>
+
+      {actionFeedback && (
+        <div
+          className={cn(
+            "mt-3 flex items-start gap-2 rounded-lg border px-3 py-2 text-sm",
+            actionFeedback.ok
+              ? "border-success/30 bg-success/5 text-success"
+              : "border-critical/30 bg-critical/5 text-critical"
+          )}
+        >
+          {actionFeedback.ok ? (
+            <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
+          ) : (
+            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+          )}
+          <span>{actionFeedback.message}</span>
+        </div>
+      )}
 
       {item.errors.length > 0 && (
         <div className="mt-3 text-sm text-critical">

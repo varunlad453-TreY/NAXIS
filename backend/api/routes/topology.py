@@ -28,13 +28,15 @@ from api.models.topology_models import (
 )
 from shared.database.client import db
 from shared.database.health_history import get_health_history, get_health_summary
-from shared.database.topology import resolve_node_id as resolve_topology_node_id
+from shared.database.topology import DatabaseTopologyProvider
 from shared.health import (
     compute_node_health,
     is_infrastructure_type,
 )
 
 logger = logging.getLogger(__name__)
+
+_topology_provider = DatabaseTopologyProvider()
 
 router = APIRouter(
     prefix="/topology",
@@ -336,11 +338,11 @@ async def get_topology(
             params = []
             if site_id:
                 params.append(site_id)
-                conditions.append(f"AND site_id = ${len(params)}")
+                conditions.append(f"site_id = ${len(params)}")
             if node_type:
                 params.append(node_type)
-                conditions.append(f"AND node_type = ${len(params)}")
-            where = " ".join(conditions)
+                conditions.append(f"node_type = ${len(params)}")
+            where = "WHERE " + " AND ".join(conditions)
             nodes_query = _NODES_QUERY.replace("ORDER BY", f"{where} ORDER BY")
             rows = await db.fetch(nodes_query, *params)
         else:
@@ -827,10 +829,16 @@ async def get_blast_radius(incident_id: str) -> BlastRadiusResponse:
         if not affected_device_ids:
             return BlastRadiusResponse()
 
+        resolved_map = await _topology_provider.batch_resolve_node_ids(
+            set(affected_device_ids)
+        )
+        # Preserve incident device order; dedupe while keeping first occurrence.
         resolved_node_ids: List[str] = []
+        _seen_nids: Set[str] = set()
         for did in affected_device_ids:
-            nid = await resolve_topology_node_id(did)
-            if nid:
+            nid = resolved_map.get(did)
+            if nid and nid not in _seen_nids:
+                _seen_nids.add(nid)
                 resolved_node_ids.append(nid)
 
         if not resolved_node_ids:

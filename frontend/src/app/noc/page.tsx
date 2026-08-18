@@ -17,7 +17,7 @@ import {
   Wifi,
   X,
 } from "lucide-react";
-import { API_BASE } from "@/lib/api";
+import { fetchAPI } from "@/lib/api";
 
 
 interface APPlacement {
@@ -43,6 +43,12 @@ interface FloorplanData {
   floorplan_image_url?: string;
   ap_placements: APPlacement[];
   health_status: string;
+}
+
+interface RrmOptimizeResponse {
+  message?: string;
+  optimized_channel?: number;
+  [key: string]: unknown;
 }
 
 interface LocationTreeNode {
@@ -176,11 +182,13 @@ function NOCFloorplanContent() {
     setRrmOptimizing(true);
     setRrmResultMsg(null);
     try {
-      const res = await fetch(`${API_BASE}/locations/aps/${ap.device_id}/optimize-rrm`, {
-        method: "POST",
-      }).catch(() => null);
-      if (res?.ok) {
-        const data = await res.json();
+      // Auth-gated like the rest of /locations, and this one writes — a bare
+      // fetch() was silently 403ing.
+      const data = await fetchAPI<RrmOptimizeResponse>(
+        `/locations/aps/${ap.device_id}/optimize-rrm`,
+        { method: "POST" },
+      );
+      if (data) {
         setRrmResultMsg(data.message || "RRM Channel Optimization executed successfully!");
         setRrmAuditProofsByDevice((prev) => ({
           ...prev,
@@ -239,12 +247,12 @@ function NOCFloorplanContent() {
   const fetchTree = async () => {
     setTreeLoading(true);
     try {
-      let res = await fetch(`${API_BASE}/locations/tree`).catch(() => null);
-      if (!res || !res.ok) {
-        res = await fetch("http://127.0.0.1:8000/locations/tree").catch(() => null);
-      }
-      if (res && res.ok) {
-        const data = await res.json();
+      // Must go through fetchAPI: every /locations route is auth-gated, and a
+      // bare fetch() sends no X-API-Key, so this returned 403 and the site list
+      // rendered as "0 sites" while the rest of the page looked fine.
+      // fetchAPI also carries the 127.0.0.1 retry these calls open-coded.
+      const data = await fetchAPI<LocationTreeNode[]>("/locations/tree");
+      {
         if (Array.isArray(data)) {
           setTreeData(data);
           if (data.length > 0) {
@@ -283,18 +291,12 @@ function NOCFloorplanContent() {
   const fetchFloorplan = async (locId: string, name?: string) => {
     setLoading(true);
     try {
-      const url = name || targetName
-        ? `${API_BASE}/locations/${locId}/floorplan?name=${encodeURIComponent(name || targetName || "")}`
-        : `${API_BASE}/locations/${locId}/floorplan`;
-      let res = await fetch(url).catch(() => null);
-      if (!res || !res.ok) {
-        const fallbackUrl = name || targetName
-          ? `http://127.0.0.1:8000/locations/${locId}/floorplan?name=${encodeURIComponent(name || targetName || "")}`
-          : `http://127.0.0.1:8000/locations/${locId}/floorplan`;
-        res = await fetch(fallbackUrl).catch(() => null);
-      }
-      if (res && res.ok) {
-        const data = await res.json();
+      const label = name || targetName;
+      const endpoint = label
+        ? `/locations/${locId}/floorplan?name=${encodeURIComponent(label)}`
+        : `/locations/${locId}/floorplan`;
+      const data = await fetchAPI<FloorplanData>(endpoint);
+      if (data) {
         setFloorplan(data);
       }
     } catch (err) {

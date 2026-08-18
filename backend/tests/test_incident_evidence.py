@@ -230,7 +230,7 @@ async def test_insert_incident_sends_evidence_json():
     call_args = execute.call_args.args
     query: str = call_args[0]
     assert "evidence" in query, "INSERT query must reference the evidence column"
-    assert "$14::jsonb" in query, "evidence must be cast to JSONB in the INSERT"
+    assert "$15::jsonb" in query, "evidence must be cast to JSONB in the INSERT"
 
     # Find the evidence_json argument by searching for the JSON string in the args
     evidence_arg = None

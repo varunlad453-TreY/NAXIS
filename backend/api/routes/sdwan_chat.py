@@ -154,7 +154,9 @@ async def _fetch_vco_events(edge_hostname: Optional[str] = None, hours: int = 4)
             "Authorization": f"Token {_settings.velocloud_api_key}",
             "Content-Type": "application/json",
         }
-        async with httpx.AsyncClient(headers=headers, timeout=20, verify=False) as client:
+        async with httpx.AsyncClient(
+            headers=headers, timeout=20, verify=_settings.velocloud_verify_ssl
+        ) as client:
             r = await client.post(
                 f"{_settings.velocloud_url.rstrip('/')}/portal/rest/enterprise/getEnterprise",
                 json={},

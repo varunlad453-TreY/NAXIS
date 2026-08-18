@@ -59,11 +59,13 @@ try:
     from backend.config.settings import get_settings
     from backend.shared.database.client import db as _db
     from backend.shared.models.event import EventSource
+    from backend.shared.utils.redaction import redact_url_password
     _INSIDE_DOCKER = False
 except ImportError:
     from config.settings import get_settings
     from shared.database.client import db as _db
     from shared.models.event import EventSource
+    from shared.utils.redaction import redact_url_password
     _INSIDE_DOCKER = True
 
 logging.basicConfig(
@@ -109,7 +111,7 @@ async def main() -> int:
     log.info(f"VCO URL: {settings.velocloud_url}")
     log.info(f"VCO API key: {'✓ set' if settings.velocloud_api_key else '✗ MISSING'}")
     log.info(f"VCO enabled: {settings.velocloud_enabled}")
-    log.info(f"DB URL: {_PG_URL.replace('naxis_password', '****')}")
+    log.info(f"DB URL: {redact_url_password(os.getenv('DATABASE_URL', ''))}")
 
     # ── Phase 0: DB + VCO config checks ────────────────────────────────
     heading("Phase 0: Preflight checks")
@@ -125,7 +127,7 @@ async def main() -> int:
         step("PostgreSQL connection", True)
     except Exception as e:
         step("PostgreSQL connection", False, str(e))
-        log.info("  Try running: set DATABASE_URL=postgresql://naxis:naxis_password@localhost:5432/naxis")
+        log.info("  Try running: set DATABASE_URL=postgresql://naxis:<password>@localhost:5432/naxis")
         return 1
 
     # ── Phase 1: VCO API authentication ─────────────────────────────────
@@ -141,7 +143,10 @@ async def main() -> int:
     enterprise_id = None
     try:
         async with httpx.AsyncClient(
-            headers=headers, timeout=httpx.Timeout(30.0), follow_redirects=True, verify=False,
+            headers=headers,
+            timeout=httpx.Timeout(30.0),
+            follow_redirects=True,
+            verify=settings.velocloud_verify_ssl,
         ) as client:
             resp = await client.post(
                 f"{settings.velocloud_url.rstrip('/')}/portal/rest/enterprise/getEnterprise",
@@ -346,8 +351,8 @@ if __name__ == "__main__":
     # Fix DB host for non-Docker runs (Windows host has local PG on :5432)
     _PG_URL = os.getenv("DATABASE_URL", "")
     if not _PG_URL:
-        _PG_URL = "postgresql+asyncpg://naxis:naxis_password@postgres:5432/naxis"
-        os.environ["DATABASE_URL"] = _PG_URL
+        log.error("DATABASE_URL is not set — export it before running this script")
+        sys.exit(1)
 
     if "@postgres:" in _PG_URL and "@localhost:" not in _PG_URL:
         log.info("Running inside Docker — using 'postgres' hostname")

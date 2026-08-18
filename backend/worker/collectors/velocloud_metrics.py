@@ -1,16 +1,10 @@
 """
 VeloCloud VeloBrain Link Metrics Collector
 
-ponytail: DEPRECATED — logic merged into velocloud_inventory._build_rows()
-which stores recentLinks data in inventory.props at insert time using
-the same `{"links": [...], "velobrain_score": 0.0}` shape.
-
-This file is dead code — never imported or wired in worker/main.py.
-It requires a separate API call for each edge's link quality data
-(/sdwan/edge/linkQuality) that provides no additional fields beyond
-what getEnterpriseEdges already returns in recentLinks.
-
-Delete this file after 2 release cycles if no one misses it.
+Live: instantiated by `sdwan_adapter.get_sdwan_adapter()` (WP-3.6) and it
+records `velocloud-metrics` runs in the collector ledger every pass. An
+earlier docstring here declared it dead code never wired into
+worker/main.py — that is wrong; main.py reaches it through the adapter.
 """
 
 import asyncio
@@ -24,6 +18,17 @@ import httpx
 from config.settings import get_settings
 from shared.database.client import db
 
+try:
+    from backend.worker.collectors.velocloud_errors import (
+        VeloCloudApiError,
+        raise_on_vco_error,
+    )
+except ImportError:  # pragma: no cover - supports both entry-point styles
+    from worker.collectors.velocloud_errors import (
+        VeloCloudApiError,
+        raise_on_vco_error,
+    )
+
 logger = logging.getLogger(__name__)
 
 _HOUR_MS = 3_600_000
@@ -36,6 +41,7 @@ class VelocloudMetricsCollector:
         self._base_url = settings.velocloud_url.rstrip("/")
         self._api_key = settings.velocloud_api_key
         self._enabled = settings.velocloud_enabled
+        self._verify_ssl = settings.velocloud_verify_ssl
         self._headers = {
             "Authorization": f"Token {self._api_key}",
             "Content-Type": "application/json",
@@ -50,7 +56,7 @@ class VelocloudMetricsCollector:
             headers=self._headers,
             timeout=httpx.Timeout(60.0),
             follow_redirects=True,
-            verify=False,
+            verify=self._verify_ssl,
         ) as client:
             enterprise_id = await self._fetch_enterprise_id(client)
             if not enterprise_id:
@@ -148,32 +154,23 @@ class VelocloudMetricsCollector:
     # ── VCO helpers ────────────────────────────────────────────────────────────
 
     async def _fetch_enterprise_id(self, client: httpx.AsyncClient) -> Optional[Any]:
-        try:
-            r = await client.post(
-                f"{self._base_url}/portal/rest/enterprise/getEnterprise", json={}
-            )
-            r.raise_for_status()
-            data = r.json()
-            if "error" in data:
-                logger.error("VeloBrain enterprise error: %s", data["error"])
-                return None
-            return data.get("id")
-        except Exception as exc:
-            logger.error("VeloBrain: failed to get enterprise: %s", exc)
-            return None
+        r = await client.post(
+            f"{self._base_url}/portal/rest/enterprise/getEnterprise", json={}
+        )
+        r.raise_for_status()
+        # An invalid token arrives as HTTP 200 + error envelope; let it raise so
+        # the ledger records an error instead of a clean zero-row run.
+        data = raise_on_vco_error(r.json(), "getEnterprise")
+        return data.get("id")
 
     async def _fetch_edges(self, client: httpx.AsyncClient) -> List[Dict]:
-        try:
-            r = await client.post(
-                f"{self._base_url}/portal/rest/enterprise/getEnterpriseEdges",
-                json={"with": ["recentLinks"]},
-            )
-            r.raise_for_status()
-            data = r.json()
-            return data if isinstance(data, list) else []
-        except Exception as exc:
-            logger.warning("VeloBrain: failed to fetch edges list: %s", exc)
-            return []
+        r = await client.post(
+            f"{self._base_url}/portal/rest/enterprise/getEnterpriseEdges",
+            json={"with": ["recentLinks"]},
+        )
+        r.raise_for_status()
+        data = raise_on_vco_error(r.json(), "getEnterpriseEdges")
+        return data if isinstance(data, list) else []
 
     async def _fetch_link_metrics(
         self, client: httpx.AsyncClient, enterprise_id: Any
@@ -188,11 +185,10 @@ class VelocloudMetricsCollector:
                 },
             )
             r.raise_for_status()
-            data = r.json()
-            if isinstance(data, dict) and "error" in data:
-                logger.error("VeloBrain metrics error: %s", data["error"])
-                return []
+            data = raise_on_vco_error(r.json(), "getAggregateEdgeLinkMetrics")
             return data if isinstance(data, list) else []
+        except VeloCloudApiError:
+            raise
         except Exception as exc:
             logger.error("VeloBrain: failed to fetch link metrics: %s", exc)
             return []

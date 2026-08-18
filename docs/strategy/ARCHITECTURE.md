@@ -1,3 +1,32 @@
+> **Appendix (2026-08-18) — hosting decision + measured corrections.**
+>
+> - **Hosting is Azure, not AWS,** with a managed PostgreSQL (Azure Database for
+>   PostgreSQL Flexible Server). The §Stack and §Deployment tables below still say
+>   AWS RDS / EC2 / Secrets Manager. **See `AZURE_HOSTING.md`** — it is authoritative
+>   for hosting; treat the AWS references here as superseded.
+> - Of the "three things that block the RDS move" listed below: **TLS on the pool is
+>   fixed** (`ssl='require'` when `POSTGRES_SSL=true`), **the migration runner exists**
+>   (`scripts/migrate.py`, idempotent, now copied into the image). **`dns: 8.8.8.8` is
+>   still present** on `worker`/`web` in `docker-compose.yml` and on `worker`/`api`/`web`
+>   in `docker-compose.dev.yml` — `PLAN_GAP.md` claims it was removed; it was not.
+> - **Identity resolution is ~99.8%** of event device references (1,069 of 1,071
+>   measured 2026-08-18), against the 3.1% quoted below and the ≥95% gate. Getting
+>   there required MAC-based reconciliation in the resolver: Mist emits at least three
+>   id forms for one AP (`00000000-0000-0000-1000-<mac>` from inventory, a bare MAC
+>   from LLDP, and a site-device UUID in events) and exact-match-only lookup minted a
+>   separate canonical device per form — 4,021 `devices` rows for 1,966 distinct MACs,
+>   since merged to 2,059.
+> - `sites` had **2,055 rows for 153 real sites** (one site held 345 duplicates) because
+>   the bulk create minted a fresh uuid per input row under a never-firing
+>   `ON CONFLICT (site_key)`. Fixed and deduped; `site_identities` now enforces
+>   `UNIQUE (vendor, vendor_site_id)`.
+> - **`/events`, `/devices`, `/mist` and `/sdwan` no longer exist** — the §UI note below
+>   about wiring them up is obsolete. `/incidents` redirects to `/correlation`.
+> - Live counts (2026-08-18): 2,750 topology nodes, 1,110 links, 2,059 devices / 4,021
+>   vendor identities, 153 sites, 311k events, DB 1.87 GB.
+>
+> ---
+>
 > **Appendix (2026-08-04) — current-state bridge.** Appended by the Naxis team (original text untouched); see `PLAN_GAP.md` for the gap map + execution plan.
 >
 > **Verified against today's code:**
@@ -70,37 +99,43 @@ Unchanged from today except where noted.
 
 | Layer | Tech | Notes |
 |---|---|---|
-| DB | PostgreSQL 16 | local Docker in dev; AWS RDS in prod |
+| DB | PostgreSQL 16 | local Docker in dev; **Azure Database for PostgreSQL Flexible Server** in prod (`AZURE_HOSTING.md`) |
 | Backend | Python monolith, one image, two entrypoints | `api` = uvicorn:8000, `worker` = async daemon |
 | Frontend | Next.js 15 + TanStack Query + shadcn | |
 | Cache | Redis | pub/sub for incident SSE **and** the vendor-response cache |
 | Auth | Keycloak OIDC + RBAC | Keycloak realm owned by the Keycloak team; Naxis implements the client |
-| Deploy | docker-compose on AWS EC2 | + reverse proxy terminating TLS |
-| Secrets | AWS Secrets Manager | 8 vendors' credentials; not plaintext `config/.env` |
+| Deploy | docker-compose on an **Azure VM** (Standard_B2ms) | + reverse proxy terminating TLS |
+| Secrets | **Azure Key Vault** via VM managed identity | 8 vendors' credentials; not plaintext `config/.env` |
 
-One Docker image, two processes. No microservices. No managed services beyond
-RDS and Secrets Manager.
+One Docker image, two processes. No microservices. No managed services beyond the
+managed PostgreSQL and Key Vault. Redis stays in compose.
 
 ## Deployment
 
-AWS, with multi-cloud connect already in place to the corporate network. That
-link is what makes cloud viable — DNAC, Arista WLC, ClearPass and the switches
-are on-prem and unreachable otherwise. No on-prem collector agent, no worker
-split, no new inbound firewall rules.
+**Azure** — full requirement, SKUs, networking and cost in `AZURE_HOSTING.md`.
+Multi-cloud connect to the corporate network is what makes cloud viable: DNAC, Arista
+WLC, ClearPass and the switches are on-prem and unreachable otherwise. No on-prem
+collector agent, no worker split, no new inbound firewall rules. **Confirm the existing
+circuit terminates in Azure** — if it is AWS-only, an ExpressRoute or S2S VPN is
+required and everything else depends on it.
 
 Egress needed to: `api.mist.com`, VeloCloud VCO, Silver Peak Orchestrator,
 Aruba Central, Cloudflare, Netskope.
 Ingress to on-prem over the existing link: DNAC, Arista WLC, ClearPass, switches.
 
-Three things block the RDS move and are Phase 1 work:
+Managed-Postgres blockers, current state:
 
-- `backend/shared/database/client.py` — `create_pool()` passes no `ssl=`. Every
-  managed provider requires TLS.
-- `docker-compose.yml` — `dns: 8.8.8.8` is hardcoded on api and worker. This
-  breaks private DNS resolution for an RDS endpoint. Must be removed.
-- Schema application is Docker-only (`docker-entrypoint-initdb.d`), which does
-  not exist on RDS. `003_telemetry_expansion.sql` has zero `IF NOT EXISTS`
-  guards, so it cannot be re-run. Needs a real migration runner.
+- ~~`create_pool()` passes no `ssl=`~~ — **fixed.** `ssl='require'` when
+  `POSTGRES_SSL=true` or `ENVIRONMENT=production`. Encrypts but does not verify the
+  server certificate; acceptable behind a private endpoint.
+- `dns: 8.8.8.8` hardcoded in compose — **still present** on `worker`/`web` in
+  `docker-compose.yml` and `worker`/`api`/`web` in `docker-compose.dev.yml`. Breaks
+  private-DNS resolution for the database FQDN and every on-prem name. Must go.
+- ~~Schema application is Docker-only~~ — **fixed.** `scripts/migrate.py` is idempotent
+  via `schema_migrations`, and it plus `schemas/` are copied into the image, so
+  `make migrate` works against a managed server.
+- New: `NEXT_PUBLIC_API_URL` is inlined into the browser bundle at build time, so a
+  hosted deployment must be rebuilt with its real URL. Key Vault is not yet wired.
 
 ## Data model
 
@@ -120,10 +155,17 @@ audit_log          actor, action, target, result, at
 
 `device_identities` is the platform's only irreducible asset. No vendor knows
 that a Mist AP MAC and the DNAC switch port it uplinks to are the same physical
-adjacency. Today event device references resolve against topology at **3.1%**
-(54 of 1,715) because events carry a bare MAC (`a8f7d9044ce1`) while nodes use
-`mist-ap-00000000-0000-0000-1000-<mac>`. Every collector must write through an
-identity resolver.
+adjacency. Every collector writes through the identity resolver.
+
+Event device references now resolve at **~99.8%** (1,069 of 1,071, 2026-08-18), from
+3.1% originally. The hard part was not wiring collectors to the resolver — it was that
+one vendor uses several id forms for one device. Mist references a single AP as
+`00000000-0000-0000-1000-<mac>` (inventory), a bare MAC (LLDP/topology), and a
+site-device UUID (events). Exact-match lookup on `(vendor, vendor_device_id)` created a
+separate canonical device per form. The resolver now falls back to the indexed
+`devices.mac`, registers the new form as an alias, and reconciles on the MAC hint
+before minting a key; `uq_devices_mac` makes a second canonical row for one MAC
+impossible.
 
 ### Phase 2 — correlation
 
@@ -208,10 +250,15 @@ data is up to 60s stale and a cold cache takes seconds to fill; the UI must not
 imply live.
 
 Existing conventions hold: `@/` alias, `useQueryState` for all tab/view state
-(never plain `useState`), `<Suspense>` around `useSearchParams()`.
+(never plain `useState`), `<Suspense>` around `useSearchParams()`. Reference
+implementations: `frontend/src/app/topology/page.tsx` and
+`frontend/src/app/topology/sites/[site_id]/page.tsx`.
 
-`/events` and `/devices` pages exist but are linked from nowhere. Either wire
-them into `frontend/src/config/navigation.ts` or delete them.
+Routes as they actually exist: `/`, `/topology` (+ `/topology/sites/[site_id]`,
+`/topology/context/[node_id]`), `/correlation` (the Alerts UI), `/noc`, `/locations`,
+`/path-trace`, `/performance`, `/connectivity`, `/clients`, `/integrations`,
+`/settings`, `/help`, `/incidents/[id]`. The `/events`, `/devices`, `/mist` and
+`/sdwan` pages were deleted; `/incidents` redirects to `/correlation`.
 
 ## Open questions
 

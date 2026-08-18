@@ -17,7 +17,7 @@ Design points:
 import json
 import logging
 import re
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 from uuid import uuid4
 
 try:
@@ -144,6 +144,7 @@ class IdentityResolver:
         """
         result: Dict[Tuple[str, str], str] = {}
         missing: List[Tuple[str, str, Dict[str, Any]]] = []
+        seen: Set[Tuple[str, str]] = set()
 
         for vendor, vendor_id, hints in pairs:
             if not vendor or not vendor_id:
@@ -153,7 +154,11 @@ class IdentityResolver:
             cached = self._device_cache.get(key)
             if cached:
                 result[key] = cached
-            else:
+            elif key not in seen:
+                # Dedupe: callers routinely pass one spec per row, so the same
+                # identifier can appear many times in a single batch. Without
+                # this, each repeat is treated as a distinct missing device.
+                seen.add(key)
                 missing.append((vendor, vendor_id, hints))
 
         if missing:
@@ -215,6 +220,7 @@ class IdentityResolver:
         """
         result: Dict[Tuple[str, str], str] = {}
         missing: List[Tuple[str, str, Optional[str], Optional[str]]] = []
+        seen: Set[Tuple[str, str]] = set()
 
         for vendor_site_id, site_name, vendor, parent_key in site_specs:
             if not vendor_site_id:
@@ -225,7 +231,12 @@ class IdentityResolver:
             cached = self._site_cache.get(cache_key)
             if cached:
                 result[key] = cached
-            else:
+            elif key not in seen:
+                # Dedupe before create. Callers build site_specs with one entry
+                # per DEVICE, so a 345-AP site arrived 345 times; combined with
+                # a never-firing ON CONFLICT (site_key) target that minted 345
+                # rows for one site.
+                seen.add(key)
                 missing.append((vendor_site_id, site_name, vendor, parent_key))
 
         if missing:
@@ -301,17 +312,90 @@ class IdentityResolver:
             vendor,
             vendor_device_id,
         )
-        return row["device_key"] if row else None
+        if row:
+            return row["device_key"]
+
+        # Fall back to the MAC. One vendor emits several id forms for the same
+        # physical device — Mist alone uses '00000000-0000-0000-1000-<mac>'
+        # (inventory), a bare MAC (topology/LLDP), and a site-device UUID
+        # (events). Exact-match-only lookup minted a separate canonical device
+        # per form, so one AP became 2-3 `devices` rows and events resolved
+        # against none of them.
+        mac = _normalize_mac(vendor_device_id)
+        if not mac:
+            return None
+        row = await db.fetchrow(
+            "SELECT device_key FROM devices WHERE mac = $1 ORDER BY created_at LIMIT 1",
+            mac,
+        )
+        if not row:
+            return None
+        device_key = row["device_key"]
+        await self._register_alias(device_key, vendor, vendor_device_id)
+        return device_key
+
+    async def _register_alias(
+        self, device_key: str, vendor: str, vendor_device_id: str, display_name: str = ""
+    ) -> None:
+        """Attach another vendor identifier to an existing canonical device.
+
+        Makes the next lookup an exact hit instead of re-deriving the MAC.
+        """
+        if not db.pool or not device_key or not vendor_device_id:
+            return
+        await db.execute(
+            """
+            INSERT INTO device_identities (device_key, vendor, vendor_device_id, vendor_display_name)
+            VALUES ($1, $2, $3, $4)
+            ON CONFLICT (vendor, vendor_device_id) DO UPDATE SET
+                device_key = EXCLUDED.device_key,
+                updated_at = NOW()
+            """,
+            device_key, vendor, vendor_device_id, display_name,
+        )
+
+    async def _find_device_keys_by_mac(self, macs: List[str]) -> Dict[str, str]:
+        """Bulk MAC -> device_key for already-canonical devices."""
+        result: Dict[str, str] = {}
+        wanted = sorted({m for m in macs if m})
+        if not wanted or not db.pool:
+            return result
+        rows = await db.fetch(
+            """
+            SELECT DISTINCT ON (mac) mac, device_key
+            FROM devices
+            WHERE mac = ANY($1::text[]) AND mac <> ''
+            ORDER BY mac, created_at
+            """,
+            wanted,
+        )
+        for row in rows:
+            result[row["mac"]] = row["device_key"]
+        return result
 
     async def _find_site_key(self, vendor_site_id: str, vendor: str) -> Optional[str]:
         if not db.pool:
             return None
-        # vendor_ids is a JSONB object like {"mist": "<uuid>", "velocloud": "123"}
+        # site_identities carries the UNIQUE (vendor, vendor_site_id) guarantee.
+        # Falls back to the legacy vendor_ids JSONB so a database that has not
+        # had migration 017 applied still resolves.
+        row = await db.fetchrow(
+            """
+            SELECT site_key FROM site_identities
+            WHERE vendor = $1 AND vendor_site_id = $2
+            """,
+            vendor,
+            vendor_site_id,
+        )
+        if row:
+            return row["site_key"]
         row = await db.fetchrow(
             """
             SELECT site_key
             FROM sites
             WHERE vendor_ids->>$1 = $2
+            ORDER BY created_at
+            LIMIT 1
             """,
             vendor,
             vendor_site_id,
@@ -349,6 +433,19 @@ class IdentityResolver:
         if not db.pool:
             # No DB connection: return a synthetic key for isolated tests
             return device_key
+
+        # Reconcile on the MAC hint before minting: the same physical device
+        # arriving under a second vendor id must become an alias, not a second
+        # canonical device.
+        if mac:
+            existing = await self._find_device_keys_by_mac([mac])
+            if mac in existing:
+                device_key = existing[mac]
+                await self._register_alias(
+                    device_key, vendor, vendor_device_id,
+                    _coalesce(vendor_display_name, display_name),
+                )
+                return device_key
 
         await db.execute(
             """
@@ -411,6 +508,21 @@ class IdentityResolver:
             site_key, site_name, parent_key, json.dumps({vendor: vendor_site_id}),
         )
 
+        # Claim the vendor id. If another pass already claimed it, adopt the
+        # winner and drop the row we just created rather than keeping both.
+        await db.execute(
+            """
+            INSERT INTO site_identities (site_key, vendor, vendor_site_id, vendor_site_name)
+            VALUES ($1, $2, $3, $4)
+            ON CONFLICT (vendor, vendor_site_id) DO NOTHING
+            """,
+            site_key, vendor, vendor_site_id, site_name,
+        )
+        winner = await self._find_site_key(vendor_site_id, vendor)
+        if winner and winner != site_key:
+            await db.execute("DELETE FROM sites WHERE site_key = $1", site_key)
+            return winner
+
         try:
             await db.execute(
                 """
@@ -449,12 +561,16 @@ class IdentityResolver:
         if not items or not db.pool:
             return result
 
+        # Reconcile against devices that already exist under another vendor id,
+        # and against other items in this same batch, so one physical device
+        # yields exactly one canonical key.
+        item_macs = [_normalize_mac(h.get("mac")) for _, _, h in items]
+        key_by_mac: Dict[str, str] = await self._find_device_keys_by_mac(item_macs)
+
         # Generate keys and prepare rows
         device_rows: List[Tuple[str, str, str, str, str, str, Optional[str], str, str, str]] = []
         identity_rows: List[Tuple[str, str, str, str]] = []
         for vendor, vendor_device_id, hints in items:
-            device_key = str(uuid4())
-            result[(vendor, vendor_device_id)] = device_key
             display_name = _coalesce(
                 hints.get("display_name"),
                 hints.get("vendor_display_name"),
@@ -468,30 +584,75 @@ class IdentityResolver:
             ip_address = _coalesce(hints.get("ip_address"), "")
             site_key = hints.get("site_key") or None
             vendor_display_name = _coalesce(hints.get("vendor_display_name"), display_name)
-            device_rows.append(
-                (device_key, display_name, device_type, role, model, vendor, site_key, serial, mac, ip_address)
-            )
+
+            reused = key_by_mac.get(mac) if mac else None
+            device_key = reused or str(uuid4())
+            if mac and not reused:
+                key_by_mac[mac] = device_key
+            result[(vendor, vendor_device_id)] = device_key
+
+            # A reused device already has its canonical row; only the alias is new.
+            if not reused:
+                device_rows.append(
+                    (device_key, display_name, device_type, role, model, vendor, site_key, serial, mac, ip_address)
+                )
             identity_rows.append((device_key, vendor, vendor_device_id, vendor_display_name))
 
-        # Bulk insert devices
+        if not device_rows:
+            await db.executemany(
+                """
+                INSERT INTO device_identities (device_key, vendor, vendor_device_id, vendor_display_name)
+                VALUES ($1, $2, $3, $4)
+                ON CONFLICT (vendor, vendor_device_id) DO UPDATE SET
+                    device_key = EXCLUDED.device_key,
+                    vendor_display_name = EXCLUDED.vendor_display_name,
+                    updated_at = NOW()
+                """,
+                identity_rows,
+            )
+            return result
+
+        # Bulk insert devices.
+        #
+        # DO NOTHING, not DO UPDATE, and with no inference target: two collectors
+        # hold independent resolver caches, so on a cold start both can mint a
+        # key for the same MAC in the same moment. A targeted conflict clause
+        # would let the loser's row raise on the MAC uniqueness index, aborting
+        # the whole executemany — which left this resolver returning keys that
+        # were never persisted, and downstream FK violations on
+        # topology_nodes.canonical_key.
         await db.executemany(
             """
             INSERT INTO devices (device_key, display_name, device_type, role, model, vendor, site_key, serial, mac, ip_address)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-            ON CONFLICT (device_key) DO UPDATE SET
-                display_name = EXCLUDED.display_name,
-                device_type  = EXCLUDED.device_type,
-                role         = EXCLUDED.role,
-                model        = EXCLUDED.model,
-                vendor       = EXCLUDED.vendor,
-                site_key     = EXCLUDED.site_key,
-                serial       = EXCLUDED.serial,
-                mac          = EXCLUDED.mac,
-                ip_address   = EXCLUDED.ip_address,
-                updated_at   = NOW()
+            ON CONFLICT DO NOTHING
             """,
             device_rows,
         )
+
+        # Adopt whoever actually won each MAC, so the caller never receives a
+        # key that lost the race and does not exist.
+        winners = await self._find_device_keys_by_mac(
+            [row[8] for row in device_rows if row[8]]
+        )
+        if winners:
+            remapped = 0
+            for (vendor, vendor_device_id), device_key in list(result.items()):
+                mac = next(
+                    (r[8] for r in device_rows if r[0] == device_key and r[8]), ""
+                )
+                winning = winners.get(mac) if mac else None
+                if winning and winning != device_key:
+                    result[(vendor, vendor_device_id)] = winning
+                    self._device_cache[(vendor, vendor_device_id)] = winning
+                    remapped += 1
+            if remapped:
+                logger.info(
+                    "Adopted %d concurrently-created canonical device(s)", remapped
+                )
+                identity_rows = [
+                    (result[(v, vid)], v, vid, name) for _, v, vid, name in identity_rows
+                ]
 
         # Bulk insert identities
         await db.executemany(
@@ -536,6 +697,25 @@ class IdentityResolver:
             """,
             rows,
         )
+
+        # The identity row is what actually enforces one site per vendor id.
+        # If a concurrent pass won the race, adopt its site_key rather than
+        # leaving a second canonical site behind.
+        await db.executemany(
+            """
+            INSERT INTO site_identities (site_key, vendor, vendor_site_id, vendor_site_name)
+            VALUES ($1, $2, $3, $4)
+            ON CONFLICT (vendor, vendor_site_id) DO NOTHING
+            """,
+            [
+                (result[(vendor, vendor_site_id)], vendor, vendor_site_id, _coalesce(site_name, vendor_site_id))
+                for vendor_site_id, site_name, vendor, _ in items
+            ],
+        )
+        winners = await self._find_site_keys_bulk([(v, sid) for sid, _, v, _ in items])
+        for key, winning_key in winners.items():
+            if result.get(key) and result[key] != winning_key:
+                result[key] = winning_key
         return result
 
     async def _find_device_keys_bulk(
@@ -561,6 +741,16 @@ class IdentityResolver:
         )
         for row in rows:
             result[(row["vendor"], row["vendor_device_id"])] = row["device_key"]
+
+        # Same MAC fallback as the single lookup, in one query for the misses.
+        misses = [(v, vid) for v, vid in pairs if (v, vid) not in result]
+        mac_of = {(v, vid): _normalize_mac(vid) for v, vid in misses}
+        by_mac = await self._find_device_keys_by_mac([m for m in mac_of.values() if m])
+        for key, mac in mac_of.items():
+            device_key = by_mac.get(mac) if mac else None
+            if device_key:
+                result[key] = device_key
+                await self._register_alias(device_key, key[0], key[1])
         return result
 
     async def _find_site_keys_bulk(
@@ -571,11 +761,28 @@ class IdentityResolver:
         result: Dict[Tuple[str, str], str] = {}
         if not pairs or not db.pool:
             return result
-        # Build an OR query over vendor_ids JSONB lookups. Scales with the
-        # number of pairs but sites are small (hundreds), so this is fine.
+        # Prefer the indexed, unique site_identities table.
+        rows = await db.fetch(
+            """
+            SELECT si.vendor, si.vendor_site_id, si.site_key
+            FROM site_identities si
+            JOIN (SELECT * FROM unnest($1::text[], $2::text[]) AS t(vendor, vendor_site_id)) q
+              ON si.vendor = q.vendor AND si.vendor_site_id = q.vendor_site_id
+            """,
+            [p[0] for p in pairs],
+            [p[1] for p in pairs],
+        )
+        for row in rows:
+            result[(row["vendor"], row["vendor_site_id"])] = row["site_key"]
+
+        remaining = [p for p in pairs if p not in result]
+        if not remaining:
+            return result
+
+        # Legacy fallback for databases without migration 017.
         conditions: List[str] = []
         params: List[str] = []
-        for idx, (vendor, vendor_site_id) in enumerate(pairs):
+        for idx, (vendor, vendor_site_id) in enumerate(remaining):
             conditions.append(f"vendor_ids->>${idx * 2 + 1} = ${idx * 2 + 2}")
             params.extend([vendor, vendor_site_id])
         rows = await db.fetch(
@@ -583,6 +790,7 @@ class IdentityResolver:
             SELECT site_key, vendor_ids
             FROM sites
             WHERE {' OR '.join(conditions)}
+            ORDER BY created_at
             """,
             *params,
         )
@@ -599,6 +807,44 @@ class IdentityResolver:
                 if vendor_ids.get(vendor) == vendor_site_id:
                     result[(vendor, vendor_site_id)] = row["site_key"]
         return result
+
+
+async def resolve_device_types(device_refs: List[str]) -> Dict[str, str]:
+    """Map each device reference to its canonical `devices.device_type`.
+
+    Accepts either spelling a collector may have put on an event: a canonical
+    device_key, or a vendor-native id registered in device_identities.
+
+    Collectors hardcode `device_type="ap"` on the events they emit, so a Mist EX
+    switch arrives labelled as an access point. The correlation cascade splits
+    events into infrastructure and leaf by exactly this field, so without the
+    canonical type no event is ever infrastructure and the cascade cannot run.
+    """
+    result: Dict[str, str] = {}
+    wanted = sorted({r for r in device_refs if r})
+    if not wanted or not db.pool:
+        return result
+
+    rows = await db.fetch(
+        """
+        SELECT ref, device_type FROM (
+            SELECT d.device_key AS ref, d.device_type
+              FROM devices d
+             WHERE d.device_key = ANY($1::text[])
+            UNION ALL
+            SELECT di.vendor_device_id AS ref, d.device_type
+              FROM device_identities di
+              JOIN devices d ON d.device_key = di.device_key
+             WHERE di.vendor_device_id = ANY($1::text[])
+        ) t
+        """,
+        wanted,
+    )
+    for row in rows:
+        device_type = (row["device_type"] or "").strip().lower()
+        if device_type and device_type != "unknown":
+            result[row["ref"]] = device_type
+    return result
 
 
 # Module-level convenience singleton
