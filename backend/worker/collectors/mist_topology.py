@@ -22,7 +22,7 @@ import json
 import logging
 import re
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from uuid import uuid4
 
 import httpx
@@ -78,6 +78,28 @@ def _normalize_mac_str(value: str) -> str:
 _SOURCE_SYSTEM = "mist"
 _MAX_PAGES = 10
 _PAGE_LIMIT = 100
+_DEVICE_STATS_LIMIT = 1000
+_SITE_FETCH_CONCURRENCY = 8
+_CLIENT_SITE_CONCURRENCY = 8
+
+
+def _scalar(value: Any) -> Optional[Any]:
+    """First element of a list, else the value. Mist search endpoints return arrays."""
+    if isinstance(value, list):
+        return next((v for v in value if v is not None), None)
+    return value
+
+
+def _text(value: Any) -> str:
+    v = _scalar(value)
+    return str(v).strip() if v is not None else ""
+
+
+def _int_or_none(value: Any) -> Optional[int]:
+    try:
+        return int(_scalar(value))  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -557,104 +579,79 @@ class MistClientTopologyCollector:
         return outcome
 
     async def _fetch_clients(self) -> List[Dict]:
+        """Currently-associated clients, per site.
+
+        /orgs/{org}/clients/search is deliberately not used: it is a historical
+        aggregate whose ip/hostname/ssid/rssi come back as arrays over the search
+        window, so a client that disconnected days ago looks connected now.
         """
-        Fetch all clients from the org search endpoint with pagination.
-        Falls back to per-site stats if org-level search is unavailable or restricted.
-        """
-        url = f"{self._base_url}/api/v1/orgs/{self._org_id}/clients/search"
-        params: Dict[str, Any] = {"limit": _PAGE_LIMIT}
-        results: List[Dict] = []
-        page = 0
-        current_url = url
-        current_params: Optional[Dict[str, Any]] = params
-
-        while page < _MAX_PAGES:
-            try:
-                if current_params is not None:
-                    resp = await self._client.get(current_url, params=current_params)
-                else:
-                    resp = await self._client.get(current_url)
-                _raise_for_status(resp)
-            except Exception as exc:
-                logger.warning("Mist org clients search failed on page %d: %s — attempting site stats fallback", page + 1, exc)
-                break
-
-            body = resp.json()
-            page_items = body.get("results", body) if isinstance(body, dict) else body
-            if isinstance(page_items, list):
-                results.extend(page_items)
-            page += 1
-
-            next_path = body.get("next") if isinstance(body, dict) else None
-            if not next_path or len(page_items or []) < _PAGE_LIMIT:
-                break
-
-            current_url = f"{self._base_url}{next_path}"
-            current_params = None
-
-        if not results:
-            # Fallback: per-site stats client fetch
-            results = await self._fetch_clients_per_site_fallback()
-
-        return results
-
-    async def _fetch_clients_per_site_fallback(self) -> List[Dict]:
-        """Fallback: Fetch clients per site via /api/v1/sites/{site_id}/stats/clients."""
-        results: List[Dict] = []
         try:
             sites_resp = await self._client.get(f"{self._base_url}/api/v1/orgs/{self._org_id}/sites")
             _raise_for_status(sites_resp)
             sites_data = sites_resp.json()
-            site_ids = [s.get("id") for s in (sites_data if isinstance(sites_data, list) else sites_data.get("results", [])) if isinstance(s, dict) and s.get("id")]
+        except Exception as exc:
+            logger.warning("Mist sites listing for client topology failed: %s", exc)
+            return []
 
-            for site_id in site_ids:
+        raw_sites = sites_data if isinstance(sites_data, list) else sites_data.get("results", [])
+        sites = [
+            {"id": s["id"], "name": s.get("name") or s["id"]}
+            for s in raw_sites
+            if isinstance(s, dict) and s.get("id")
+        ]
+        if not sites:
+            return []
+
+        sem = asyncio.Semaphore(_CLIENT_SITE_CONCURRENCY)
+
+        async def fetch_site(site: Dict[str, str]) -> List[Dict]:
+            async with sem:
                 try:
                     resp = await self._client.get(
-                        f"{self._base_url}/api/v1/sites/{site_id}/stats/clients",
-                        params={"limit": _PAGE_LIMIT},
+                        f"{self._base_url}/api/v1/sites/{site['id']}/stats/clients"
                     )
                     _raise_for_status(resp)
                     body = resp.json()
-                    page_items = body.get("results", body) if isinstance(body, dict) else body
-                    if isinstance(page_items, list):
-                        for item in page_items:
-                            if isinstance(item, dict):
-                                item.setdefault("site_id", site_id)
-                                results.append(item)
-                except Exception as e:
-                    logger.debug("Mist site %s client stats fetch failed: %s", site_id, e)
-        except Exception as exc:
-            logger.debug("Mist sites listing for fallback failed: %s", exc)
+                except Exception as exc:
+                    logger.debug("Mist site %s client stats fetch failed: %s", site["id"], exc)
+                    return []
+            if not isinstance(body, list):
+                logger.debug(
+                    "stats/clients site=%s returned %s, not a list", site["id"], type(body).__name__
+                )
+                return []
+            out: List[Dict] = []
+            for item in body:
+                if not isinstance(item, dict) or not item.get("mac"):
+                    continue
+                item.setdefault("site_id", site["id"])
+                item["site_name"] = site["name"]
+                out.append(item)
+            return out
 
-        return results
+        per_site = await asyncio.gather(*[fetch_site(site) for site in sites])
+        return [c for lst in per_site for c in lst]
 
     async def _normalize(self, raw: Dict[str, Any]) -> Optional[UnifiedEvent]:
         """Normalize a Mist client entry into a client topology event."""
-        mac = raw.get("mac", "")
+        mac = _text(raw.get("mac"))
         if not mac:
             return None
 
-        ip = raw.get("ip", "")
-        hostname = raw.get("hostname", "")
-        ssid = raw.get("ssid", "")
-        band = raw.get("band", "")
-        rssi = raw.get("rssi")
-        site_id = raw.get("site_id", "")
-        ap_mac = raw.get("ap_mac", "") or raw.get("connected_by", "")
-        username = raw.get("username", "")
-        os = raw.get("os", "")
+        ip = _text(raw.get("ip"))
+        hostname = _text(raw.get("hostname"))
+        ssid = _text(raw.get("ssid"))
+        band = _text(raw.get("band"))
+        rssi = _int_or_none(raw.get("rssi"))
+        site_id = _text(raw.get("site_id"))
+        site_name = _text(raw.get("site_name"))
+        ap_mac = _text(raw.get("ap_mac")) or _text(raw.get("connected_by"))
+        username = _text(raw.get("username"))
+        os = _text(raw.get("os"))
 
-        # Derive severity from RSSI
-        if rssi is not None:
-            if rssi < -80:
-                severity = EventSeverity.WARNING
-                event_type = EventType.PACKET_LOSS
-            elif rssi < -70:
-                severity = EventSeverity.INFO
-                event_type = EventType.CLIENT_CONNECTED
-            else:
-                severity = EventSeverity.INFO
-                event_type = EventType.CLIENT_CONNECTED
+        if rssi is not None and rssi < -80:
+            severity = EventSeverity.WARNING
+            event_type = EventType.PACKET_LOSS
         else:
             severity = EventSeverity.INFO
             event_type = EventType.CLIENT_CONNECTED
@@ -695,7 +692,7 @@ class MistClientTopologyCollector:
                 device_name=ap_mac or "unknown",
                 device_type="ap",
                 site_id=site_id,
-                site_name=f"site-{site_id[:8]}" if site_id else None,
+                site_name=site_name or None,
             ) if ap_mac else None,
             tags=["wireless", "mist", "client", "topology"],
             metadata={
@@ -1190,20 +1187,26 @@ class MistTopologyCollector:
         Returns ``{site_id: [device_dict, ...]}`` so sub-collectors can
         iterate without re-calling the API.
         """
-        result: Dict[str, List[Dict]] = {}
-        for site_id in site_ids:
-            try:
-                resp = await client.get(
-                    f"{self._base_url}/api/v1/sites/{site_id}/stats/devices",
-                    params={"limit": _PAGE_LIMIT},
-                )
-                if resp.status_code == 200:
-                    devices = resp.json()
-                    if isinstance(devices, list):
-                        result[site_id] = devices
-            except Exception:
-                logger.debug("Failed to fetch devices for site %s", site_id)
-        return result
+        sem = asyncio.Semaphore(_SITE_FETCH_CONCURRENCY)
+
+        async def fetch(site_id: str) -> Tuple[str, List[Dict]]:
+            async with sem:
+                try:
+                    resp = await client.get(
+                        f"{self._base_url}/api/v1/sites/{site_id}/stats/devices",
+                        # A single plant runs >300 APs; _PAGE_LIMIT drops the tail.
+                        params={"limit": _DEVICE_STATS_LIMIT},
+                    )
+                    if resp.status_code == 200:
+                        devices = resp.json()
+                        if isinstance(devices, list):
+                            return site_id, devices
+                except Exception:
+                    logger.debug("Failed to fetch devices for site %s", site_id)
+                return site_id, []
+
+        pairs = await asyncio.gather(*(fetch(s) for s in site_ids))
+        return {site_id: devices for site_id, devices in pairs if devices}
 
     async def _fetch_site_ids(self, client: httpx.AsyncClient) -> List[str]:
         """Fetch all site IDs (and names) for the org.

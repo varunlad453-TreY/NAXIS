@@ -186,7 +186,7 @@ async def upsert_incident(incident: Incident) -> None:
         """,
         d["incident_id"], d["title"], d["severity"], d["status"],
         d["affected_sites"], d["affected_devices"], d["affected_clients"],
-        d["root_device_ids"], d["symptom_device_ids"],
+        d["root_device_ids"], d["symptom_device_ids"], d["inferred_root"],
         d["related_event_ids"], d["probable_cause"], d["confidence_score"],
         confidence_breakdown, evidence_json,
         d["created_at"], d["updated_at"],

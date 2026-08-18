@@ -22,7 +22,7 @@ import sys
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import List
+from typing import Dict, List
 
 from config.settings import get_settings
 from shared.correlation import CorrelationConfig, CorrelationEngine
@@ -43,6 +43,7 @@ from shared.database.topology import DatabaseTopologyProvider
 from shared.models.collector_outcome import CollectorOutcome
 from worker.collectors.mist import MistCollector
 from worker.collectors.mist_inventory import MistInventoryCollector
+from worker.collectors.mist_locations import MistLocationsCollector
 from worker.collectors.dnac import DNACCollector
 from worker.collectors.mist_topology import MistTopologyCollector
 from worker.collectors.velocloud import VeloCloudCollector
@@ -94,6 +95,7 @@ class WorkerDaemon:
         self._worker_id = f"worker-{uuid.uuid4().hex[:8]}"
         self._mist = MistCollector()
         self._mist_inventory = MistInventoryCollector()
+        self._mist_locations = MistLocationsCollector()
         self._dnac = DNACCollector()
         self._mist_topology = MistTopologyCollector()
         self._velocloud = VeloCloudCollector()
@@ -109,6 +111,7 @@ class WorkerDaemon:
         self._last_collected: datetime = datetime.now(timezone.utc) - timedelta(hours=24)
         self._last_health_snapshot: datetime = datetime.now(timezone.utc) - timedelta(hours=24)
         self._last_retention: datetime = datetime.now(timezone.utc) - timedelta(hours=24)
+        self._last_slow_run: Dict[str, datetime] = {}
 
         # Correlation engine with Stage 2 topology cascade
         correlation_config = CorrelationConfig(
@@ -311,6 +314,15 @@ class WorkerDaemon:
             logger.exception("Collector '%s' failed", name)
             return []
 
+    def _slow_pass_due(self, name: str, min_interval_s: float) -> bool:
+        """True at most once per min_interval_s. Marks the run immediately on success."""
+        now = datetime.now(timezone.utc)
+        last = self._last_slow_run.get(name)
+        if last is not None and (now - last).total_seconds() < min_interval_s:
+            return False
+        self._last_slow_run[name] = now
+        return True
+
     async def _collect_all(self) -> list[CollectorOutcome]:
         """Run each collector concurrently with timeouts and record outcomes to the telemetry ledger."""
         since = self._last_collected
@@ -320,8 +332,28 @@ class WorkerDaemon:
         # Mist events
         tasks.append(self._safe_collect_task("mist_events", self._run_collector(self._mist, since)))
 
-        # Mist inventory
-        tasks.append(self._safe_collect_task("mist_inventory", self._run_collector_inventory(self._mist_inventory)))
+        # Mist inventory: org inventory + per-site /stats/devices for all 61 sites,
+        # which does not finish inside the 45s default.
+        tasks.append(
+            self._safe_collect_task(
+                "mist_inventory",
+                self._run_collector_inventory(self._mist_inventory),
+                timeout=180.0,
+            )
+        )
+
+        # Mist locations (sites → floorplans → AP placements). 1 + 2*N_sites HTTP
+        # calls, so it needs far more headroom than the 45s default — and the
+        # hierarchy changes on a human timescale, so running it every pass just
+        # burns the org's API quota and 429s the live collectors.
+        if self._mist_locations.is_configured and self._slow_pass_due("mist_locations", 3600):
+            tasks.append(
+                self._safe_collect_task(
+                    "mist_locations",
+                    self._run_collector_inventory(self._mist_locations),
+                    timeout=180.0,
+                )
+            )
 
         # DNAC sub-collectors
         if self._dnac.is_configured:
@@ -345,7 +377,10 @@ class WorkerDaemon:
                     except Exception:
                         logger.exception("Failed to record Mist topology run for %s", o.collector_id)
                 return outcomes
-            tasks.append(self._safe_collect_task("mist_topology", _mist_topo_run()))
+            # Five sub-collectors over all 61 sites — does not fit the 45s default.
+            tasks.append(
+                self._safe_collect_task("mist_topology", _mist_topo_run(), timeout=180.0)
+            )
 
         # VeloCloud SD-WAN sub-collectors & inventory
         if self._velocloud.is_configured:

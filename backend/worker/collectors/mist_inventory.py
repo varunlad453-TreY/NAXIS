@@ -10,9 +10,10 @@ Upserts into the `inventory` table every collection cycle.
 Returns a ``CollectorOutcome`` with structured telemetry metadata.
 """
 
+import json
 import logging
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
@@ -33,6 +34,7 @@ except ImportError:  # pragma: no cover - supports both entry-point styles
 logger = logging.getLogger(__name__)
 
 _PAGE_LIMIT = 100
+_STATS_LIMIT = 1000
 COLLECTOR_ID = "mist-inventory"
 SOURCE_SYSTEM = "mist"
 
@@ -127,13 +129,27 @@ class MistInventoryCollector:
             try:
                 resp = await client.get(
                     f"{self._base_url}/api/v1/sites/{site_id}/stats/devices",
-                    params={"limit": 200},
+                    params={"limit": _STATS_LIMIT},
                 )
                 if resp.status_code == 200:
-                    for ap in resp.json():
+                    payload = resp.json()
+                    devices = payload if isinstance(payload, list) else []
+                    # A single plant runs >300 APs; a short limit silently drops
+                    # the tail, and those APs then have no radio/client stats.
+                    if len(devices) >= _STATS_LIMIT:
+                        logger.warning(
+                            "Mist stats: site %s hit the %d-device page limit — stats truncated",
+                            site_id, _STATS_LIMIT,
+                        )
+                    for ap in devices:
                         mac = ap.get("mac", "")
                         if mac:
                             stats_map[mac] = ap
+                else:
+                    logger.warning(
+                        "Mist stats: site %s returned HTTP %s — no live stats this pass",
+                        site_id, resp.status_code,
+                    )
             except Exception:
                 logger.warning("Mist stats: failed to fetch live data for site %s", site_id, exc_info=True)
 
@@ -198,8 +214,22 @@ def _build_rows(
             "uptime_seconds": uptime,
             "firmware_version": firmware,
             "last_seen": datetime.now(timezone.utc),
+            "props": _build_props(d, stats),
         })
     return rows
+
+
+def _build_props(device: Dict, stats: Dict) -> Dict[str, Any]:
+    """Real radio telemetry only — the API reads channel/util/power from here."""
+    props: Dict[str, Any] = {}
+    radio_stat = stats.get("radio_stat")
+    if isinstance(radio_stat, dict) and radio_stat:
+        props["radio_stat"] = radio_stat
+    for key in ("version", "hw_rev"):
+        value = stats.get(key) or device.get(key)
+        if value:
+            props[key] = value
+    return props
 
 
 def _count_clients(stats: Dict) -> int:
@@ -216,11 +246,13 @@ async def _upsert_inventory(rows: List[Dict[str, Any]]) -> None:
         INSERT INTO inventory (
             device_id, platform, hostname, mac, serial, model, device_type,
             ip_address, site_id, site_name, connected, reachability,
-            num_clients, uptime_seconds, firmware_version, last_seen, updated_at
+            num_clients, uptime_seconds, firmware_version, last_seen, updated_at,
+            props
         ) VALUES (
             $1, $2, $3, $4, $5, $6, $7,
             $8, $9, $10, $11, $12,
-            $13, $14, $15, $16, NOW()
+            $13, $14, $15, $16, NOW(),
+            $17::jsonb
         )
         ON CONFLICT (device_id) DO UPDATE SET
             hostname         = EXCLUDED.hostname,
@@ -233,7 +265,8 @@ async def _upsert_inventory(rows: List[Dict[str, Any]]) -> None:
             uptime_seconds   = EXCLUDED.uptime_seconds,
             firmware_version = EXCLUDED.firmware_version,
             last_seen        = EXCLUDED.last_seen,
-            updated_at       = NOW()
+            updated_at       = NOW(),
+            props            = EXCLUDED.props
     """
     for row in rows:
         await db.execute(
@@ -244,6 +277,7 @@ async def _upsert_inventory(rows: List[Dict[str, Any]]) -> None:
             row["connected"], row["reachability"],
             row["num_clients"], row["uptime_seconds"], row["firmware_version"],
             row["last_seen"],
+            json.dumps(row["props"]),
         )
 
 

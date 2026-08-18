@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { Suspense, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   AlertCircle,
@@ -20,7 +20,14 @@ import {
 import { api } from "@/lib/api";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
+import { useQueryState } from "@/hooks/use-query-state";
 import type { DeviceReachability, DeviceSummary } from "@/types/device";
+
+type ReachabilityParam = DeviceReachability | "all";
+type GroupParam = "site" | "flat";
+
+const REACHABILITY_VALUES: readonly ReachabilityParam[] = ["all", "reachable", "unreachable"];
+const GROUP_VALUES: readonly GroupParam[] = ["site", "flat"];
 
 function formatUptime(seconds: number): string {
   if (!seconds) return "—";
@@ -32,9 +39,10 @@ function formatUptime(seconds: number): string {
 }
 
 function ReachabilityDot({ status }: { status: DeviceReachability }) {
-  const colors = {
+  const colors: Record<DeviceReachability, string> = {
     reachable: "bg-success",
     unreachable: "bg-critical",
+    degraded: "bg-orange-400",
     unknown: "bg-foreground-subtle",
   };
   return <span className={`inline-block h-2 w-2 rounded-full ${colors[status]}`} title={status} />;
@@ -153,10 +161,15 @@ function SiteGroup({ siteName, devices }: { siteName: string; devices: DeviceSum
   );
 }
 
-export default function MistObserverPage() {
+function MistObserverPageInner() {
   const [search, setSearch] = useState("");
-  const [reachabilityFilter, setReachabilityFilter] = useState<DeviceReachability | "all">("all");
-  const [groupBySite, setGroupBySite] = useState(true);
+  const [reachabilityFilter, setReachabilityFilter] = useQueryState<ReachabilityParam>(
+    "status",
+    "all",
+    REACHABILITY_VALUES,
+  );
+  const [group, setGroup] = useQueryState<GroupParam>("group", "site", GROUP_VALUES);
+  const groupBySite = group === "site";
 
   const { data, isLoading, error } = useQuery({
     queryKey: ["mist-devices"],
@@ -253,7 +266,7 @@ export default function MistObserverPage() {
             <Filter className="h-4 w-4 text-foreground-subtle" />
             <select
               value={reachabilityFilter}
-              onChange={(e) => setReachabilityFilter(e.target.value as DeviceReachability | "all")}
+              onChange={(e) => setReachabilityFilter(e.target.value as ReachabilityParam)}
               className="border-b border-border/70 bg-transparent px-1 py-2 text-sm text-foreground outline-none focus:border-primary/30"
             >
               <option value="all">All Status</option>
@@ -261,7 +274,7 @@ export default function MistObserverPage() {
               <option value="unreachable">Offline</option>
             </select>
             <button
-              onClick={() => setGroupBySite((g) => !g)}
+              onClick={() => setGroup(groupBySite ? "flat" : "site")}
               className={`text-sm px-2 py-1 rounded border transition-colors ${
                 groupBySite ? "border-primary/40 text-primary bg-primary/5" : "border-border/60 text-foreground-muted hover:text-foreground"
               }`}
@@ -342,5 +355,33 @@ export default function MistObserverPage() {
 
       </div>
     </div>
+  );
+}
+
+function MistObserverPageFallback() {
+  return (
+    <div className="min-h-screen px-4 py-10 sm:px-6 lg:px-8">
+      <div className="mx-auto max-w-7xl space-y-8">
+        <div className="space-y-3 border-b border-border/60 pb-8">
+          <Skeleton className="h-3 w-32" />
+          <Skeleton className="h-8 w-56" />
+          <Skeleton className="h-4 w-80" />
+        </div>
+        <Skeleton className="h-9 w-full" />
+        <div className="space-y-3">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <Skeleton key={i} className="h-16 w-full rounded-lg" />
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export default function MistObserverPage() {
+  return (
+    <Suspense fallback={<MistObserverPageFallback />}>
+      <MistObserverPageInner />
+    </Suspense>
   );
 }

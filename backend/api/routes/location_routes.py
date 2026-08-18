@@ -87,19 +87,6 @@ async def get_location_floorplan(location_id: str, name: Optional[str] = Query(N
 
 
 @router.post(
-    "/aps/{device_id}/optimize-rrm",
-    summary="Trigger Radio Resource Management (RRM) Channel Optimization",
-    description="Executes RRM channel recalculation for specified Access Point to resolve co-channel interference.",
-)
-async def optimize_ap_rrm(device_id: str) -> Dict[str, Any]:
-    try:
-        return await location_service.optimize_ap_rrm(device_id)
-    except Exception as exc:
-        logger.error(f"Error optimizing RRM for AP {device_id}: {exc}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Failed to execute RRM optimization")
-
-
-@router.post(
     "",
     summary="Create or update physical location (Admin only)",
     description="Registers a region, site, building, floor, or zone in Naxis's authoritative location registry.",
