@@ -82,7 +82,15 @@ rate_limiter = RateLimiter(max_calls=5, period_seconds=60.0)
 )
 async def trace_client_path(client_mac: str) -> PathTraceResponse:
     try:
-        return await path_trace_service.trace_client_path(client_mac)
+        result = await path_trace_service.trace_client_path(client_mac)
+        if not result:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Endpoint '{client_mac}' not found in network topology inventory.",
+            )
+        return result
+    except HTTPException:
+        raise
     except Exception as exc:
         logger.error(f"Error tracing client path for {client_mac}: {exc}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to resolve client path trace")

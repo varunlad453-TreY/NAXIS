@@ -144,15 +144,15 @@
 
 /* ── Sidebar-aware layout shift ───────────────────────────────────────────── */
 
-@media (min-width: 1024px) {
-  #main-layout {
-    padding-left: 14rem; /* w-56 */
-    transition: padding-left 200ms ease;
-  }
-  body[data-sidebar-collapsed="true"] #main-layout {
-    padding-left: 3.75rem;
-  }
+#main-layout {
+  padding-left: 15rem; /* w-60 (240px) */
+  transition: padding-left 200ms ease;
 }
+
+body[data-sidebar-collapsed="true"] #main-layout {
+  padding-left: 4.5rem; /* w-[72px] (72px) */
+}
+
 
 /* ── Naxis sci-fi animations ──────────────────────────────────────────────── */
 

@@ -78,28 +78,21 @@ const HEATMAP_MODES = ["placements", "coverage", "interference"] as const;
 const HEALTH_FILTERS = ["all", "degraded"] as const;
 
 const GRADIENT_GOOD =
-  "radial-gradient(circle, rgba(16, 185, 129, 0.4) 0%, rgba(16, 185, 129, 0.12) 50%, transparent 75%)";
+  "radial-gradient(circle, rgba(16, 185, 129, 0.35) 0%, rgba(16, 185, 129, 0.1) 45%, transparent 70%)";
 const GRADIENT_WARN =
-  "radial-gradient(circle, rgba(245, 158, 11, 0.4) 0%, rgba(245, 158, 11, 0.12) 50%, transparent 75%)";
+  "radial-gradient(circle, rgba(245, 158, 11, 0.4) 0%, rgba(245, 158, 11, 0.12) 50%, transparent 70%)";
 const GRADIENT_BAD =
-  "radial-gradient(circle, rgba(239, 68, 68, 0.35) 0%, rgba(239, 68, 68, 0.1) 50%, transparent 75%)";
+  "radial-gradient(circle, rgba(239, 68, 68, 0.35) 0%, rgba(239, 68, 68, 0.1) 50%, transparent 70%)";
 const GRADIENT_INTERFERENCE_SEVERE =
   "radial-gradient(circle, rgba(239, 68, 68, 0.45) 0%, rgba(245, 158, 11, 0.2) 50%, transparent 75%)";
 const GRADIENT_INTERFERENCE_MODERATE =
   "radial-gradient(circle, rgba(245, 158, 11, 0.4) 0%, rgba(245, 158, 11, 0.15) 50%, transparent 75%)";
 
-function coverageGradient(ap: APPlacement): string | null {
-  if (ap.channel_util != null) {
-    if (ap.channel_util < 20) return GRADIENT_GOOD;
-    if (ap.channel_util < 50) return GRADIENT_WARN;
-    return GRADIENT_BAD;
-  }
-  if (ap.rssi != null) {
-    if (ap.rssi >= -65) return GRADIENT_GOOD;
-    if (ap.rssi >= -75) return GRADIENT_WARN;
-    return GRADIENT_BAD;
-  }
-  return null;
+function getCoverageGradient(ap: APPlacement): string {
+  const rssi = ap.rssi ?? -65;
+  if (ap.health_status === "critical" || rssi < -75) return GRADIENT_BAD;
+  if (ap.health_status === "degraded" || rssi < -65) return GRADIENT_WARN;
+  return GRADIENT_GOOD;
 }
 
 function interferenceGradient(ap: APPlacement): string | null {
@@ -518,7 +511,7 @@ function NOCFloorplanContent() {
   const showPlanImage = !!planUrl && !planImgError;
 
   return (
-    <div className="-m-6 h-[calc(100vh-3.5rem)] flex flex-col bg-slate-950">
+    <div className="h-[calc(100vh-3.5rem)] flex flex-col bg-slate-950">
       {/* ── Operational Bar ── */}
       <div className="shrink-0 h-14 flex items-center justify-between px-5 border-b border-slate-800/60">
         <div className="flex items-center gap-5 min-w-0">
@@ -691,9 +684,8 @@ function NOCFloorplanContent() {
 
                 {displayedAPs.map((ap) => {
                   const isSelected = selectedAP?.device_id === ap.device_id;
-                  const coverage = heatmapMode === "coverage" ? coverageGradient(ap) : null;
-                  const interference =
-                    heatmapMode === "interference" ? interferenceGradient(ap) : null;
+                  const covGradient = heatmapMode === "coverage" ? getCoverageGradient(ap) : null;
+                  const intfGradient = heatmapMode === "interference" ? interferenceGradient(ap) : null;
 
                   return (
                     <div
@@ -702,16 +694,26 @@ function NOCFloorplanContent() {
                       style={{ left: `${ap.x_pct}%`, top: `${ap.y_pct}%` }}
                       className="absolute -translate-x-1/2 -translate-y-1/2 cursor-pointer transition-all duration-200 group z-10"
                     >
-                      {coverage && ringPx > 0 && (
+                      {/* Crisp Enterprise RF Signal Coverage Heatmap Layer (Evaluated by RSSI dBm) */}
+                      {covGradient && (
                         <div
-                          style={{ width: ringPx, height: ringPx, background: coverage }}
+                          style={{
+                            width: "160px",
+                            height: "160px",
+                            background: covGradient,
+                          }}
                           className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full pointer-events-none animate-pulse"
                         />
                       )}
 
-                      {interference && ringPx > 0 && (
+                      {/* Interference Layer */}
+                      {intfGradient && (
                         <div
-                          style={{ width: ringPx, height: ringPx, background: interference }}
+                          style={{
+                            width: "140px",
+                            height: "140px",
+                            background: intfGradient,
+                          }}
                           className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full pointer-events-none animate-pulse"
                         />
                       )}
@@ -1051,7 +1053,7 @@ function NOCFloorplanContent() {
 export default function NOCFloorplanPage() {
   return (
     <Suspense fallback={
-      <div className="-m-6 h-[calc(100vh-3.5rem)] flex items-center justify-center bg-slate-950">
+      <div className="h-[calc(100vh-3.5rem)] flex items-center justify-center bg-slate-950">
         <div className="text-xs text-slate-500 animate-pulse">Loading NOC Floorplan...</div>
       </div>
     }>

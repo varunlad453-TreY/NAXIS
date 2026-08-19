@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { ChevronLeft, ChevronRight, Cpu } from "lucide-react";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { mainNavigation, type NavSection } from "@/config/navigation";
 import { cn } from "@/lib/utils";
 
@@ -74,6 +74,14 @@ function NavSection({
 
 export function Sidebar() {
   const [collapsed, setCollapsed] = useState(false);
+
+  useEffect(() => {
+    if (collapsed) {
+      document.body.setAttribute("data-sidebar-collapsed", "true");
+    } else {
+      document.body.removeAttribute("data-sidebar-collapsed");
+    }
+  }, [collapsed]);
 
   return (
     <aside

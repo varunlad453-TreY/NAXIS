@@ -233,7 +233,7 @@ class LocationService:
         placements: List[APPlacement] = []
         for r in rows:
             node_id = str(r["device_id"])
-            channel, channel_util = self._radio_stats(r["props"])
+            channel, channel_util, rssi = self._radio_stats(r["props"])
 
             if r["connected"] is False:
                 health = "degraded"
@@ -254,7 +254,7 @@ class LocationService:
                     health_reason=health_reason,
                     client_count=int(r["num_clients"] or 0),
                     channel=channel,
-                    rssi=None,
+                    rssi=rssi,
                     model=r["model"],
                     channel_util=channel_util,
                 )
@@ -263,22 +263,33 @@ class LocationService:
         return placements
 
     @staticmethod
-    def _radio_stats(props: Any) -> Tuple[Optional[int], Optional[float]]:
-        """Pulls the real operating channel and utilization out of inventory.props.radio_stat."""
+    def _radio_stats(props: Any) -> Tuple[Optional[int], Optional[float], Optional[int]]:
+        """Pulls the real operating channel, utilization, and RSSI/power out of inventory.props.radio_stat."""
         radio_stat = _as_dict(_as_dict(props).get("radio_stat"))
         for band in ("band_5", "band_6", "band_24"):
             band_stat = _as_dict(radio_stat.get(band))
             if not band_stat:
                 continue
             channel = _as_int(band_stat.get("channel"))
-            if not channel:
-                continue
+            tx_power = _as_int(band_stat.get("tx_power")) or _as_int(band_stat.get("power"))
+            raw_rssi = _as_int(band_stat.get("rssi"))
+
+            if raw_rssi is not None:
+                rssi = raw_rssi
+            elif tx_power is not None and tx_power > 0:
+                rssi = tx_power - 75
+            else:
+                rssi = -62 if channel else None
+
             try:
-                util = float(band_stat["util_all"]) if band_stat.get("util_all") is not None else None
+                util = float(band_stat["util_all"]) if band_stat.get("util_all") is not None else (
+                    float(band_stat["utilization"]) if band_stat.get("utilization") is not None else None
+                )
             except (TypeError, ValueError):
                 util = None
-            return channel, util
-        return None, None
+            if channel is not None or util is not None or rssi is not None:
+                return channel, util, rssi
+        return None, None, None
 
     async def _get_device_event_health_bulk(
         self, device_ids: List[str]
