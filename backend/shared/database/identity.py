@@ -538,7 +538,7 @@ class IdentityResolver:
                 """
                 INSERT INTO location_mappings (location_id, vendor, vendor_site_id)
                 VALUES ($1, $2, $3)
-                ON CONFLICT (vendor, vendor_site_id) DO UPDATE SET
+                ON CONFLICT (vendor, vendor_site_id, COALESCE(vendor_map_id, '')) DO UPDATE SET
                     location_id = EXCLUDED.location_id;
                 """,
                 site_key, vendor, vendor_site_id

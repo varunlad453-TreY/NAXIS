@@ -5,6 +5,7 @@ Constructs hierarchical location trees, aggregates location health, and normaliz
 floorplan coordinates for interactive NOC drill-downs.
 """
 
+import json
 import logging
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -16,7 +17,6 @@ try:
     )
     from backend.shared.database.client import db
     from backend.shared.database.locations_db import (
-        create_location,
         get_all_locations,
         get_location,
     )
@@ -28,63 +28,73 @@ except ImportError:
     )
     from shared.database.client import db
     from shared.database.locations_db import (
-        create_location,
         get_all_locations,
         get_location,
     )
 
 logger = logging.getLogger(__name__)
 
+_TYPE_RANK = {"region": 0, "site": 1, "building": 2, "floor": 3, "zone": 4}
+_HEALTH_RANK = {"healthy": 0, "unknown": 1, "degraded": 2, "critical": 3}
 
-def _clean_location_name(raw_name: str) -> str:
-    if not raw_name:
-        return "Enterprise Site Facility"
-    clean = str(raw_name).strip()
-    if "null" in clean.lower():
-        import re
-        match = re.search(r'\(([^)]+)\)', clean)
-        if match:
-            city_info = match.group(1)
-            city_name = city_info.split(',')[0].strip()
-            if city_name and city_name.lower() != "null":
-                return f"{city_name} Operations Center ({city_info})"
-        parts = [p.strip() for p in clean.replace("null", "").replace("(", "").replace(")", "").split(",") if p.strip() and p.strip().lower() != "null"]
-        if parts:
-            city = parts[0]
-            return f"{city} Regional Facility ({city}, IN)"
-        return "Enterprise Operations Hub (HQ)"
-    if clean.lower().startswith("site-"):
-        import re
-        match = re.search(r'site-(\d+)\s*\(([^)]+)\)', clean, re.IGNORECASE)
-        if match:
-            site_num, city_info = match.group(1), match.group(2)
-            city_name = city_info.split(',')[0].strip()
-            return f"{city_name}: Area Office ({city_info})"
-        match_num = re.search(r'site-(\d+)', clean, re.IGNORECASE)
-        if match_num:
-            return f"Enterprise Site {match_num.group(1)}"
-    return clean
+
+def _roll_up(node: "LocationNode") -> Tuple[int, str]:
+    """Sums descendant device counts and lifts the worst health onto the parent."""
+    count = node.device_count or 0
+    worst = node.health_status or "healthy"
+    for child in node.children:
+        child_count, child_health = _roll_up(child)
+        count += child_count
+        if _HEALTH_RANK.get(child_health, 0) > _HEALTH_RANK.get(worst, 0):
+            worst = child_health
+    node.device_count = count
+    node.health_status = worst
+    return count, worst
+
+
+def _as_dict(value: Any) -> Dict[str, Any]:
+    """asyncpg hands jsonb back as str unless a codec is registered."""
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str) and value:
+        try:
+            parsed = json.loads(value)
+            return parsed if isinstance(parsed, dict) else {}
+        except (ValueError, TypeError):
+            return {}
+    return {}
+
+
+def _as_int(value: Any) -> Optional[int]:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 class LocationService:
     """Service handling facility hierarchy, floorplan AP placement, and health aggregation."""
 
-    def __init__(self):
-        self._rrm_overrides: Dict[str, Dict[str, Any]] = {}
-
     async def get_location_tree(self) -> List[LocationNode]:
-        """Constructs recursive tree of physical locations with aggregated health scores."""
+        """Constructs recursive tree of physical locations with aggregated health scores.
+
+        Health and device counts are resolved with two set-based queries; per-location
+        lookups fanned out into ~9 sequential round-trips each and timed the endpoint out.
+        """
         all_locs = await get_all_locations()
+        loc_ids = [l["location_id"] for l in all_locs if l.get("location_id")]
+
+        health_by_id = await self._get_location_health_bulk(loc_ids)
+        counts_by_id = await self._get_location_device_counts_bulk(loc_ids)
 
         nodes_by_id: Dict[str, LocationNode] = {}
         for l in all_locs:
             loc_id = l["location_id"]
-            raw_name = l.get("name") or ""
-            health = await self._get_location_health(loc_id, loc_name=raw_name)
-            dev_count = await self._get_location_device_count(loc_id)
+            health = health_by_id.get(loc_id, "healthy")
+            dev_count = counts_by_id.get(loc_id, 0)
             nodes_by_id[loc_id] = LocationNode(
                 location_id=loc_id,
-                name=_clean_location_name(l["name"]),
+                name=l["name"],
                 type=l["type"],
                 parent_id=l.get("parent_id"),
                 latitude=l.get("latitude"),
@@ -102,22 +112,35 @@ class LocationService:
             else:
                 roots.append(node)
 
+        def sort_key(n: LocationNode) -> Tuple[int, str]:
+            return (_TYPE_RANK.get(n.type, len(_TYPE_RANK)), (n.name or "").lower())
+
+        for node in nodes_by_id.values():
+            node.children.sort(key=sort_key)
+        roots.sort(key=sort_key)
+
+        # Devices hang off floors and sites, never regions, so without this every
+        # region reads "0 devices / healthy" no matter what is failing beneath it.
+        for root in roots:
+            _roll_up(root)
+
         return roots
 
     async def get_floorplan_details(self, location_id: str, name: Optional[str] = None) -> FloorplanResponse:
-        """Queries floorplan metadata and positions APs with normalized x_pct / y_pct coordinates."""
+        """Returns the floorplan image, its pixel dimensions, and the APs Mist has positioned on it."""
         loc = await get_location(location_id)
-        loc_name = name or (loc["name"] if (loc and loc.get("name")) else f"Site {location_id[:8]}")
-        parent_building = "Enterprise Facility Site"
+        loc_name = name or (loc.get("name") if loc else None) or location_id
+        metadata = _as_dict(loc.get("metadata")) if loc else {}
+
+        parent_building = ""
         if loc and loc.get("parent_id"):
             p = await get_location(loc["parent_id"])
             if p:
-                parent_building = p["name"]
+                parent_building = p["name"] or ""
 
-        # Fetch APs placed on this floor
-        aps = await self._fetch_ap_placements(location_id, loc_name)
+        aps = await self._fetch_ap_placements(location_id)
+        unplaced = await self._count_unplaced_site_aps(location_id, metadata)
 
-        # Calculate aggregated floor health
         floor_health = "healthy"
         for ap in aps:
             if ap.health_status == "critical":
@@ -130,283 +153,298 @@ class LocationService:
             location_id=location_id,
             name=loc_name,
             building_name=parent_building,
-            floor_number=loc.get("floor_number", 1) if loc else 1,
-            floorplan_image_url=(loc.get("floorplan_image_url") if loc else None) or "/floorplans/hq_floor_2.png",
+            floor_number=loc.get("floor_number") if loc else None,
+            floorplan_image_url=(loc.get("floorplan_image_url") if loc else None),
+            floorplan_width=_as_int(metadata.get("width")),
+            floorplan_height=_as_int(metadata.get("height")),
             ap_placements=aps,
+            placed_ap_count=len(aps),
+            unplaced_ap_count=unplaced,
             health_status=floor_health,
         )
 
-    async def _fetch_ap_placements(self, location_id: str, loc_name: str = "") -> List[APPlacement]:
-        """Queries inventory for wireless APs assigned to the selected site/location."""
-        import json
-        import hashlib
-
-        vendor_site_ids: List[str] = []
-        try:
-            site_row = await db.fetchrow("SELECT vendor_ids FROM sites WHERE site_key = $1;", location_id)
-            if site_row and site_row["vendor_ids"]:
-                v_ids = site_row["vendor_ids"]
-                if isinstance(v_ids, str):
-                    try:
-                        v_ids = json.loads(v_ids)
-                    except Exception:
-                        v_ids = {}
-                if isinstance(v_ids, dict):
-                    vendor_site_ids = list(v_ids.values())
-        except Exception as exc:
-            logger.warning("Failed to lookup vendor_ids for site %s: %s", location_id, exc)
-
-        # Extract primary site token (e.g. "Ahmedabad", "Bhubaneshwar", "Pimpri", "Kolkata")
-        raw_token = loc_name.split(":")[0].split("(")[0].strip() if loc_name else ""
-        is_valid_token = len(raw_token) >= 4 and raw_token.lower() not in ("site", "building", "floor", "region", "root", "unknown")
-        search_pattern = f"%{raw_token.lower()}%" if is_valid_token else "___NONE___"
-
-        # Query site inventory or site token match, strictly limited to 4 APs per floorplan view
-        query = """
-            SELECT i.device_id, COALESCE(i.hostname, i.device_id) AS name, i.mac AS mac_address,
-                   i.ip_address, i.platform AS vendor, i.num_clients, i.connected, i.site_id, i.model
-            FROM inventory i
-            LEFT JOIN location_mappings lm ON lm.vendor = i.platform AND lm.vendor_site_id = i.site_id
-            WHERE (lm.location_id = $1 OR i.site_id = $1 OR i.site_id = ANY($2::text[])
-               OR ($3 != '___NONE___' AND (LOWER(i.site_name) LIKE $3 OR LOWER(i.hostname) LIKE $3 OR LOWER(i.site_id) LIKE $3)))
-            ORDER BY i.hostname ASC
-            LIMIT 4;
-        """
-        placements: List[APPlacement] = []
-        try:
-            rows = await db.fetch(query, location_id, vendor_site_ids, search_pattern)
-            if not rows:
-                h_loc = int(hashlib.md5(location_id.encode("utf-8")).hexdigest(), 16)
-                offset = (h_loc % 80) * 4
-                fallback_query = """
-                    SELECT device_id, COALESCE(hostname, device_id) AS name, mac AS mac_address,
-                           ip_address, platform AS vendor, num_clients, connected, site_id, model
-                    FROM inventory
-                    OFFSET $1 LIMIT 4;
-                """
-                rows = await db.fetch(fallback_query, offset)
-
-            # Quadrant-based layout so 4 APs are cleanly distributed across floorplan canvas
-            quad_x = [22.0, 68.0, 28.0, 74.0]
-            quad_y = [25.0, 30.0, 72.0, 68.0]
-
-            for idx, r in enumerate(rows):
-                node_id = str(r["device_id"])
-                mac_or_id = str(r["mac_address"] or node_id)
-                h_ap = int(hashlib.md5(mac_or_id.encode("utf-8")).hexdigest(), 16)
-
-                x_pct = quad_x[idx % 4]
-                y_pct = quad_y[idx % 4]
-
-                is_rrm_optimized = node_id in self._rrm_overrides
-                if is_rrm_optimized:
-                    opt = self._rrm_overrides[node_id]
-                    health = opt["health_status"]
-                    health_reason = opt["health_reason"]
-                    channel = opt["channel"]
-                    rssi = opt["rssi"]
-                else:
-                    channel = int(36 + (idx % 4) * 8)
-                    rssi = -50 - (h_ap % 20)
-                    is_conn = r.get("connected", True)
-                    # Query real SQL events table for this specific hardware device
-                    ev_health, ev_reason = await self._get_device_event_health(node_id)
-
-                    if not is_conn:
-                        health = "degraded"
-                        health_reason = "Controller Heartbeat Timeout / Device Unreachable"
-                    elif ev_health != "healthy":
-                        health = ev_health
-                        health_reason = ev_reason
-                    else:
-                        health = "healthy"
-                        health_reason = None
-
-
-
-
-                placements.append(
-                    APPlacement(
-                        device_id=node_id,
-                        name=str(r["name"] or f"AP-{node_id[:6]}"),
-                        mac_address=r.get("mac_address"),
-                        ip_address=r.get("ip_address"),
-                        vendor=str(r["vendor"] or "juniper_mist"),
-                        x_pct=x_pct,
-                        y_pct=y_pct,
-                        health_status=health,
-                        health_reason=health_reason,
-                        client_count=int(r.get("num_clients") or (4 + (h_ap % 18))),
-                        channel=channel,
-                        rssi=rssi,
-                    )
+    async def _count_unplaced_site_aps(self, location_id: str, metadata: Dict[str, Any]) -> int:
+        """APs at this floor's parent site that Mist has not positioned on any map."""
+        vendor_site_id = metadata.get("mist_site_id")
+        if not vendor_site_id:
+            try:
+                row = await db.fetchrow(
+                    """
+                    SELECT vendor_site_id
+                    FROM location_mappings
+                    WHERE location_id = $1 AND vendor = 'mist'
+                    LIMIT 1;
+                    """,
+                    location_id,
                 )
+                vendor_site_id = row["vendor_site_id"] if row else None
+            except Exception as exc:
+                logger.warning("Could not resolve vendor site for %s: %s", location_id, exc)
+                return 0
+        if not vendor_site_id:
+            return 0
+
+        try:
+            row = await db.fetchrow(
+                """
+                SELECT COUNT(*) AS cnt
+                FROM inventory i
+                WHERE i.platform = 'mist' AND i.site_id = $1 AND i.device_type = 'ap'
+                  AND NOT EXISTS (
+                      SELECT 1 FROM ap_placements p WHERE p.device_id = i.device_id
+                  );
+                """,
+                str(vendor_site_id),
+            )
+            return int(row["cnt"] or 0) if row else 0
         except Exception as exc:
-            logger.warning("Could not fetch AP placements: %s", exc)
+            logger.warning("Could not count unplaced APs for site %s: %s", vendor_site_id, exc)
+            return 0
+
+    async def _fetch_ap_placements(self, location_id: str) -> List[APPlacement]:
+        """Returns the APs the vendor has positioned on this floor, at their real coordinates.
+
+        Coordinates come from `ap_placements`, written by the Mist floorplan collector
+        from each AP's own x/y in its map's pixel space. No rows means no placed APs —
+        there is deliberately no fallback that borrows APs from other sites.
+        """
+        query = """
+            SELECT p.device_id, p.x_pct, p.y_pct, p.vendor,
+                   COALESCE(NULLIF(i.hostname, ''), p.device_id) AS name,
+                   i.mac, i.ip_address, i.platform, i.model, i.num_clients, i.connected,
+                   i.props
+              FROM ap_placements p
+              LEFT JOIN inventory i ON i.device_id = p.device_id
+             WHERE p.location_id = $1
+             ORDER BY name ASC;
+        """
+        try:
+            rows = await db.fetch(query, location_id)
+        except Exception as exc:
+            logger.warning("Could not fetch AP placements for %s: %s", location_id, exc)
+            return []
+
+        if not rows:
+            return []
+
+        device_ids = [str(r["device_id"]) for r in rows]
+        event_health = await self._get_device_event_health_bulk(device_ids)
+
+        placements: List[APPlacement] = []
+        for r in rows:
+            node_id = str(r["device_id"])
+            channel, channel_util = self._radio_stats(r["props"])
+
+            if r["connected"] is False:
+                health = "degraded"
+                health_reason = "Device unreachable — no controller heartbeat"
+            else:
+                health, health_reason = event_health.get(node_id, ("healthy", None))
+
+            placements.append(
+                APPlacement(
+                    device_id=node_id,
+                    name=str(r["name"]),
+                    mac_address=r["mac"],
+                    ip_address=r["ip_address"],
+                    vendor=str(r["platform"] or r["vendor"]),
+                    x_pct=float(r["x_pct"]),
+                    y_pct=float(r["y_pct"]),
+                    health_status=health,
+                    health_reason=health_reason,
+                    client_count=int(r["num_clients"] or 0),
+                    channel=channel,
+                    rssi=None,
+                    model=r["model"],
+                    channel_util=channel_util,
+                )
+            )
 
         return placements
 
-    async def optimize_ap_rrm(self, device_id: str) -> Dict[str, Any]:
-        """Executes Radio Resource Management (RRM) channel optimization for an AP."""
-        from datetime import datetime
-        self._rrm_overrides[device_id] = {
-            "health_status": "healthy",
-            "health_reason": None,
-            "channel": 149,
-            "rssi": -48,
-            "opt_timestamp": datetime.utcnow().isoformat(),
-        }
-        logger.info("Executed RRM Channel Optimization for AP %s -> Channel 149 (5GHz 80MHz)", device_id)
-        audit_hash = hashlib.md5(device_id.encode("utf-8")).hexdigest()[:8].upper()
-        return {
-            "status": "SUCCESS",
-            "audit_id": f"RRM-AUDIT-{audit_hash}",
-            "device_id": device_id,
-            "timestamp": datetime.utcnow().isoformat() + "Z",
-            "baseline": {
-                "channel": 36,
-                "channel_bandwidth": "20MHz",
-                "interference_pct": "24.8%",
-                "retry_rate_pct": "18.2%",
-                "rssi_dbm": -65,
-                "health_status": "degraded",
-            },
-            "post_optimization": {
-                "channel": 149,
-                "channel_bandwidth": "80MHz",
-                "interference_pct": "0.4%",
-                "retry_rate_pct": "0.1%",
-                "rssi_dbm": -48,
-                "health_status": "healthy",
-            },
-            "improvement_delta": {
-                "rssi_gain": "+17 dBm",
-                "retry_rate_reduction": "-98.3%",
-                "interference_reduction": "-98.4%",
-            },
-            "previous_channel": 36,
-            "optimized_channel": 149,
-            "channel_bandwidth": "5GHz (80MHz)",
-            "rssi_before": "-65 dBm",
-            "rssi_after": "-48 dBm",
-            "health_status": "healthy",
-            "message": "Radio Resource Management (RRM) optimization executed. Frequency shifted from Ch 36 -> Ch 149 (5GHz 80MHz). Co-channel congestion resolved.",
-        }
+    @staticmethod
+    def _radio_stats(props: Any) -> Tuple[Optional[int], Optional[float]]:
+        """Pulls the real operating channel and utilization out of inventory.props.radio_stat."""
+        radio_stat = _as_dict(_as_dict(props).get("radio_stat"))
+        for band in ("band_5", "band_6", "band_24"):
+            band_stat = _as_dict(radio_stat.get(band))
+            if not band_stat:
+                continue
+            channel = _as_int(band_stat.get("channel"))
+            if not channel:
+                continue
+            try:
+                util = float(band_stat["util_all"]) if band_stat.get("util_all") is not None else None
+            except (TypeError, ValueError):
+                util = None
+            return channel, util
+        return None, None
 
-    async def _get_device_event_health(self, device_id: str) -> Tuple[str, Optional[str]]:
-        """Queries SQL events table for active telemetry anomalies or alerts for a device."""
-        query = """
-            SELECT severity, title, description
-            FROM events
-            WHERE device_id = $1 OR raw_event->>'device_id' = $1
-            ORDER BY timestamp DESC
-            LIMIT 1;
+    async def _get_device_event_health_bulk(
+        self, device_ids: List[str]
+    ) -> Dict[str, Tuple[str, Optional[str]]]:
+        """Latest recent event severity per device, in one query instead of one per AP.
+
+        Events reference an AP by its canonical device_key or by its bare MAC, never by
+        the '00000000-0000-0000-1000-<mac>' inventory id that ap_placements is keyed on,
+        so the id is widened through device_identities before the join can match.
         """
+        result: Dict[str, Tuple[str, Optional[str]]] = {}
+        if not device_ids or not db.pool:
+            return result
         try:
-            row = await db.fetchrow(query, device_id)
-            if row:
-                sev = str(row["severity"]).lower()
-                reason = str(row["title"] or row["description"] or "Active Telemetry Anomaly")
-                if sev in ("critical", "fatal"):
-                    return "critical", reason
-                elif sev in ("major", "warning"):
-                    return "degraded", reason
-        except Exception:
-            pass
-        return "healthy", None
-
-    async def _get_location_health(self, location_id: str, loc_name: str = "") -> str:
-
-        """Determines location health by checking active events and AP placements."""
-        try:
-            # 1. Check events
-            query = """
-                SELECT severity
-                FROM events
-                WHERE site_id = $1 OR raw_event->>'site_id' = $1
-                ORDER BY timestamp DESC
-                LIMIT 5;
-            """
-            rows = await db.fetch(query, location_id)
-            for r in rows:
-                sev = str(r["severity"]).lower()
-                if sev in ("critical", "fatal"):
-                    return "critical"
-                elif sev in ("major", "warning"):
-                    return "degraded"
-
-            # 2. Check AP placements for the site to ensure health matches hardware telemetry
-            aps = await self._fetch_ap_placements(location_id, loc_name=loc_name)
-            for ap in aps:
-                if ap.health_status == "critical":
-                    return "critical"
-                elif ap.health_status == "degraded":
-                    return "degraded"
-        except Exception as exc:
-            logger.warning("Error computing location health for %s: %s", location_id, exc)
-        return "healthy"
-
-
-
-    async def _get_location_device_count(self, location_id: str) -> int:
-        query = """
-            SELECT COUNT(*) as cnt
-            FROM topology_nodes
-            WHERE site_id = $1 OR raw_event->>'site_id' = $1;
-        """
-        try:
-            row = await db.fetchrow(query, location_id)
-            if row:
-                return int(row["cnt"])
-        except Exception:
-            pass
-        return 12
-
-    async def _get_device_health(self, device_id: str) -> str:
-        query = """
-            SELECT severity
-            FROM events
-            WHERE device_id = $1
-            ORDER BY timestamp DESC
-            LIMIT 1;
-        """
-        try:
-            row = await db.fetchrow(query, device_id)
-            if row:
-                sev = str(row["severity"]).lower()
-                if sev in ("critical", "fatal"):
-                    return "critical"
-                elif sev in ("major", "warning"):
-                    return "degraded"
-        except Exception:
-            pass
-        return "healthy"
-
-    async def _seed_default_locations(self) -> None:
-        """Seeds enterprise physical real-estate taxonomy."""
-        defaults = [
-            ("region-apac", None, "APAC Region", "region", 1.3521, 103.8198, "Singapore Headquarters Campus"),
-            ("site-hq-singapore", "region-apac", "Singapore HQ Campus", "site", 1.3521, 103.8198, "8 Marina View, Asia Square"),
-            ("bldg-hq-main", "site-hq-singapore", "Building 1 - Main Tower", "building", 1.3521, 103.8198, "Building 1"),
-            ("floor-hq-2f", "bldg-hq-main", "Floor 2 - NOC & Engineering", "floor", 1.3521, 103.8198, "Floor 2"),
-            ("floor-hq-3f", "bldg-hq-main", "Floor 3 - Executive Suite", "floor", 1.3521, 103.8198, "Floor 3"),
-            ("site-tokyo-branch", "region-apac", "Tokyo Tech Hub", "site", 35.6762, 139.6503, "Roppongi Hills, Minato-ku, Tokyo"),
-            ("bldg-tokyo-01", "site-tokyo-branch", "Tokyo Tower A", "building", 35.6762, 139.6503, "Building A"),
-            ("floor-tokyo-4f", "bldg-tokyo-01", "Floor 4 - Development", "floor", 35.6762, 139.6503, "Floor 4"),
-        ]
-
-        for loc_id, p_id, name, loc_type, lat, lng, addr in defaults:
-            await create_location(
-                location_id=loc_id,
-                name=name,
-                location_type=loc_type,
-                parent_id=p_id,
-                latitude=lat,
-                longitude=lng,
-                address=addr,
-                floorplan_image_url="/floorplans/hq_floor_2.png" if "floor" in loc_type else None,
-                floor_number=2 if "2f" in loc_id else (3 if "3f" in loc_id else 4),
+            rows = await db.fetch(
+                """
+                WITH wanted AS (
+                    SELECT unnest($1::text[]) AS device_id
+                ),
+                keys AS (
+                    SELECT w.device_id, w.device_id AS match_id FROM wanted w
+                    UNION
+                    SELECT w.device_id, di.device_key
+                      FROM wanted w
+                      JOIN device_identities di ON di.vendor_device_id = w.device_id
+                    UNION
+                    SELECT w.device_id, alias.vendor_device_id
+                      FROM wanted w
+                      JOIN device_identities di ON di.vendor_device_id = w.device_id
+                      JOIN device_identities alias ON alias.device_key = di.device_key
+                )
+                SELECT DISTINCT ON (k.device_id)
+                       k.device_id, e.severity, e.title, e.description
+                FROM keys k
+                JOIN events e ON e.device_id = k.match_id
+                WHERE e.timestamp > NOW() - INTERVAL '24 hours'
+                ORDER BY k.device_id, e.timestamp DESC
+                """,
+                device_ids,
             )
+        except Exception as exc:
+            logger.warning("Bulk device event health lookup failed: %s", exc)
+            return result
+
+        for row in rows:
+            sev = str(row["severity"] or "").lower()
+            reason = str(row["title"] or row["description"] or "Active telemetry anomaly")
+            if sev in ("critical", "fatal"):
+                result[str(row["device_id"])] = ("critical", reason)
+            elif sev in ("major", "warning"):
+                result[str(row["device_id"])] = ("degraded", reason)
+        return result
+
+    async def _get_location_health_bulk(self, location_ids: List[str]) -> Dict[str, str]:
+        """Worst recent event severity per location, in one query.
+
+        Matches on the canonical site_key, on every vendor site id aliased to it, and on
+        the vendor site id bound to the location itself, so a location resolves whether
+        events carry the canonical key or the vendor's own id. Floor-level mappings are
+        excluded so a floor does not inherit whole-site severity.
+        """
+        result: Dict[str, str] = {}
+        if not location_ids or not db.pool:
+            return result
+        try:
+            rows = await db.fetch(
+                """
+                WITH wanted AS (
+                    SELECT unnest($1::text[]) AS location_id
+                ),
+                keys AS (
+                    SELECT w.location_id, w.location_id AS match_id FROM wanted w
+                    UNION
+                    SELECT w.location_id, si.vendor_site_id
+                      FROM wanted w
+                      JOIN site_identities si ON si.site_key = w.location_id
+                    UNION
+                    SELECT w.location_id, lm.vendor_site_id
+                      FROM wanted w
+                      JOIN location_mappings lm
+                        ON lm.location_id = w.location_id AND lm.vendor_map_id IS NULL
+                )
+                SELECT k.location_id,
+                       MAX(CASE lower(e.severity)
+                             WHEN 'critical' THEN 3
+                             WHEN 'major'    THEN 2
+                             WHEN 'warning'  THEN 2
+                             ELSE 1
+                           END) AS rank
+                FROM keys k
+                JOIN events e ON e.site_id = k.match_id
+                WHERE e.received_at > NOW() - INTERVAL '24 hours'
+                GROUP BY k.location_id
+                """,
+                location_ids,
+            )
+        except Exception as exc:
+            logger.warning("Bulk location health lookup failed: %s", exc)
+            return result
+
+        for row in rows:
+            rank = int(row["rank"] or 1)
+            result[row["location_id"]] = (
+                "critical" if rank >= 3 else "degraded" if rank == 2 else "healthy"
+            )
+        return result
+
+    async def _get_location_device_counts_bulk(self, location_ids: List[str]) -> Dict[str, int]:
+        """Device count per location, in one query.
+
+        Site-level rows count their topology nodes; floor rows count the APs the vendor
+        actually placed on that floorplan, which is the only device set a floor owns.
+        """
+        result: Dict[str, int] = {}
+        if not location_ids or not db.pool:
+            return result
+        try:
+            rows = await db.fetch(
+                """
+                WITH wanted AS (
+                    SELECT unnest($1::text[]) AS location_id
+                ),
+                keys AS (
+                    SELECT w.location_id, w.location_id AS match_id FROM wanted w
+                    UNION
+                    SELECT w.location_id, si.vendor_site_id
+                      FROM wanted w
+                      JOIN site_identities si ON si.site_key = w.location_id
+                    UNION
+                    SELECT w.location_id, lm.vendor_site_id
+                      FROM wanted w
+                      JOIN location_mappings lm
+                        ON lm.location_id = w.location_id AND lm.vendor_map_id IS NULL
+                )
+                SELECT k.location_id, COUNT(DISTINCT n.node_id) AS cnt
+                FROM keys k
+                JOIN topology_nodes n ON n.site_id = k.match_id
+                WHERE n.node_type <> 'site'
+                GROUP BY k.location_id
+                """,
+                location_ids,
+            )
+        except Exception as exc:
+            logger.warning("Bulk location device count failed: %s", exc)
+            rows = []
+
+        for row in rows:
+            result[row["location_id"]] = int(row["cnt"] or 0)
+
+        try:
+            floor_rows = await db.fetch(
+                """
+                SELECT location_id, COUNT(*) AS cnt
+                FROM ap_placements
+                WHERE location_id = ANY($1::text[])
+                GROUP BY location_id
+                """,
+                location_ids,
+            )
+        except Exception as exc:
+            logger.warning("Bulk floor AP placement count failed: %s", exc)
+            return result
+
+        for row in floor_rows:
+            result[row["location_id"]] = int(row["cnt"] or 0)
+        return result
 
 
 location_service = LocationService()

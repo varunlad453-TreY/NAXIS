@@ -103,6 +103,13 @@ _COLLECTOR_DEFS: Dict[str, List[Dict[str, Any]]] = {
             "why_it_matters": "Gives the graph the base physical objects for wireless topology.",
         },
         {
+            "id": "mist-locations", "label": "Mist locations & floorplans",
+            "collects": ["Sites", "postal addresses", "floorplan images", "map pixel dimensions", "AP x/y positions"],
+            "purpose": "Builds the region → site → floor hierarchy and places each AP on its floorplan.",
+            "output": "Location tree, vendor location mappings, AP floorplan placements",
+            "why_it_matters": "Drives the NOC floorplan view — without it no AP has a physical position.",
+        },
+        {
             "id": "mist-ap-history", "label": "AP lifecycle history",
             "collects": ["Firmware versions", "uptime trends", "reboots", "site moves", "device connectivity"],
             "purpose": "Tracks AP lifecycle events for change detection and trend analysis.",

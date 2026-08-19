@@ -1,14 +1,21 @@
 "use client";
 
-import React, { useEffect, useState, useMemo, useCallback, Suspense } from "react";
+import React, {
+  useEffect,
+  useState,
+  useMemo,
+  useCallback,
+  useRef,
+  Suspense,
+} from "react";
 import { useSearchParams } from "next/navigation";
 import {
   AlertTriangle,
   Building,
-  CheckCircle2,
   ChevronDown,
   ChevronRight,
   Globe,
+  ImageOff,
   Layers,
   MapPin,
   RefreshCw,
@@ -17,30 +24,37 @@ import {
   Wifi,
   X,
 } from "lucide-react";
-import { API_BASE } from "@/lib/api";
+import { fetchAPI } from "@/lib/api";
+import { useQueryState } from "@/hooks/use-query-state";
 
 
 interface APPlacement {
   device_id: string;
   name: string;
-  mac_address?: string;
-  ip_address?: string;
+  mac_address?: string | null;
+  ip_address?: string | null;
   vendor: string;
+  model?: string | null;
   x_pct: number;
   y_pct: number;
-  health_status: "healthy" | "degraded" | "critical";
-  health_reason?: string;
+  health_status: string;
+  health_reason?: string | null;
   client_count: number;
-  channel?: number;
-  rssi?: number;
+  channel?: number | null;
+  rssi?: number | null;
+  channel_util?: number | null;
 }
 
 interface FloorplanData {
   location_id: string;
   name: string;
   building_name?: string;
-  floor_number?: number;
-  floorplan_image_url?: string;
+  floor_number?: number | null;
+  floorplan_image_url?: string | null;
+  floorplan_width?: number | null;
+  floorplan_height?: number | null;
+  placed_ap_count?: number;
+  unplaced_ap_count?: number;
   ap_placements: APPlacement[];
   health_status: string;
 }
@@ -55,6 +69,44 @@ interface LocationTreeNode {
   health_status: string;
   device_count: number;
   children: LocationTreeNode[];
+}
+
+type HeatmapMode = "placements" | "coverage" | "interference";
+type HealthFilter = "all" | "degraded";
+
+const HEATMAP_MODES = ["placements", "coverage", "interference"] as const;
+const HEALTH_FILTERS = ["all", "degraded"] as const;
+
+const GRADIENT_GOOD =
+  "radial-gradient(circle, rgba(16, 185, 129, 0.4) 0%, rgba(16, 185, 129, 0.12) 50%, transparent 75%)";
+const GRADIENT_WARN =
+  "radial-gradient(circle, rgba(245, 158, 11, 0.4) 0%, rgba(245, 158, 11, 0.12) 50%, transparent 75%)";
+const GRADIENT_BAD =
+  "radial-gradient(circle, rgba(239, 68, 68, 0.35) 0%, rgba(239, 68, 68, 0.1) 50%, transparent 75%)";
+const GRADIENT_INTERFERENCE_SEVERE =
+  "radial-gradient(circle, rgba(239, 68, 68, 0.45) 0%, rgba(245, 158, 11, 0.2) 50%, transparent 75%)";
+const GRADIENT_INTERFERENCE_MODERATE =
+  "radial-gradient(circle, rgba(245, 158, 11, 0.4) 0%, rgba(245, 158, 11, 0.15) 50%, transparent 75%)";
+
+function coverageGradient(ap: APPlacement): string | null {
+  if (ap.channel_util != null) {
+    if (ap.channel_util < 20) return GRADIENT_GOOD;
+    if (ap.channel_util < 50) return GRADIENT_WARN;
+    return GRADIENT_BAD;
+  }
+  if (ap.rssi != null) {
+    if (ap.rssi >= -65) return GRADIENT_GOOD;
+    if (ap.rssi >= -75) return GRADIENT_WARN;
+    return GRADIENT_BAD;
+  }
+  return null;
+}
+
+function interferenceGradient(ap: APPlacement): string | null {
+  if (ap.channel_util == null || ap.channel_util < 20) return null;
+  return ap.channel_util < 50
+    ? GRADIENT_INTERFERENCE_MODERATE
+    : GRADIENT_INTERFERENCE_SEVERE;
 }
 
 interface TreeNodeItemProps {
@@ -158,63 +210,46 @@ function StatusDot({ status, size = "sm" }: { status: string; size?: "sm" | "md"
 
 function NOCFloorplanContent() {
   const searchParams = useSearchParams();
-  const targetLocationId = searchParams.get("location_id") || searchParams.get("site_id");
   const targetName = searchParams.get("name");
+  const siteParam = searchParams.get("site_id");
 
   const [treeData, setTreeData] = useState<LocationTreeNode[]>([]);
-  const [selectedFloorId, setSelectedFloorId] = useState<string>("");
+  const [selectedFloorId, setSelectedFloorId] = useQueryState<string>("location_id", "");
+  const [initialTarget] = useState(() => selectedFloorId || siteParam || "");
   const [floorplan, setFloorplan] = useState<FloorplanData | null>(null);
   const [selectedAP, setSelectedAP] = useState<APPlacement | null>(null);
   const [loading, setLoading] = useState(true);
-  const [filterHealth, setFilterHealth] = useState<"all" | "degraded">("all");
-  const [heatmapMode, setHeatmapMode] = useState<"placements" | "coverage" | "interference">("placements");
-  const [rrmOptimizing, setRrmOptimizing] = useState(false);
-  const [rrmResultMsg, setRrmResultMsg] = useState<string | null>(null);
-  const [rrmAuditProofsByDevice, setRrmAuditProofsByDevice] = useState<Record<string, any>>({});
-
-  const handleOptimizeRRM = async (ap: APPlacement) => {
-    setRrmOptimizing(true);
-    setRrmResultMsg(null);
-    try {
-      const res = await fetch(`${API_BASE}/locations/aps/${ap.device_id}/optimize-rrm`, {
-        method: "POST",
-      }).catch(() => null);
-      if (res?.ok) {
-        const data = await res.json();
-        setRrmResultMsg(data.message || "RRM Channel Optimization executed successfully!");
-        setRrmAuditProofsByDevice((prev) => ({
-          ...prev,
-          [ap.device_id]: data,
-        }));
-        setSelectedAP((prev) =>
-          prev
-            ? {
-                ...prev,
-                health_status: "healthy",
-                health_reason: undefined,
-                channel: data.optimized_channel || 149,
-                rssi: -48,
-              }
-            : null
-        );
-        fetchFloorplan(selectedFloorId, floorplan?.name);
-      }
-    } catch (err) {
-      console.error("RRM Optimization error:", err);
-      setRrmResultMsg("Failed to execute RRM optimization task.");
-    } finally {
-      setRrmOptimizing(false);
-    }
-  };
-
-  const [expandedNodes, setExpandedNodes] = useState<Record<string, boolean>>({
-    "region-apac": true,
-    "site-hq-singapore": true,
-    "bldg-hq-main": true,
-  });
-
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [filterHealth, setFilterHealth] = useQueryState<HealthFilter>(
+    "health",
+    "all",
+    HEALTH_FILTERS,
+  );
+  const [heatmapMode, setHeatmapMode] = useQueryState<HeatmapMode>(
+    "layer",
+    "placements",
+    HEATMAP_MODES,
+  );
+  const [expandedNodes, setExpandedNodes] = useState<Record<string, boolean>>({});
   const [treeLoading, setTreeLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
+
+  const canvasRef = useRef<HTMLDivElement | null>(null);
+  const nodeNamesRef = useRef<Record<string, string>>({});
+  const fetchSeqRef = useRef(0);
+  // useQueryState's setter is rebuilt on every searchParams change; a ref keeps
+  // the tree fetch and the memoized tree rows from re-running on URL writes.
+  const selectRef = useRef(setSelectedFloorId);
+  useEffect(() => {
+    selectRef.current = setSelectedFloorId;
+  }, [setSelectedFloorId]);
+  const selectLocation = useCallback((id: string) => {
+    selectRef.current(id);
+  }, []);
+  const [canvasSize, setCanvasSize] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
+  const [planImgError, setPlanImgError] = useState(false);
+  const [planImgLoaded, setPlanImgLoaded] = useState(false);
+  const [planNaturalSize, setPlanNaturalSize] = useState<{ w: number; h: number } | null>(null);
 
   const filteredTreeData = useMemo(() => {
     if (!searchQuery.trim()) return treeData;
@@ -236,83 +271,168 @@ function NOCFloorplanContent() {
     return filterNodes(treeData);
   }, [treeData, searchQuery]);
 
-  const fetchTree = async () => {
+  const { siteCount, floorCount } = useMemo(() => {
+    let sites = 0;
+    let floors = 0;
+    const walk = (nodes: LocationTreeNode[]) => {
+      for (const n of nodes) {
+        if (n.type === "site") sites += 1;
+        else if (n.type === "floor") floors += 1;
+        if (Array.isArray(n.children)) walk(n.children);
+      }
+    };
+    walk(treeData);
+    return { siteCount: sites, floorCount: floors };
+  }, [treeData]);
+
+  const fetchFloorplan = useCallback(
+    async (locId: string): Promise<FloorplanData | null> => {
+      if (!locId) return null;
+      const seq = ++fetchSeqRef.current;
+      setLoading(true);
+      setLoadError(null);
+      try {
+        const label = nodeNamesRef.current[locId] || targetName;
+        const base = `/locations/${encodeURIComponent(locId)}/floorplan`;
+        const endpoint = label ? `${base}?name=${encodeURIComponent(label)}` : base;
+        const data = await fetchAPI<FloorplanData>(endpoint);
+        if (seq !== fetchSeqRef.current) return data ?? null;
+        setFloorplan(data ?? null);
+        return data ?? null;
+      } catch (err) {
+        console.warn("Failed to fetch floorplan:", err);
+        if (seq !== fetchSeqRef.current) return null;
+        // Keeping the previous floor's APs on screen would attribute them to the
+        // location now selected.
+        setFloorplan(null);
+        setLoadError("Could not load floorplan data for this location.");
+        return null;
+      } finally {
+        if (seq === fetchSeqRef.current) setLoading(false);
+      }
+    },
+    [targetName],
+  );
+
+  const fetchTree = useCallback(async () => {
     setTreeLoading(true);
     try {
-      let res = await fetch(`${API_BASE}/locations/tree`).catch(() => null);
-      if (!res || !res.ok) {
-        res = await fetch("http://127.0.0.1:8000/locations/tree").catch(() => null);
+      const data = await fetchAPI<LocationTreeNode[]>("/locations/tree");
+      const nodes = Array.isArray(data) ? data : [];
+      setTreeData(nodes);
+
+      const names: Record<string, string> = {};
+      const collect = (ns: LocationTreeNode[]) => {
+        for (const n of ns) {
+          names[n.location_id] = n.name;
+          if (Array.isArray(n.children)) collect(n.children);
+        }
+      };
+      collect(nodes);
+      nodeNamesRef.current = names;
+
+      if (nodes.length === 0) {
+        setLoading(false);
+        return;
       }
-      if (res && res.ok) {
-        const data = await res.json();
-        if (Array.isArray(data)) {
-          setTreeData(data);
-          if (data.length > 0) {
-            let activeNode = data[0];
-            const findMatch = (nodes: LocationTreeNode[]): LocationTreeNode | null => {
-              for (const n of nodes) {
-                if (
-                  (targetLocationId && (n.location_id === targetLocationId || n.location_id.toLowerCase().includes(targetLocationId.toLowerCase()))) ||
-                  (targetName && n.name.toLowerCase().includes(targetName.toLowerCase()))
-                ) {
-                  return n;
-                }
-                if (Array.isArray(n.children)) {
-                  const childMatch = findMatch(n.children);
-                  if (childMatch) return childMatch;
-                }
-              }
-              return null;
-            };
-            const matched = findMatch(data);
-            if (matched) {
-              activeNode = matched;
-            }
-            setSelectedFloorId(activeNode.location_id);
-            fetchFloorplan(activeNode.location_id, activeNode.name);
+
+      const pathTo = (ns: LocationTreeNode[], id: string): LocationTreeNode[] | null => {
+        for (const n of ns) {
+          if (n.location_id === id) return [n];
+          if (Array.isArray(n.children)) {
+            const childPath = pathTo(n.children, id);
+            if (childPath) return [n, ...childPath];
           }
         }
-      }
+        return null;
+      };
+
+      const search = (ns: LocationTreeNode[]): LocationTreeNode[] | null => {
+        for (const n of ns) {
+          const idMatch =
+            !!initialTarget &&
+            (n.location_id === initialTarget ||
+              n.location_id.toLowerCase().includes(initialTarget.toLowerCase()));
+          const nameMatch =
+            !!targetName && n.name.toLowerCase().includes(targetName.toLowerCase());
+          if (idMatch || nameMatch) return [n];
+          if (Array.isArray(n.children)) {
+            const childPath = search(n.children);
+            if (childPath) return [n, ...childPath];
+          }
+        }
+        return null;
+      };
+
+      // Only floors carry a floorplan image, so an unqualified landing lands on one.
+      const firstFloor = (ns: LocationTreeNode[]): LocationTreeNode[] | null => {
+        for (const n of ns) {
+          if (n.type === "floor") return [n];
+          if (Array.isArray(n.children)) {
+            const childPath = firstFloor(n.children);
+            if (childPath) return [n, ...childPath];
+          }
+        }
+        return null;
+      };
+
+      const path =
+        (initialTarget ? pathTo(nodes, initialTarget) : null) ??
+        search(nodes) ??
+        firstFloor(nodes) ??
+        [nodes[0]];
+
+      setExpandedNodes(
+        path.reduce<Record<string, boolean>>((acc, n) => {
+          acc[n.location_id] = true;
+          return acc;
+        }, {}),
+      );
+      selectLocation(path[path.length - 1].location_id);
     } catch (err) {
       console.warn("Failed to fetch location tree:", err);
+      setLoading(false);
     } finally {
       setTreeLoading(false);
     }
-  };
-
-  const fetchFloorplan = async (locId: string, name?: string) => {
-    setLoading(true);
-    try {
-      const url = name || targetName
-        ? `${API_BASE}/locations/${locId}/floorplan?name=${encodeURIComponent(name || targetName || "")}`
-        : `${API_BASE}/locations/${locId}/floorplan`;
-      let res = await fetch(url).catch(() => null);
-      if (!res || !res.ok) {
-        const fallbackUrl = name || targetName
-          ? `http://127.0.0.1:8000/locations/${locId}/floorplan?name=${encodeURIComponent(name || targetName || "")}`
-          : `http://127.0.0.1:8000/locations/${locId}/floorplan`;
-        res = await fetch(fallbackUrl).catch(() => null);
-      }
-      if (res && res.ok) {
-        const data = await res.json();
-        setFloorplan(data);
-      }
-    } catch (err) {
-      console.warn("Failed to fetch floorplan:", err);
-    } finally {
-      setLoading(false);
-    }
-  };
-
+  }, [initialTarget, targetName, selectLocation]);
 
   useEffect(() => {
-    fetchTree();
-  }, [targetLocationId, targetName]);
+    void fetchTree();
+  }, [fetchTree]);
 
-  const handleSelectNode = useCallback((node: LocationTreeNode) => {
-    setSelectedFloorId(node.location_id);
-    fetchFloorplan(node.location_id, node.name);
+  useEffect(() => {
+    if (!selectedFloorId) return;
+    void fetchFloorplan(selectedFloorId);
+  }, [selectedFloorId, fetchFloorplan]);
+
+  useEffect(() => {
+    const el = canvasRef.current;
+    if (!el) return;
+    setCanvasSize({ w: el.clientWidth, h: el.clientHeight });
+    const observer = new ResizeObserver((entries) => {
+      const rect = entries[0]?.contentRect;
+      if (rect) setCanvasSize({ w: rect.width, h: rect.height });
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
   }, []);
+
+  const planUrl = floorplan?.floorplan_image_url || null;
+
+  useEffect(() => {
+    setPlanImgError(false);
+    setPlanImgLoaded(false);
+    setPlanNaturalSize(null);
+  }, [planUrl]);
+
+  const handleSelectNode = useCallback(
+    (node: LocationTreeNode) => {
+      setSelectedAP(null);
+      selectLocation(node.location_id);
+    },
+    [selectLocation],
+  );
 
   const handleToggleExpand = useCallback((id: string) => {
     setExpandedNodes((prev) => ({ ...prev, [id]: !prev[id] }));
@@ -354,7 +474,48 @@ function NOCFloorplanContent() {
     (ap) => ap.health_status === "degraded" || ap.health_status === "critical"
   ).length || 0;
 
-  const totalCount = floorplan?.ap_placements?.length || 0;
+  const placedCount = floorplan?.placed_ap_count ?? floorplan?.ap_placements?.length ?? 0;
+  const unplacedCount = floorplan?.unplaced_ap_count ?? 0;
+
+  const hasChannelUtil = useMemo(
+    () => (floorplan?.ap_placements ?? []).some((ap) => ap.channel_util != null),
+    [floorplan]
+  );
+  const hasRssi = useMemo(
+    () => (floorplan?.ap_placements ?? []).some((ap) => ap.rssi != null),
+    [floorplan]
+  );
+  const modeAvailable = (mode: HeatmapMode) => {
+    if (mode === "placements") return true;
+    if (mode === "coverage") return hasChannelUtil || hasRssi;
+    return hasChannelUtil;
+  };
+  const activeModeUnavailable = !modeAvailable(heatmapMode);
+
+  const planBox = useMemo(() => {
+    const { w: cw, h: ch } = canvasSize;
+    if (cw <= 0 || ch <= 0) return null;
+    const pad = 24;
+    const availW = Math.max(cw - pad * 2, 1);
+    const availH = Math.max(ch - pad * 2, 1);
+    const iw = floorplan?.floorplan_width ?? planNaturalSize?.w ?? 0;
+    const ih = floorplan?.floorplan_height ?? planNaturalSize?.h ?? 0;
+    if (iw <= 0 || ih <= 0) {
+      return { left: pad, top: pad, width: availW, height: availH };
+    }
+    const scale = Math.min(availW / iw, availH / ih);
+    const width = iw * scale;
+    const height = ih * scale;
+    return { left: (cw - width) / 2, top: (ch - height) / 2, width, height };
+  }, [canvasSize, floorplan?.floorplan_width, floorplan?.floorplan_height, planNaturalSize]);
+
+  // Radius is decorative — FloorplanResponse carries no metres-per-pixel, so it
+  // is scaled to the rendered plan instead of a fixed pixel size.
+  const ringPx = planBox
+    ? Math.max(48, Math.min(planBox.width, planBox.height) * 0.14)
+    : 0;
+
+  const showPlanImage = !!planUrl && !planImgError;
 
   return (
     <div className="-m-6 h-[calc(100vh-3.5rem)] flex flex-col bg-slate-950">
@@ -375,33 +536,44 @@ function NOCFloorplanContent() {
           </div>
 
           <div className="hidden md:flex items-center gap-4 text-xs text-slate-500">
-            <span>{totalCount} APs</span>
+            <span>{placedCount} APs</span>
             {degradedCount > 0 && (
               <span className="text-amber-400">{degradedCount} degraded</span>
             )}
-            <span className="text-slate-700">|</span>
-            <span>Normalized coordinate space</span>
+            {unplacedCount > 0 && (
+              <>
+                <span className="text-slate-700">|</span>
+                <span title="APs assigned to this site but with no position on a floorplan">
+                  {unplacedCount} not placed on a plan
+                </span>
+              </>
+            )}
           </div>
         </div>
 
         <div className="flex items-center gap-4 flex-shrink-0">
           {/* Layer Tabs */}
           <div className="hidden sm:flex items-center gap-0 text-xs">
-            {(["placements", "coverage", "interference"] as const).map((mode) => (
-              <button
-                key={mode}
-                onClick={() => setHeatmapMode(mode)}
-                className={`px-3 py-1.5 font-medium transition-colors border-b-2 ${
-                  heatmapMode === mode
-                    ? "text-white border-indigo-500"
-                    : "text-slate-500 border-transparent hover:text-slate-300"
-                }`}
-              >
-                {mode === "placements" && "AP Placement"}
-                {mode === "coverage" && "RF Coverage"}
-                {mode === "interference" && "Interference"}
-              </button>
-            ))}
+            {HEATMAP_MODES.map((mode) => {
+              const available = modeAvailable(mode);
+              return (
+                <button
+                  key={mode}
+                  onClick={() => setHeatmapMode(mode)}
+                  disabled={!available}
+                  title={available ? undefined : "No RF telemetry available for these APs"}
+                  className={`px-3 py-1.5 font-medium transition-colors border-b-2 disabled:opacity-40 disabled:cursor-not-allowed ${
+                    heatmapMode === mode
+                      ? "text-white border-indigo-500"
+                      : "text-slate-500 border-transparent hover:text-slate-300"
+                  }`}
+                >
+                  {mode === "placements" && "AP Placement"}
+                  {mode === "coverage" && "RF Coverage"}
+                  {mode === "interference" && "Interference"}
+                </button>
+              );
+            })}
           </div>
 
           <div className="flex items-center gap-2">
@@ -437,7 +609,9 @@ function NOCFloorplanContent() {
               <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
                 Facilities
               </span>
-              <span className="text-[10px] text-slate-500">{treeData.length} sites</span>
+              <span className="text-[10px] text-slate-500">
+                {siteCount} sites · {floorCount} floors
+              </span>
             </div>
             <div className="relative">
               <Search className="w-3.5 h-3.5 absolute left-2.5 top-2 text-slate-600" />
@@ -474,119 +648,190 @@ function NOCFloorplanContent() {
 
         {/* Floorplan Canvas */}
         <div className="flex-1 min-w-0 relative bg-slate-950 flex flex-col">
-          <div className="flex-1 relative overflow-hidden">
-            {/* Subtle grid background */}
-            <div className="absolute inset-0 bg-[linear-gradient(to_right,rgba(30,41,59,0.4)_1px,transparent_1px),linear-gradient(to_bottom,rgba(30,41,59,0.4)_1px,transparent_1px)] bg-[size:4rem_4rem]" />
+          <div ref={canvasRef} className="flex-1 relative overflow-hidden">
+            {(!showPlanImage || !planImgLoaded) && (
+              <div className="absolute inset-0 bg-[linear-gradient(to_right,rgba(30,41,59,0.4)_1px,transparent_1px),linear-gradient(to_bottom,rgba(30,41,59,0.4)_1px,transparent_1px)] bg-[size:4rem_4rem]" />
+            )}
 
-            {/* Zone partition lines */}
-            <div className="absolute inset-6 border border-dashed border-slate-800/50 pointer-events-none">
-              <div className="absolute top-2 left-3 text-[10px] font-mono text-slate-600 uppercase tracking-widest">
-                Zone-North: Conf Room 3 & Engineering
-              </div>
-              <div className="absolute top-2 right-3 text-[10px] font-mono text-slate-600 uppercase tracking-widest">
-                Zone-East: Executive Boardroom
-              </div>
-            </div>
-
-            {/* AP Markers */}
-            {displayedAPs.map((ap) => {
-              const isSelected = selectedAP?.device_id === ap.device_id;
-
-              return (
-                <div
-                  key={ap.device_id}
-                  onClick={() => setSelectedAP(ap)}
-                  style={{ left: `${ap.x_pct}%`, top: `${ap.y_pct}%` }}
-                  className="absolute -translate-x-1/2 -translate-y-1/2 cursor-pointer transition-all duration-200 group z-10"
-                >
-                  {/* RF Coverage Heatmap Gradients */}
-                  {heatmapMode === "coverage" && (
-                    <div
-                      style={{
-                        width: "240px",
-                        height: "240px",
-                        background:
-                          (ap.rssi ?? -56) >= -65
-                            ? "radial-gradient(circle, rgba(16, 185, 129, 0.4) 0%, rgba(16, 185, 129, 0.12) 50%, transparent 75%)"
-                            : (ap.rssi ?? -56) >= -75
-                            ? "radial-gradient(circle, rgba(245, 158, 11, 0.4) 0%, rgba(245, 158, 11, 0.12) 50%, transparent 75%)"
-                            : "radial-gradient(circle, rgba(239, 68, 68, 0.35) 0%, rgba(239, 68, 68, 0.1) 50%, transparent 75%)",
-                      }}
-                      className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full pointer-events-none animate-pulse"
-                    />
-                  )}
-
-                  {/* Interference Heatmap Overlay */}
-                  {heatmapMode === "interference" && ap.health_status !== "healthy" && (
-                    <div
-                      style={{
-                        width: "260px",
-                        height: "260px",
-                        background: "radial-gradient(circle, rgba(239, 68, 68, 0.45) 0%, rgba(245, 158, 11, 0.2) 50%, transparent 75%)",
-                      }}
-                      className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full pointer-events-none animate-pulse"
-                    />
-                  )}
-
-                  {/* Blinking Radar Beacon Rings */}
-                  <div
-                    className={`absolute -inset-2 rounded-full pointer-events-none animate-ping ${
-                      ap.health_status === "healthy"
-                        ? "bg-emerald-500/35"
-                        : ap.health_status === "degraded"
-                        ? "bg-amber-500/45"
-                        : "bg-rose-500/60"
-                    }`}
+            {planBox && (
+              <div
+                className="absolute"
+                style={{
+                  left: `${planBox.left}px`,
+                  top: `${planBox.top}px`,
+                  width: `${planBox.width}px`,
+                  height: `${planBox.height}px`,
+                }}
+              >
+                {showPlanImage && planUrl && (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={planUrl}
+                    alt={floorplan?.name ? `Floorplan: ${floorplan.name}` : "Floorplan"}
+                    draggable={false}
+                    onLoad={(e) => {
+                      setPlanImgLoaded(true);
+                      // Backend dims are authoritative (x/y live in that pixel
+                      // space); fall back to the decoded image when they are null.
+                      const img = e.currentTarget;
+                      if (
+                        !floorplan?.floorplan_width &&
+                        img.naturalWidth > 0 &&
+                        img.naturalHeight > 0
+                      ) {
+                        setPlanNaturalSize({ w: img.naturalWidth, h: img.naturalHeight });
+                      }
+                    }}
+                    onError={() => setPlanImgError(true)}
+                    // object-fill, not contain: the box already carries the map's
+                    // aspect, and x_pct/y_pct must land on the same pixel space.
+                    className="absolute inset-0 w-full h-full object-fill select-none pointer-events-none"
                   />
-                  <div
-                    className={`absolute -inset-1 rounded-full pointer-events-none animate-pulse ${
-                      ap.health_status === "healthy"
-                        ? "bg-emerald-400/20"
-                        : ap.health_status === "degraded"
-                        ? "bg-amber-400/30"
-                        : "bg-rose-400/40"
-                    }`}
-                  />
+                )}
 
-                  {/* Glowing Wi-Fi AP Circular Marker */}
-                  <div
-                    className={`relative p-3 rounded-full border shadow-2xl flex items-center justify-center transition-all duration-200 group-hover:scale-125 ${
-                      ap.health_status === "healthy"
-                        ? "bg-emerald-950/90 border-emerald-500/60 text-emerald-400 shadow-emerald-900/50"
-                        : ap.health_status === "degraded"
-                        ? "bg-amber-950/90 border-amber-500/60 text-amber-400 shadow-amber-900/50"
-                        : "bg-rose-950/90 border-rose-500/60 text-rose-400 shadow-rose-900/50"
-                    } ${isSelected ? "ring-4 ring-indigo-500 ring-offset-2 ring-offset-slate-950 scale-125 z-20" : ""}`}
-                  >
-                    <Wifi className="w-4 h-4 animate-pulse" />
-                  </div>
+                {displayedAPs.map((ap) => {
+                  const isSelected = selectedAP?.device_id === ap.device_id;
+                  const coverage = heatmapMode === "coverage" ? coverageGradient(ap) : null;
+                  const interference =
+                    heatmapMode === "interference" ? interferenceGradient(ap) : null;
 
-                  {/* AP Name Badge Sub-Label */}
-                  <div className="absolute top-full left-1/2 -translate-x-1/2 mt-1 px-2 py-0.5 bg-slate-900/90 border border-slate-800 rounded text-[10px] font-semibold text-slate-300 whitespace-nowrap shadow">
-                    {ap.name}
-                  </div>
+                  return (
+                    <div
+                      key={ap.device_id}
+                      onClick={() => setSelectedAP(ap)}
+                      style={{ left: `${ap.x_pct}%`, top: `${ap.y_pct}%` }}
+                      className="absolute -translate-x-1/2 -translate-y-1/2 cursor-pointer transition-all duration-200 group z-10"
+                    >
+                      {coverage && ringPx > 0 && (
+                        <div
+                          style={{ width: ringPx, height: ringPx, background: coverage }}
+                          className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full pointer-events-none animate-pulse"
+                        />
+                      )}
 
-                  {/* AP Tooltip Hover Card */}
-                  <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2.5 hidden group-hover:block bg-slate-900 border border-slate-800 p-2.5 rounded-xl text-[11px] shadow-2xl z-[100] whitespace-nowrap">
-                    <div className="font-bold text-white flex items-center gap-1.5">
-                      <Wifi className="w-3.5 h-3.5 text-indigo-400" />
-                      <span>{ap.name}</span>
+                      {interference && ringPx > 0 && (
+                        <div
+                          style={{ width: ringPx, height: ringPx, background: interference }}
+                          className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full pointer-events-none animate-pulse"
+                        />
+                      )}
+
+                      {/* Blinking Radar Beacon Rings */}
+                      <div
+                        className={`absolute -inset-2 rounded-full pointer-events-none animate-ping ${
+                          ap.health_status === "healthy"
+                            ? "bg-emerald-500/35"
+                            : ap.health_status === "degraded"
+                            ? "bg-amber-500/45"
+                            : "bg-rose-500/60"
+                        }`}
+                      />
+                      <div
+                        className={`absolute -inset-1 rounded-full pointer-events-none animate-pulse ${
+                          ap.health_status === "healthy"
+                            ? "bg-emerald-400/20"
+                            : ap.health_status === "degraded"
+                            ? "bg-amber-400/30"
+                            : "bg-rose-400/40"
+                        }`}
+                      />
+
+                      {/* Glowing Wi-Fi AP Circular Marker */}
+                      <div
+                        className={`relative p-3 rounded-full border shadow-2xl flex items-center justify-center transition-all duration-200 group-hover:scale-125 ${
+                          ap.health_status === "healthy"
+                            ? "bg-emerald-950/90 border-emerald-500/60 text-emerald-400 shadow-emerald-900/50"
+                            : ap.health_status === "degraded"
+                            ? "bg-amber-950/90 border-amber-500/60 text-amber-400 shadow-amber-900/50"
+                            : "bg-rose-950/90 border-rose-500/60 text-rose-400 shadow-rose-900/50"
+                        } ${isSelected ? "ring-4 ring-indigo-500 ring-offset-2 ring-offset-slate-950 scale-125 z-20" : ""}`}
+                      >
+                        <Wifi className="w-4 h-4 animate-pulse" />
+                      </div>
+
+                      {/* AP Name Badge Sub-Label */}
+                      <div className="absolute top-full left-1/2 -translate-x-1/2 mt-1 px-2 py-0.5 bg-slate-900/90 border border-slate-800 rounded text-[10px] font-semibold text-slate-300 whitespace-nowrap shadow">
+                        {ap.name}
+                      </div>
+
+                      {/* AP Tooltip Hover Card */}
+                      <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2.5 hidden group-hover:block bg-slate-900 border border-slate-800 p-2.5 rounded-xl text-[11px] shadow-2xl z-[100] whitespace-nowrap">
+                        <div className="font-bold text-white flex items-center gap-1.5">
+                          <Wifi className="w-3.5 h-3.5 text-indigo-400" />
+                          <span>{ap.name}</span>
+                        </div>
+                        <div className="text-slate-400 mt-0.5">
+                          {ap.vendor.toUpperCase()} · {ap.client_count} Clients
+                          {ap.model ? ` · ${ap.model}` : ""}
+                        </div>
+                        {ap.channel_util != null && (
+                          <div className="text-slate-400 text-[10px] mt-0.5">
+                            Channel utilization: {ap.channel_util.toFixed(1)}%
+                          </div>
+                        )}
+                        {ap.health_reason && (
+                          <div className="text-amber-400 text-[10px] font-medium mt-1">{ap.health_reason}</div>
+                        )}
+                      </div>
                     </div>
-                    <div className="text-slate-400 mt-0.5">{ap.vendor.toUpperCase()} · {ap.client_count} Clients</div>
-                    {ap.health_reason && (
-                      <div className="text-amber-400 text-[10px] font-medium mt-1">{ap.health_reason}</div>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Non-blocking notices */}
+            {!loading && (
+              <div className="absolute top-3 left-1/2 -translate-x-1/2 z-30 flex flex-col items-center gap-1.5 pointer-events-none">
+                {loadError && (
+                  <span className="flex items-center gap-1.5 px-2.5 py-1 bg-slate-900/90 border border-slate-800 rounded-sm text-[11px] text-slate-400">
+                    <AlertTriangle className="w-3.5 h-3.5 text-rose-400" />
+                    {loadError}
+                  </span>
+                )}
+                {planUrl && planImgError && (
+                  <span className="flex items-center gap-1.5 px-2.5 py-1 bg-slate-900/90 border border-slate-800 rounded-sm text-[11px] text-slate-400">
+                    <ImageOff className="w-3.5 h-3.5 text-amber-400" />
+                    Floorplan image could not be loaded
+                  </span>
+                )}
+                {!planUrl && displayedAPs.length > 0 && (
+                  <span className="flex items-center gap-1.5 px-2.5 py-1 bg-slate-900/90 border border-slate-800 rounded-sm text-[11px] text-slate-400">
+                    <ImageOff className="w-3.5 h-3.5 text-slate-500" />
+                    No floorplan image for this location
+                  </span>
+                )}
+                {activeModeUnavailable && displayedAPs.length > 0 && (
+                  <span className="flex items-center gap-1.5 px-2.5 py-1 bg-slate-900/90 border border-slate-800 rounded-sm text-[11px] text-slate-400">
+                    <AlertTriangle className="w-3.5 h-3.5 text-slate-500" />
+                    No RF telemetry for these APs
+                  </span>
+                )}
+              </div>
+            )}
 
             {/* Empty state */}
             {!loading && displayedAPs.length === 0 && (
-              <div className="absolute inset-0 flex items-center justify-center">
+              <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
                 <div className="text-center">
-                  <Wifi className="w-8 h-8 text-slate-700 mx-auto mb-2" />
-                  <p className="text-sm text-slate-500">No access points on this floorplan</p>
+                  {planUrl ? (
+                    <Wifi className="w-8 h-8 text-slate-700 mx-auto mb-2" />
+                  ) : (
+                    <ImageOff className="w-8 h-8 text-slate-700 mx-auto mb-2" />
+                  )}
+                  <p className="text-sm text-slate-500">
+                    {!floorplan
+                      ? "Select a floor in the facility tree"
+                      : planUrl
+                      ? filterHealth === "degraded"
+                        ? "No degraded access points on this floorplan"
+                        : "No access points placed on this floorplan"
+                      : "No floorplan image for this location"}
+                  </p>
+                  {floorplan && !planUrl && (
+                    <p className="text-xs text-slate-600 mt-1">
+                      {`${floorplan.name} has no plan image in the source system`}
+                    </p>
+                  )}
                 </div>
               </div>
             )}
@@ -603,7 +848,7 @@ function NOCFloorplanContent() {
           <div className="shrink-0 h-9 flex items-center px-5 border-t border-slate-800/60 bg-slate-950 text-xs gap-6">
             <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
               {heatmapMode === "placements" && "AP Health"}
-              {heatmapMode === "coverage" && "RF Signal (5GHz)"}
+              {heatmapMode === "coverage" && "RF Coverage"}
               {heatmapMode === "interference" && "Interference"}
             </span>
 
@@ -621,32 +866,52 @@ function NOCFloorplanContent() {
               </>
             )}
 
-            {heatmapMode === "coverage" && (
+            {heatmapMode === "coverage" && hasChannelUtil && (
               <>
                 <span className="flex items-center gap-1.5 text-slate-400">
-                  <span className="w-2 h-2 rounded-full bg-emerald-500/80" /> Optimal (-45 to -65 dBm)
+                  <span className="w-2 h-2 rounded-full bg-emerald-500/80" /> Clear (&lt;20% util)
                 </span>
                 <span className="flex items-center gap-1.5 text-slate-400">
-                  <span className="w-2 h-2 rounded-full bg-amber-500/80" /> Attenuation (-68 to -75 dBm)
+                  <span className="w-2 h-2 rounded-full bg-amber-500/80" /> Busy (20-50% util)
                 </span>
                 <span className="flex items-center gap-1.5 text-slate-400">
-                  <span className="w-2 h-2 rounded-full bg-slate-700" /> Dead Zone (&lt;-80 dBm)
+                  <span className="w-2 h-2 rounded-full bg-rose-500/80" /> Saturated (&gt;50% util)
                 </span>
               </>
             )}
 
-            {heatmapMode === "interference" && (
+            {heatmapMode === "coverage" && !hasChannelUtil && hasRssi && (
               <>
                 <span className="flex items-center gap-1.5 text-slate-400">
-                  <span className="w-2 h-2 rounded-full bg-rose-500/80" /> Severe
+                  <span className="w-2 h-2 rounded-full bg-emerald-500/80" /> &ge; -65 dBm
                 </span>
                 <span className="flex items-center gap-1.5 text-slate-400">
-                  <span className="w-2 h-2 rounded-full bg-amber-500/80" /> Moderate
+                  <span className="w-2 h-2 rounded-full bg-amber-500/80" /> -66 to -75 dBm
                 </span>
                 <span className="flex items-center gap-1.5 text-slate-400">
-                  <span className="w-2 h-2 rounded-full bg-emerald-500/30" /> Clean
+                  <span className="w-2 h-2 rounded-full bg-rose-500/80" /> &lt; -75 dBm
                 </span>
               </>
+            )}
+
+            {heatmapMode === "coverage" && !hasChannelUtil && !hasRssi && (
+              <span className="text-slate-500">No RF telemetry for these APs</span>
+            )}
+
+            {heatmapMode === "interference" && hasChannelUtil && (
+              <>
+                <span className="flex items-center gap-1.5 text-slate-400">
+                  <span className="w-2 h-2 rounded-full bg-rose-500/80" /> Severe (&gt;50% util)
+                </span>
+                <span className="flex items-center gap-1.5 text-slate-400">
+                  <span className="w-2 h-2 rounded-full bg-amber-500/80" /> Moderate (20-50% util)
+                </span>
+                <span className="text-slate-500">No overlay below 20% util</span>
+              </>
+            )}
+
+            {heatmapMode === "interference" && !hasChannelUtil && (
+              <span className="text-slate-500">No channel utilization telemetry for these APs</span>
             )}
           </div>
         </div>
@@ -698,15 +963,19 @@ function NOCFloorplanContent() {
                   </div>
                   <div>
                     <span className="text-slate-500 block text-[10px] uppercase tracking-wider">MAC</span>
-                    <span className="text-slate-200 font-medium block">{selectedAP.mac_address || "5c:5b:35:aa:bb:cc"}</span>
+                    <span className="text-slate-200 font-medium block">{selectedAP.mac_address || "—"}</span>
                   </div>
                   <div>
                     <span className="text-slate-500 block text-[10px] uppercase tracking-wider">IP Address</span>
-                    <span className="text-slate-200 font-medium block">{selectedAP.ip_address || "10.42.12.50"}</span>
+                    <span className="text-slate-200 font-medium block">{selectedAP.ip_address || "—"}</span>
                   </div>
                   <div>
                     <span className="text-slate-500 block text-[10px] uppercase tracking-wider">Vendor</span>
                     <span className="text-slate-200 font-medium block">{selectedAP.vendor.toUpperCase()}</span>
+                  </div>
+                  <div>
+                    <span className="text-slate-500 block text-[10px] uppercase tracking-wider">Model</span>
+                    <span className="text-slate-200 font-medium block">{selectedAP.model || "—"}</span>
                   </div>
                 </div>
               </div>
@@ -723,89 +992,48 @@ function NOCFloorplanContent() {
                   </div>
                   <div>
                     <span className="text-[10px] text-slate-500 uppercase tracking-wider block">Channel</span>
-                    <span className="text-sm font-semibold text-white mt-0.5 block">{selectedAP.channel || 36}</span>
+                    <span className="text-sm font-semibold text-white mt-0.5 block">
+                      {selectedAP.channel ?? "—"}
+                    </span>
                   </div>
                   <div>
                     <span className="text-[10px] text-slate-500 uppercase tracking-wider block">RSSI</span>
-                    <span className="text-sm font-semibold text-white mt-0.5 block">{selectedAP.rssi || -56} dBm</span>
+                    <span className="text-sm font-semibold text-white mt-0.5 block">
+                      {selectedAP.rssi != null ? `${selectedAP.rssi} dBm` : "—"}
+                    </span>
                   </div>
+                </div>
+                <div className="text-xs text-slate-400">
+                  Channel utilization:{" "}
+                  <span className="text-slate-200 font-medium">
+                    {selectedAP.channel_util != null
+                      ? `${selectedAP.channel_util.toFixed(1)}%`
+                      : "—"}
+                  </span>
                 </div>
               </div>
 
-              {/* RRM Audit */}
-              {rrmAuditProofsByDevice[selectedAP.device_id] && (
-                <div className="space-y-3 pt-2 border-t border-slate-800/60">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[10px] font-semibold text-emerald-400 uppercase tracking-wider flex items-center gap-1.5">
-                      <CheckCircle2 className="w-3.5 h-3.5" />
-                      Remediation Proof
-                    </span>
-                    <span className="text-[10px] font-mono text-emerald-300/80 bg-emerald-950/40 px-2 py-0.5 border border-emerald-500/20">
-                      {rrmAuditProofsByDevice[selectedAP.device_id].audit_id}
-                    </span>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-3 text-xs">
-                    <div className="space-y-1">
-                      <span className="text-[10px] font-semibold text-rose-400 uppercase tracking-wider block">Before</span>
-                      <div className="text-slate-300 space-y-0.5">
-                        <div>Channel: <span className="text-white font-medium">Ch 36 (20MHz)</span></div>
-                        <div>Interference: <span className="text-rose-400 font-medium">24.8%</span></div>
-                        <div>Retries: <span className="text-rose-400 font-medium">18.2%</span></div>
-                        <div>Signal: <span className="text-amber-400 font-medium">-65 dBm</span></div>
-                      </div>
-                    </div>
-                    <div className="space-y-1">
-                      <span className="text-[10px] font-semibold text-emerald-400 uppercase tracking-wider block">After</span>
-                      <div className="text-slate-300 space-y-0.5">
-                        <div>Channel: <span className="text-emerald-300 font-semibold">Ch 149 (80MHz)</span></div>
-                        <div>Interference: <span className="text-emerald-300 font-semibold">0.4%</span></div>
-                        <div>Retries: <span className="text-emerald-300 font-semibold">0.1%</span></div>
-                        <div>Signal: <span className="text-emerald-300 font-semibold">-48 dBm</span></div>
-                      </div>
-                    </div>
-                  </div>
-
-                  <p className="text-[11px] text-emerald-300/80 bg-emerald-950/20 px-2.5 py-2 border border-emerald-500/15">
-                    Interference reduced by <span className="font-semibold text-white">98.4%</span>. {selectedAP.client_count} client sessions stabilized.
-                  </p>
-                </div>
-              )}
-
               {/* Diagnostic */}
-              {selectedAP.health_status !== "healthy" && !rrmAuditProofsByDevice[selectedAP.device_id] && (
+              {selectedAP.health_status !== "healthy" && (
                 <div className="space-y-2 pt-2 border-t border-slate-800/60">
                   <span className="text-[10px] font-semibold text-rose-400 uppercase tracking-wider flex items-center gap-1.5">
                     <AlertTriangle className="w-3.5 h-3.5" />
                     Diagnostic Root Cause
                   </span>
-                  <p className="text-xs text-slate-300 leading-relaxed">
-                    {selectedAP.health_reason || "High RF Co-Channel Interference & Retry Rate (>18%) on 5GHz radio."}
-                  </p>
+                  {selectedAP.health_reason ? (
+                    <p className="text-xs text-slate-300 leading-relaxed">{selectedAP.health_reason}</p>
+                  ) : (
+                    <p className="text-xs text-slate-500 leading-relaxed">No diagnostic detail reported.</p>
+                  )}
                   <p className="text-[11px] text-slate-500">
-                    Impact: {selectedAP.client_count || 4} active client sessions experiencing packet retransmissions.
+                    Impact: {selectedAP.client_count} active client sessions.
                   </p>
                 </div>
               )}
             </div>
 
             {/* Panel Footer Actions */}
-            <div className="shrink-0 px-5 py-3 border-t border-slate-800/60 flex items-center justify-between">
-              <button
-                onClick={() => selectedAP && handleOptimizeRRM(selectedAP)}
-                disabled={rrmOptimizing || !!rrmAuditProofsByDevice[selectedAP.device_id] || selectedAP.health_status === "healthy"}
-                className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 disabled:bg-slate-800 disabled:text-slate-500 text-white text-xs font-medium rounded-sm transition-colors flex items-center gap-2"
-              >
-                <RefreshCw className={`w-3.5 h-3.5 ${rrmOptimizing ? "animate-spin" : ""}`} />
-                {rrmOptimizing
-                  ? "Optimizing..."
-                  : rrmAuditProofsByDevice[selectedAP.device_id]
-                  ? "Optimized"
-                  : selectedAP.health_status === "healthy"
-                  ? "Spectrum Optimal"
-                  : "Optimize RRM"}
-              </button>
-
+            <div className="shrink-0 px-5 py-3 border-t border-slate-800/60 flex items-center justify-end">
               <button
                 onClick={() => setSelectedAP(null)}
                 className="px-3 py-1.5 text-slate-400 hover:text-white text-xs font-medium rounded-sm transition-colors hover:bg-slate-800/50"

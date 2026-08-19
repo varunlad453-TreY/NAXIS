@@ -105,9 +105,25 @@ if _cors_wildcard:
         "Set an explicit origin list before exposing this API."
     )
 
+# The UI is served from whatever host the operator browses to, not necessarily
+# localhost, and the browser sends that origin. With only an explicit localhost
+# allowlist every request from another machine was blocked, which reads as a dead
+# backend. Allow the configured origins plus any private-network origin, so a NOC
+# workstation on the corporate LAN works without re-listing every address.
+# Deliberately private ranges only — this must not become a wildcard.
+_PRIVATE_ORIGIN_REGEX = (
+    r"^https?://("
+    r"localhost|127\.0\.0\.1|\[::1\]|"
+    r"10\.\d{1,3}\.\d{1,3}\.\d{1,3}|"
+    r"192\.168\.\d{1,3}\.\d{1,3}|"
+    r"172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}"
+    r")(:\d+)?$"
+)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins,
+    allow_origin_regex=None if _cors_wildcard else _PRIVATE_ORIGIN_REGEX,
     allow_credentials=not _cors_wildcard,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type", "X-API-Key"],

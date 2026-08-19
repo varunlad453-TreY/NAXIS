@@ -44,6 +44,8 @@ class APPlacement(BaseModel):
     client_count: int = Field(0, description="Connected client count")
     channel: Optional[int] = Field(None, description="Operating Wi-Fi channel")
     rssi: Optional[int] = Field(None, description="Average RSSI")
+    model: Optional[str] = Field(None, description="AP hardware model")
+    channel_util: Optional[float] = Field(None, description="5GHz channel utilization percentage")
 
 
 class FloorplanResponse(BaseModel):
@@ -53,7 +55,11 @@ class FloorplanResponse(BaseModel):
     building_name: str = Field(..., description="Parent building name")
     floor_number: Optional[int] = Field(None, description="Floor number index")
     floorplan_image_url: Optional[str] = Field(None, description="Floorplan image URL")
+    floorplan_width: Optional[int] = Field(None, description="Floorplan image width in pixels")
+    floorplan_height: Optional[int] = Field(None, description="Floorplan image height in pixels")
     ap_placements: List[APPlacement] = Field(default_factory=list, description="Array of positioned AP markers")
+    placed_ap_count: int = Field(0, description="APs positioned on this floorplan")
+    unplaced_ap_count: int = Field(0, description="APs at the parent site not positioned on any floorplan")
     health_status: str = Field("healthy", description="Aggregated floor health status")
 
 

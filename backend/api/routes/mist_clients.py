@@ -18,6 +18,11 @@ try:
 except ImportError:
     from shared.cache import cached_api_route
 
+try:
+    from backend.shared.database.client import db
+except ImportError:
+    from shared.database.client import db
+
 from config.settings import get_settings
 
 logger = logging.getLogger(__name__)
@@ -28,6 +33,7 @@ _MAC_RE = re.compile(r"^[0-9a-fA-F]{12}$")
 _MIST_CONCURRENCY = 8
 _CACHE_TTL_S = 60
 _MAX_WINDOW_S = 7 * 24 * 3600
+_MAX_CACHE_ENTRIES = 512
 
 _cache: Dict[Tuple[str, int, int], Tuple[float, Dict[str, Any]]] = {}
 
@@ -37,6 +43,28 @@ def _normalize_mac(mac: str) -> str:
     if not _MAC_RE.match(clean):
         raise HTTPException(status_code=400, detail=f"Invalid MAC: {mac}")
     return clean
+
+
+def _mac_key(mac: Any) -> str:
+    return re.sub(r"[^0-9a-fA-F]", "", str(mac or "")).lower()
+
+
+def _as_int(v: Any) -> Optional[int]:
+    if v is None or v == "":
+        return None
+    try:
+        return int(float(v))
+    except (TypeError, ValueError):
+        return None
+
+
+def _text(v: Any) -> Optional[str]:
+    if isinstance(v, (list, tuple)):
+        v = next((x for x in v if x), None)
+    if v is None:
+        return None
+    s = v.strip() if isinstance(v, str) else str(v)
+    return s or None
 
 
 def _to_epoch(dt: Optional[datetime]) -> Optional[int]:
@@ -139,16 +167,20 @@ class MistClient:
             return []
 
     async def site_current(self, client: httpx.AsyncClient, site_id: str, mac: str) -> Optional[Dict]:
+        """Live association only. /clients/search returns historical rows with
+        array-valued ap/ip/ssid and no last_seen, so it cannot answer "connected now"."""
         try:
-            data = await self._get(
-                client,
-                f"/api/v1/sites/{site_id}/clients/search",
-                {"mac": mac, "limit": 1},
-            )
-            results = data.get("results", []) if isinstance(data, dict) else []
-            return results[0] if results else None
-        except Exception:
+            data = await self._get(client, f"/api/v1/sites/{site_id}/stats/clients")
+        except Exception as e:
+            logger.debug("stats/clients failed site=%s: %s", site_id, e)
             return None
+        if not isinstance(data, list):
+            logger.warning("stats/clients site=%s returned %s, not a list", site_id, type(data).__name__)
+            return None
+        for c in data:
+            if isinstance(c, dict) and _mac_key(c.get("mac")) == _mac_key(mac):
+                return c
+        return None
 
 
 def _epoch_to_iso(v: Any) -> Optional[str]:
@@ -163,21 +195,19 @@ def _epoch_to_iso(v: Any) -> Optional[str]:
         return None
 
 
-def _shape_current(raw: Optional[Dict], site_name: str = "") -> Optional[Dict]:
+def _shape_current(raw: Optional[Dict], site_name: str) -> Optional[Dict]:
     if not raw:
         return None
     return {
-        "site_id":         raw.get("site_id"),
+        "site_id":         _text(raw.get("site_id")),
         "site_name":       site_name,
-        "ap":              raw.get("ap_mac") or raw.get("ap") or raw.get("last_ap"),
-        "ssid":            raw.get("ssid"),
-        "band":            raw.get("band"),
-        "connected_since": _epoch_to_iso(
-            raw.get("since") or raw.get("assoc_time") or raw.get("last_seen")
-        ),
-        "rssi":            raw.get("rssi"),
-        "hostname":        raw.get("hostname"),
-        "ip":              raw.get("ip"),
+        "ap":              _text(raw.get("ap_mac")),
+        "ssid":            _text(raw.get("ssid")),
+        "band":            _text(raw.get("band")),
+        "connected_since": _epoch_to_iso(raw.get("assoc_time")),
+        "rssi":            _as_int(raw.get("rssi")),
+        "hostname":        _text(raw.get("hostname")),
+        "ip":              _text(raw.get("ip")),
     }
 
 
@@ -253,7 +283,7 @@ async def _build_timeline(mac: str, start: int, end: int) -> Dict[str, Any]:
     current_ts: float = -1
 
     for site_id, events, sessions, cur in per_site_results:
-        name = site_map.get(site_id, site_id[:8])
+        name = site_map.get(site_id) or site_id
         shaped_events = [_shape_event(e, name) | {"site_id": site_id} for e in events]
         shaped_sessions = [_shape_session(s, name) | {"site_id": site_id} for s in sessions]
         all_events.extend(shaped_events)
@@ -275,7 +305,7 @@ async def _build_timeline(mac: str, start: int, end: int) -> Dict[str, Any]:
             })
 
         if cur:
-            assoc = cur.get("last_seen") or cur.get("since") or cur.get("assoc_time") or 0
+            assoc = cur.get("last_seen") or cur.get("assoc_time") or 0
             try:
                 assoc_f = float(assoc)
             except (TypeError, ValueError):
@@ -376,3 +406,154 @@ async def get_client_timeline_csv(
         media_type="text/csv",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+async def _get_timeline_cached(normalized: str, start: int, end: int) -> Dict[str, Any]:
+    cache_key = (normalized, start, end)
+    now = time.time()
+    if cache_key in _cache:
+        cached_at, data = _cache[cache_key]
+        if now - cached_at < _CACHE_TTL_S:
+            return data
+    data = await _build_timeline(normalized, start, end)
+    _cache[cache_key] = (now, data)
+    if len(_cache) > _MAX_CACHE_ENTRIES:
+        oldest = sorted(_cache, key=lambda k: _cache[k][0])[: len(_cache) - _MAX_CACHE_ENTRIES]
+        for k in oldest:
+            _cache.pop(k, None)
+    return data
+
+
+def _signal_status(rssi: Optional[int]) -> Optional[str]:
+    if rssi is None:
+        return None
+    if rssi > -65:
+        return "excellent"
+    if rssi > -75:
+        return "fair"
+    return "poor"
+
+
+async def _ap_name_by_mac() -> Dict[str, str]:
+    try:
+        rows = await db.fetch("SELECT mac, hostname FROM inventory WHERE platform = 'mist'")
+    except Exception as e:
+        logger.warning("AP name lookup failed, ap_name will be null: %s", e)
+        return {}
+    names: Dict[str, str] = {}
+    for r in rows:
+        key = _mac_key(r["mac"])
+        if key and r["hostname"]:
+            names[key] = r["hostname"]
+    return names
+
+
+def _shape_stats_client(raw: Dict[str, Any], site: Dict[str, str], ap_names: Dict[str, str]) -> Dict[str, Any]:
+    mac = _text(raw.get("mac"))
+    ap_mac = _text(raw.get("ap_mac"))
+    hostname = _text(raw.get("hostname"))
+    ip = _text(raw.get("ip"))
+    rssi = _as_int(raw.get("rssi"))
+    snr = _as_int(raw.get("snr"))
+    key_mgmt = _text(raw.get("key_mgmt"))
+
+    return {
+        "client_mac":   mac,
+        "mac":          mac,
+        "hostname":     hostname,
+        "host_name":    hostname,
+        "username":     _text(raw.get("username")),
+        "ip_address":   ip,
+        "ip":           ip,
+        "ssid":         _text(raw.get("ssid")),
+        "ap_mac":       ap_mac,
+        "ap_id":        _text(raw.get("ap_id")),
+        "ap_name":      ap_names.get(_mac_key(ap_mac)) if ap_mac else None,
+        "rssi":         rssi,
+        "rssi_dbm":     rssi,
+        "snr":          snr,
+        "snr_db":       snr,
+        "band":         _text(raw.get("band")),
+        "channel":      _as_int(raw.get("channel")),
+        "vlan_id":      raw.get("vlan_id"),
+        "key_mgmt":     key_mgmt,
+        "auth_type":    _text(raw.get("auth_type")) or key_mgmt,
+        "proto":        _text(raw.get("proto")),
+        "uptime":       raw.get("uptime"),
+        "assoc_time":   raw.get("assoc_time"),
+        "last_seen":    raw.get("last_seen"),
+        "idle_time":    raw.get("idle_time"),
+        "tx_rate":      raw.get("tx_rate"),
+        "rx_rate":      raw.get("rx_rate"),
+        "tx_bytes":     raw.get("tx_bytes"),
+        "rx_bytes":     raw.get("rx_bytes"),
+        "os":           _text(raw.get("os")),
+        "manufacture":  _text(raw.get("manufacture")),
+        "family":       _text(raw.get("family")),
+        "model":        _text(raw.get("model")),
+        "is_guest":     raw.get("is_guest"),
+        # Mist client stats carry no device class; family/os/model are the raw signals.
+        "device_type":  None,
+        "status":       _signal_status(rssi),
+        "site_id":      _text(raw.get("site_id")) or site["id"],
+        "site_name":    site["name"],
+    }
+
+
+async def _fetch_all_clients() -> List[Dict[str, Any]]:
+    """Currently-associated clients across every org site, from /stats/clients."""
+    mc = MistClient()
+    if not mc.enabled():
+        raise HTTPException(status_code=503, detail="Mist integration not configured")
+
+    ap_names = await _ap_name_by_mac()
+
+    async with httpx.AsyncClient(headers=mc._headers, timeout=httpx.Timeout(30.0)) as client:
+        try:
+            sites_data = await mc._get(client, f"/api/v1/orgs/{mc._org_id}/sites")
+        except Exception as e:
+            logger.error("Failed to fetch Mist sites: %s", e)
+            return []
+
+        sites = [
+            {"id": s["id"], "name": s.get("name") or s["id"]}
+            for s in (sites_data or [])
+            if isinstance(s, dict) and s.get("id")
+        ]
+        if not sites:
+            return []
+
+        async def get_site_clients(site: Dict[str, str]) -> List[Dict[str, Any]]:
+            try:
+                data = await mc._get(client, f"/api/v1/sites/{site['id']}/stats/clients")
+            except Exception as e:
+                logger.warning("Failed to fetch clients from site %s: %s", site["name"], e)
+                return []
+            # A dict here means a search-style historical payload, not live associations.
+            if not isinstance(data, list):
+                logger.warning(
+                    "stats/clients site=%s returned %s, not a list", site["name"], type(data).__name__
+                )
+                return []
+            return [
+                _shape_stats_client(c, site, ap_names)
+                for c in data
+                if isinstance(c, dict) and c.get("mac")
+            ]
+
+        site_client_lists = await asyncio.gather(*[get_site_clients(site) for site in sites])
+
+    all_clients = [c for lst in site_client_lists for c in lst]
+    all_clients.sort(key=lambda c: c["rssi"] if c["rssi"] is not None else -200, reverse=True)
+    return all_clients
+
+
+@router.get("")
+@cached_api_route(ttl_seconds=_CACHE_TTL_S, key_prefix="mist_all_clients")
+async def get_all_clients(
+    response: Response,
+    limit: Optional[int] = Query(1000, le=5000),
+) -> List[Dict[str, Any]]:
+    """Get all currently active Mist clients across all sites."""
+    clients = await _fetch_all_clients()
+    return clients[:limit] if limit else clients

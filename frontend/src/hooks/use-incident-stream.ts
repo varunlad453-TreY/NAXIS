@@ -2,7 +2,8 @@
 
 import { useEffect, useRef, useState } from "react";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+import { getApiBase } from "@/lib/api";
+
 const API_KEY = process.env.NEXT_PUBLIC_API_KEY || "";
 
 export type IncidentStreamStatus = "connecting" | "live" | "error";
@@ -28,10 +29,15 @@ export function useIncidentStream(onIncident: () => void): UseIncidentStreamResu
   onIncidentRef.current = onIncident;
 
   useEffect(() => {
+    // Resolve the base at call time, exactly as lib/api.ts does. Reading
+    // NEXT_PUBLIC_API_URL directly pinned this to localhost:8000, which is
+    // baked into the browser bundle at build time — so the stream failed for
+    // every browser except one running on the Docker host, and the UI sat on
+    // "connecting" forever while the rest of the data loaded fine.
     // EventSource cannot set headers; the backend accepts the key as a query
     // param for this endpoint only.
     const url =
-      `${API_BASE}/correlation/incidents/stream` +
+      `${getApiBase()}/correlation/incidents/stream` +
       (API_KEY ? `?api_key=${encodeURIComponent(API_KEY)}` : "");
     const source = new EventSource(url);
 

@@ -262,6 +262,16 @@ export const api = {
     return `${API_BASE}/mist/clients/${encodeURIComponent(mac)}/timeline.csv${qs ? `?${qs}` : ""}`;
   },
 
+  /**
+   * Currently-associated Mist clients across every org site
+   */
+  mistClients: (params?: { limit?: number }) => {
+    const q = new URLSearchParams();
+    if (params?.limit) q.set("limit", String(params.limit));
+    const qs = q.toString();
+    return fetchAPI<MistLiveClient[]>(`/mist/clients${qs ? `?${qs}` : ""}`);
+  },
+
   mistSleAnomalies: (params?: MistSleParams) => {
     const q = new URLSearchParams();
     if (params?.window) q.set("window", String(params.window));
@@ -459,6 +469,48 @@ export interface MistClientTimeline {
   sessions: MistClientSession[];
   events: MistClientEvent[];
   sites_seen: MistSiteSeen[];
+}
+
+/** GET /mist/clients — every field is nullable; Mist omits most of them per client. */
+export interface MistLiveClient {
+  client_mac: string | null;
+  mac: string | null;
+  hostname: string | null;
+  host_name: string | null;
+  username: string | null;
+  ip_address: string | null;
+  ip: string | null;
+  ssid: string | null;
+  ap_mac: string | null;
+  ap_id: string | null;
+  ap_name: string | null;
+  rssi: number | null;
+  rssi_dbm: number | null;
+  snr: number | null;
+  snr_db: number | null;
+  band: string | null;
+  channel: number | null;
+  vlan_id: string | number | null;
+  key_mgmt: string | null;
+  auth_type: string | null;
+  proto: string | null;
+  uptime: number | null;
+  assoc_time: number | null;
+  last_seen: number | null;
+  idle_time: number | null;
+  tx_rate: number | null;
+  rx_rate: number | null;
+  tx_bytes: number | null;
+  rx_bytes: number | null;
+  os: string | null;
+  manufacture: string | null;
+  family: string | null;
+  model: string | null;
+  is_guest: boolean | null;
+  device_type: string | null;
+  status: "excellent" | "fair" | "poor" | null;
+  site_id: string | null;
+  site_name: string | null;
 }
 
 export interface MistSleParams {

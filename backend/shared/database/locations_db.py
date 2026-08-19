@@ -101,11 +101,20 @@ async def get_all_locations() -> List[Dict[str, Any]]:
                address, floorplan_image_url, floor_number, metadata, created_at
         FROM locations
         UNION ALL
-        SELECT site_key AS location_id, parent_key AS parent_id, name, 'site' AS type,
+        SELECT s.site_key AS location_id, s.parent_key AS parent_id, s.name, 'site' AS type,
                NULL AS latitude, NULL AS longitude, NULL AS address, NULL AS floorplan_image_url,
-               NULL AS floor_number, vendor_ids AS metadata, created_at
-        FROM sites
-        WHERE site_key NOT IN (SELECT location_id FROM locations WHERE location_id IS NOT NULL)
+               NULL AS floor_number, s.vendor_ids AS metadata, s.created_at
+        FROM sites s
+        WHERE s.site_key NOT IN (SELECT location_id FROM locations WHERE location_id IS NOT NULL)
+          -- a vendor site already represented by a real location row would
+          -- otherwise appear twice in the tree, once per branch
+          AND NOT EXISTS (
+              SELECT 1
+              FROM site_identities si
+              JOIN location_mappings lm
+                ON lm.vendor = si.vendor AND lm.vendor_site_id = si.vendor_site_id
+              WHERE si.site_key = s.site_key
+          )
         ORDER BY parent_id NULLS FIRST, name ASC;
     """
     try:
@@ -126,7 +135,7 @@ async def create_location_mapping(
     query = """
         INSERT INTO location_mappings (location_id, vendor, vendor_site_id, vendor_map_id)
         VALUES ($1, $2, $3, $4)
-        ON CONFLICT (vendor, vendor_site_id) DO UPDATE SET
+        ON CONFLICT (vendor, vendor_site_id, COALESCE(vendor_map_id, '')) DO UPDATE SET
             location_id = EXCLUDED.location_id,
             vendor_map_id = EXCLUDED.vendor_map_id;
     """
@@ -143,7 +152,9 @@ async def get_location_by_vendor_site(vendor: str, vendor_site_id: str) -> Optio
     query = """
         SELECT location_id
         FROM location_mappings
-        WHERE vendor = $1 AND vendor_site_id = $2;
+        WHERE vendor = $1 AND vendor_site_id = $2
+        ORDER BY (vendor_map_id IS NULL) DESC
+        LIMIT 1;
     """
     try:
         row = await db.fetchrow(query, vendor, vendor_site_id)

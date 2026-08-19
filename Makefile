@@ -1,4 +1,4 @@
-.PHONY: help setup build up dev down logs clean rebuild prune test typecheck migrate init-db
+.PHONY: help setup build up dev down logs clean rebuild prune test typecheck migrate init-db prod-up prod-down docker-cleanup
 
 # Every compose invocation needs --env-file: docker-compose.yml interpolates
 # POSTGRES_PASSWORD/REDIS_PASSWORD with the `:?` operator, so without it even
@@ -25,6 +25,11 @@ help:
 	@echo "  make test      - Run backend + frontend tests"
 	@echo "  make typecheck - Run the frontend TypeScript check"
 	@echo "  make migrate   - Apply pending SQL migrations (idempotent)"
+	@echo ""
+	@echo "Production Commands:"
+	@echo "  make prod-up      - Start production stack with resource limits and cleanup"
+	@echo "  make prod-down    - Stop production stack"
+	@echo "  make docker-cleanup - Manual Docker cleanup (images, containers, cache)"
 
 setup:
 	@if [ ! -f config/.env ]; then \
@@ -92,5 +97,23 @@ migrate:
 	$(COMPOSE) exec -T api python /app/scripts/migrate.py
 
 init-db: migrate
+
+# Production deployment with automatic cleanup
+prod-up:
+	chmod +x scripts/docker-cleanup.sh
+	docker compose --env-file config/.env -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+	@echo "Production services started with automated cleanup"
+	@echo "API:      http://localhost:8000"
+	@echo "Frontend: http://localhost:3000"
+	@echo "Cleanup runs every 24h automatically"
+
+prod-down:
+	docker compose --env-file config/.env -f docker-compose.yml -f docker-compose.prod.yml down
+
+# Manual Docker cleanup for production maintenance
+docker-cleanup:
+	@echo "Running Docker cleanup..."
+	chmod +x scripts/docker-cleanup.sh
+	./scripts/docker-cleanup.sh
 
 .DEFAULT_GOAL := help
